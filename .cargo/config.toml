@@ -1,0 +1,30 @@
+[env]
+
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+[target.riscv32imac-unknown-none-elf]
+runner = 'riscv64-unknown-elf-gdb -x openocd.gdb'
+rustflags = [
+  "-Clink-arg=-Tmemory.x",
+  "-Clink-arg=-Tlink.x",
+]
+
+[target.x86_64-unknown-linux-gnu]
+linker = '/usr/bin/clang'
+rustflags = [
+  '-Clink-arg=-fuse-ld=lld',
+  '-Zshare-generics=y',
+]
+
+[target.x86_64-pc-windows-msvc]
+linker = 'rust-lld.exe'
+rustflags = ['-Zshare-generics=y']
+
+[target.x86_64-apple-darwin]
+rustflags = [
+  '-C',
+  'link-arg=-fuse-ld=/usr/local/bin/zld',
+  '-Zshare-generics=y',
+  '-Csplit-debuginfo=unpacked',
+]

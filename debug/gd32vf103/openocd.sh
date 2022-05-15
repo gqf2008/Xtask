@@ -1,0 +1,1 @@
+~/toolchain/riscv-openocd/bin/openocd -f sipeed-jtag.cfg -f openocd.cfg
