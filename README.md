@@ -6,7 +6,7 @@
 
 1. 软件还在开发中，API也相当原始且不稳定
 2. 关于工作原理，代码（包括汇编）中有详细的说明，请先阅读下
-3. 如果您有任何建议、想法可以通过提交[issues](https://github.com/gqf2008/xtask/issues)或者通过邮箱联系到我
+3. 如果您有任何建议、想法可以通过提交[issues](https://github.com/gqf2008/xtask/issues)或者通过邮箱(gao.qingfeng#gmail.com)联系到我
 4. 如果您有兴趣参与这个项目请提交您的PR
 
 ### 主要功能  
