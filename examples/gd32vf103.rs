@@ -73,6 +73,7 @@ fn main() -> ! {
         &mut afio,
         &mut rcu,
     );
+
     sprintln!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
@@ -94,13 +95,13 @@ fn example_notify() {
     let notifier = Notifier::new();
     let waiter = notifier.clone();
     xtask::spawn2("notifier", move || loop {
-        sprintln!("发送通知信号 {}", xtask::tick());
+        // sprintln!("发送通知信号 {}", xtask::tick());
         notifier.notify();
         xtask::sleep_ms(1000);
     });
     xtask::spawn2("waiter", move || loop {
         waiter.wait();
-        sprintln!("收到通知信号 {}", xtask::tick());
+        //sprintln!("收到通知信号 {}", xtask::tick());
     });
 }
 
@@ -112,29 +113,29 @@ fn example_broadcast() {
     let waiter4 = caster.clone();
     let waiter5 = caster.clone();
     xtask::spawn2("caster", move || loop {
-        sprintln!("发送广播信号 {}", xtask::tick());
+        // sprintln!("发送广播信号 {}", xtask::tick());
         caster.notify();
         xtask::sleep_ms(1000);
     });
     xtask::spawn2("listener1", move || loop {
         waiter1.wait();
-        sprintln!("1收到广播信号 {}", xtask::tick());
+        // sprintln!("1收到广播信号 {}", xtask::tick());
     });
     xtask::spawn2("listener2", move || loop {
         waiter2.wait();
-        sprintln!("2收到广播信号 {}", xtask::tick());
+        //sprintln!("2收到广播信号 {}", xtask::tick());
     });
     xtask::spawn2("listener3", move || loop {
         waiter3.wait();
-        sprintln!("3收到广播信号 {}", xtask::tick());
+        // sprintln!("3收到广播信号 {}", xtask::tick());
     });
     xtask::spawn2("listener4", move || loop {
         waiter4.wait();
-        sprintln!("4收到广播信号 {}", xtask::tick());
+        //sprintln!("4收到广播信号 {}", xtask::tick());
     });
     xtask::spawn2("listener5", move || loop {
         waiter5.wait();
-        sprintln!("5收到广播信号 {}", xtask::tick());
+        // sprintln!("5收到广播信号 {}", xtask::tick());
     });
 }
 fn example_queue() {
@@ -177,12 +178,12 @@ fn example_queue() {
     });
     xtask::spawn2("queue.recv", move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            sprintln!("收到消息 {:?}", msg);
+            // sprintln!("收到消息 {:?}", msg);
         }
     });
     xtask::spawn2("queue.recv", move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            sprintln!("收到消息 {:?}", msg);
+            // sprintln!("收到消息 {:?}", msg);
         }
     });
 }
@@ -194,80 +195,80 @@ fn example_semaphore() {
     let recver2 = sender.clone();
     let recver3 = sender.clone();
     xtask::spawn2("semaphore.poster1", move || loop {
-        sprintln!("发送计数信号");
+        //  sprintln!("发送计数信号");
         sender.post();
         xtask::sleep_ms(100);
     });
     xtask::spawn2("semaphore.poster2", move || loop {
-        sprintln!("发送计数信号");
+        // sprintln!("发送计数信号");
         sender2.post();
         xtask::sleep_ms(100);
     });
 
     xtask::spawn2("semaphore.waiter", move || loop {
         recver.wait();
-        sprintln!("收到计数信号");
+        //sprintln!("收到计数信号");
     });
     xtask::spawn2("semaphore.waiter2", move || loop {
         recver2.wait();
-        sprintln!("收到计数信号");
+        // sprintln!("收到计数信号");
     });
     xtask::spawn2("semaphore.waiter3", move || loop {
         recver3.wait();
-        sprintln!("收到计数信号");
+        // sprintln!("收到计数信号");
     });
 }
 
 fn example_task() {
     xtask::spawn(|| {
         for i in 0..10 {
-            sprintln!("{} 循环测试任务0", i + 1);
+            //  sprintln!("{} 循环测试任务0", i + 1);
             xtask::sleep_ms(1000);
         }
     });
     xtask::spawn(|| {
         for i in 0..50 {
-            sprintln!("{} 循环测试任务1", i + 1);
+            //  sprintln!("{} 循环测试任务1", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..100 {
-            sprintln!("{} 循环测试任务2", i + 1);
+            // sprintln!("{} 循环测试任务2", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..500 {
-            sprintln!("{} 循环测试任务4", i + 1);
+            //   sprintln!("{} 循环测试任务4", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| loop {
-        sprintln!("死循环测试任务 {}", tick());
+        // sprintln!("死循环测试任务 {}", tick());
         xtask::sleep_ms(10000);
     });
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
-    xtask::spawn2("green", move || loop {
+    xtask::spawn4("green", 256, 1, move || loop {
         green.on();
         xtask::sleep_ms(500);
         green.off();
         xtask::sleep_ms(500);
     });
 
-    xtask::spawn2("red", move || loop {
+    xtask::spawn4("red", 256, 1, move || loop {
         red.on();
         xtask::sleep_ms(500);
         red.off();
         xtask::sleep_ms(500);
     });
 
-    xtask::spawn2("blue", move || loop {
+    xtask::spawn4("blue", 256, 1, move || loop {
         blue.on();
         xtask::sleep_ms(500);
         blue.off();
