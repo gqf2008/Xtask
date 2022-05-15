@@ -45,7 +45,7 @@
     - 把调试器插到usb口
     - window平台需要你找一款串口助手连接串口即可
     - linux或者mac平台执行 screen /dev/$串口设备 57600
-4. 打开另外一个终端
+3. 打开另外一个终端
     - 信号广播示例
         - cargo run --example broadcast --release --all-features
     - LED示例，三个任务分别控制三色LED
@@ -58,7 +58,7 @@
         - cargo run --example queue --release --all-features
     - 信号量示例，两个发，三个收
         - cargo run --example semaphore --release --all-features
-5. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
+4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
 ### 目录结构
