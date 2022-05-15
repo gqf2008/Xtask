@@ -82,8 +82,8 @@ fn main() -> ! {
 
     /// 所有任务跑起来大概还是剩下2k内存，如果发现运行失败多少是内存不够了，可以调整下内存栈大小
     example_led(red, green, blue);
-    example_notify();
-    example_broadcast();
+    //example_notify();
+    //example_broadcast();
     example_semaphore();
     example_queue();
     example_task();
