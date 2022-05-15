@@ -41,7 +41,7 @@
     - cd debug/gd32vf103
     - ./openocd.sh
 2. 串口调试
-    - 把调试器插到usb口山
+    - 把调试器插到usb口
     - window平台需要你找一款串口助手连接串口即可
     - linux或者mac平台执行 screen /dev/$串口设备 57600
 4. 打开另外一个终端
