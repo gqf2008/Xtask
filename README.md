@@ -50,6 +50,67 @@
 5. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
+### 目录结构
+
+.
+|____src                     源码目录
+| |____lib.rs
+| |____chip                  芯片移植目录
+| | |____gd32vf103           gd32vf103vf103移植代码
+| | | |____mod.rs            
+| | | |____port.S            汇编代码，中断上下文保存
+| | | |____port.rs           中断处理函数
+| | | |____restore_ctx.S     首次启动恢复任务汇编代码
+| | | |____stdout.rs         串口输出
+| | | |____memory.x          内存布局链接脚本
+| | |____env.rs              移植环境参数
+| | |____mod.rs
+| |____port.rs               port接口定义
+| |____task.rs               任务定义
+| |____allocator.rs          内存分配器
+| |____timer.rs
+| |____arch                  指令集架构，官方嵌入式工程组项目重新导出
+| | |____x86_64
+| | | |____mod.rs
+| | |____mod.rs
+| | |____riscv
+| | | |____mod.rs
+| | |____cortex_m
+| | | |____mod.rs
+| |____task
+| | |____executor.rs        单物理线程执行器实现
+| | |____scheduler          调度器实现
+| | | |____xtask.rs
+| | | |____idle.rs
+| | | |____xworker.rs
+| | | |____misc.rs
+| | |____scheduler.rs
+| |____sync                 信号量、通知、队列、临界段等
+| | |____semaphore.rs
+| | |____queue.rs
+| | |____mod.rs
+| | |____mutex.rs
+| | |____notifier.rs
+| | |____broadcast.rs
+| |____bsp                 板级支持包
+| | |____mod.rs
+| | |____longan_nano       longan_nano最小系统板
+| | | |____mod.rs
+| | | |____led.rs
+| | | |____lcd.rs
+| | | |____hcsr04.rs
+| | | |____epd27b.rs
+| | | |____kalman.rs
+| |____io.rs               io读写之类
+| |____prelude.rs
+| |____time.rs             时间相关函数
+|____.vscode
+| |____settings.json
+|____Cargo.lock
+|____Cargo.toml
+|____hal                   依赖的hal库
+
+
 
 ### 移植层接口
 
