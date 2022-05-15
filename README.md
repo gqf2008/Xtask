@@ -17,7 +17,8 @@
 - [x] 计数信号量  
 - [x] 信号广播
 - [x] mpmc队列  
-- [x] 临界区 
+- [x] 临界段 
+- [x] 简单的任务栈溢出检查 
 - [ ] 互斥锁
 - [ ] 软件定时器 
 
@@ -45,8 +46,18 @@
     - window平台需要你找一款串口助手连接串口即可
     - linux或者mac平台执行 screen /dev/$串口设备 57600
 4. 打开另外一个终端
-    - ./run.sh
-
+    - 信号广播示例
+        - cargo run --example broadcast --release --all-features
+    - LED示例，三个任务分别控制三色LED
+        - cargo run --example led --release --all-features
+    - 多任务切换示例，5个任务，4个任务循环一段时间后退出
+        - cargo run --example multitask --release --all-features
+    - 通知示例，一个通知另外一个
+        - cargo run --example notify --release --all-features
+    - 队列示例，两个发，三个收消息
+        - cargo run --example queue --release --all-features
+    - 信号量示例，两个发，三个收
+        - cargo run --example semaphore --release --all-features
 5. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
