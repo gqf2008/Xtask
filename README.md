@@ -34,6 +34,20 @@
 
 如果您有一块longan-nano最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
 
+1. 打开一个终端
+    - cd debug/gd32vf103
+    - ./openocd.sh
+2. 串口调试
+    - 把调试器插到usb口山
+    - window平台需要你找一款串口助手连接串口即可
+    - linux或者mac平台执行 screen /dev/$串口设备 57600
+4. 打开另外一个终端
+    - ./run.sh
+
+5. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
+
+
+
 ### 移植层接口
 
 ```rust
