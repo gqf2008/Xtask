@@ -93,7 +93,7 @@ fn example_queue() {
                 data: Vec::new(),
             };
             qsender.push_back(msg);
-            xtask::sleep_ms(100);
+            xtask::sleep_ms(2000);
         }
     });
     TaskBuilder::new().name("queue.sender2").spawn(move || {
@@ -106,7 +106,7 @@ fn example_queue() {
                 data: Vec::new(),
             };
             qsender2.push_back(msg);
-            xtask::sleep_ms(100);
+            xtask::sleep_ms(5000);
         }
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {

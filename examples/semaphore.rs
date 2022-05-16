@@ -77,35 +77,35 @@ fn example_semaphore() {
     TaskBuilder::new()
         .name("semaphore.poster1")
         .spawn(move || loop {
-            sprintln!("发送计数信号");
+            sprintln!("1发送计数信号");
             sender.post();
-            xtask::sleep_ms(100);
+            xtask::sleep_ms(1000);
         });
     TaskBuilder::new()
         .name("semaphore.poster2")
         .spawn(move || loop {
-            sprintln!("发送计数信号");
+            sprintln!("2发送计数信号");
             sender2.post();
-            xtask::sleep_ms(100);
+            xtask::sleep_ms(2000);
         });
 
     TaskBuilder::new()
         .name("semaphore.waiter1")
         .spawn(move || loop {
             recver.wait();
-            sprintln!("收到计数信号");
+            sprintln!("1收到计数信号");
         });
     TaskBuilder::new()
         .name("semaphore.waiter2")
         .spawn(move || loop {
             recver2.wait();
-            sprintln!("收到计数信号");
+            sprintln!("2收到计数信号");
         });
     TaskBuilder::new()
         .name("semaphore.waiter3")
         .spawn(move || loop {
             recver3.wait();
-            sprintln!("收到计数信号");
+            sprintln!("3收到计数信号");
         });
 }
 
