@@ -91,11 +91,11 @@ fn example_bus() {
     });
 
     TaskBuilder::new().name("events").spawn(move || loop {
-        BUS.event("ev.key", Event::Key(8));
+        BUS.publish("ev.key", Event::Key(8));
         xtask::sleep_ms(1000);
     });
     TaskBuilder::new().name("events").spawn(move || loop {
-        BUS.event("ev.mouse", Event::Mouse(8378, 10036));
+        BUS.publish("ev.mouse", Event::Mouse(8378, 10036));
         xtask::sleep_ms(500);
     });
 }
