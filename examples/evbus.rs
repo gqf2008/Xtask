@@ -91,7 +91,7 @@ fn example_bus() {
     });
 
     TaskBuilder::new().name("events").spawn(move || loop {
-        //BUS.event("ev.key", Event::Key(8));
+        BUS.event("ev.key", Event::Key(8));
         xtask::sleep_ms(1000);
     });
     TaskBuilder::new().name("events").spawn(move || loop {
