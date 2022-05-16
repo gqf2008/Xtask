@@ -61,7 +61,7 @@ impl<'a, E: Copy> Bus<'a, E> {
 
     /// 发送事件
     /// 不能在中断服务中调用，中断服务中调用请用event_isr
-    pub fn event(&self, topic: &'a str, event: E) {
+    pub fn publish(&self, topic: &'a str, event: E) {
         sync::free(|_| {
             let mut subscribers = self.subscribers.borrow_mut();
             if let Some(list) = subscribers.get_mut(topic) {
@@ -72,7 +72,7 @@ impl<'a, E: Copy> Bus<'a, E> {
 
     /// 发送事件
     /// 只能在中断服务中调用
-    pub fn event_isr(&self, topic: &'a str, event: E) {
+    pub fn publish_isr(&self, topic: &'a str, event: E) {
         let mut subscribers = self.subscribers.borrow_mut();
         if let Some(list) = subscribers.get_mut(topic) {
             list.iter().for_each(|f| f(topic, event));
