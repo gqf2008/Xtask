@@ -19,31 +19,7 @@ pub static DEBUG_TIMER_NAME: &str = "@debug";
 
 /// 外部调用，创建任务
 pub fn spawn<F: FnOnce() + Send + 'static>(f: F) {
-    spawn4("", 256, 8, f)
-}
-
-/// 外部调用，创建任务
-pub fn spawn2<F: FnOnce() + Send + 'static>(name: &str, f: F) {
-    spawn4(name, 256, 8, f)
-}
-
-pub fn spawn3<F: FnOnce() + Send + 'static>(name: &str, stack_size: usize, f: F) {
-    spawn4(name, stack_size, 8, f)
-}
-
-pub fn spawn4<F: FnOnce() + Send + 'static>(name: &str, stack_size: usize, priority: u8, f: F) {
-    assert!(priority > 0 && stack_size > 64);
-    fn entry(args: *mut c_void) {
-        unsafe {
-            let b = Box::from_raw(args as *mut Box<dyn FnOnce()>);
-            b();
-        }
-    }
-    let f: Box<Box<dyn FnOnce() + Send + 'static>> = Box::new(Box::new(f));
-    let args = &*f as *const _ as *mut c_void;
-    let task = Task::new(name, stack_size, priority, entry, args);
-    core::mem::forget(f);
-    schedulee.submit(task);
+    TaskBuilder::new().spawn(f)
 }
 
 /// 毫秒级任务延时，如果小于tick周期，则不处理
@@ -65,6 +41,56 @@ pub fn yield_now() {
 #[inline]
 pub fn delay_us(us: u64) {
     Porting::delay_us(us);
+}
+
+pub struct TaskBuilder<'a> {
+    stack_size: usize,
+    name: &'a str,
+    priority: u8,
+}
+
+impl<'a> TaskBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            stack_size: 256,
+            name: "",
+            priority: 8,
+        }
+    }
+    pub fn stack_size(mut self, size: usize) -> Self {
+        assert!(size > 64);
+        self.stack_size = size;
+        self
+    }
+    pub fn priority(mut self, priority: u8) -> Self {
+        assert!(priority > 0);
+        self.priority = priority;
+        self
+    }
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn spawn<F: FnOnce() + Send + 'static>(self, f: F) {
+        fn entry(args: *mut c_void) {
+            unsafe {
+                let b = Box::from_raw(args as *mut Box<dyn FnOnce()>);
+                b();
+            }
+        }
+        let f: Box<Box<dyn FnOnce() + Send + 'static>> = Box::new(Box::new(f));
+        let args = &*f as *const _ as *mut c_void;
+        let task = Task::new(
+            self.name.to_string(),
+            self.stack_size,
+            self.priority,
+            entry,
+            args,
+        );
+        core::mem::forget(f);
+        schedulee.submit(task);
+    }
 }
 
 /// 任务状态
@@ -268,10 +294,8 @@ impl Task {
     /// 当前任务等待，在当前任务调用
     #[inline]
     pub(crate) fn wait(&mut self, ticks: usize) {
-        // isr_sprintln!("delay1 {}", self.delay_ticks);
         self.state = State::Blocked;
         self.delay_ticks = ticks;
-        //isr_sprintln!("delay2 {}", self.delay_ticks);
     }
 
     /// 栈围栏标志是否被修改

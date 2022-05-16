@@ -2,39 +2,16 @@
 #![no_main]
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::arch::asm;
-use core::arch::global_asm;
 use gd32vf103xx_hal as hal;
-use hal::{
-    backup_domain::BkpExt,
-    eclic::{EclicExt, Level, LevelPriorityBits, Priority, TriggerType},
-    gpio::GpioExt,
-    pac,
-    prelude::*,
-    rcu::RcuExt,
-    rtc::Rtc,
-    signature,
-    timer::{Event, Timer},
-};
+use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt, signature};
 use xtask::bsp::longan_nano::led::BLUE;
 use xtask::bsp::longan_nano::led::GREEN;
 use xtask::bsp::longan_nano::led::RED;
-use xtask::sync::broadcast::Broadcast;
-use xtask::sync::queue::Queue;
 
-use pac::interrupt::Nr;
-use pac::{interrupt, Interrupt, CTIMER, ECLIC, RTC};
 use panic_halt as _;
-use riscv_rt as rt;
+use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
-use xtask::sprintln;
-use xtask::sync::notifier::Notifier;
-use xtask::sync::semaphore::Semaphore;
 
 fn init() {
     extern "C" {
@@ -97,50 +74,69 @@ fn example_semaphore() {
     let recver = sender.clone();
     let recver2 = sender.clone();
     let recver3 = sender.clone();
-    xtask::spawn2("semaphore.poster1", move || loop {
-        sprintln!("发送计数信号");
-        sender.post();
-        xtask::sleep_ms(100);
-    });
-    xtask::spawn2("semaphore.poster2", move || loop {
-        sprintln!("发送计数信号");
-        sender2.post();
-        xtask::sleep_ms(100);
-    });
+    TaskBuilder::new()
+        .name("semaphore.poster1")
+        .spawn(move || loop {
+            sprintln!("发送计数信号");
+            sender.post();
+            xtask::sleep_ms(100);
+        });
+    TaskBuilder::new()
+        .name("semaphore.poster2")
+        .spawn(move || loop {
+            sprintln!("发送计数信号");
+            sender2.post();
+            xtask::sleep_ms(100);
+        });
 
-    xtask::spawn2("semaphore.waiter", move || loop {
-        recver.wait();
-        sprintln!("收到计数信号");
-    });
-    xtask::spawn2("semaphore.waiter2", move || loop {
-        recver2.wait();
-        sprintln!("收到计数信号");
-    });
-    xtask::spawn2("semaphore.waiter3", move || loop {
-        recver3.wait();
-        sprintln!("收到计数信号");
-    });
+    TaskBuilder::new()
+        .name("semaphore.waiter1")
+        .spawn(move || loop {
+            recver.wait();
+            sprintln!("收到计数信号");
+        });
+    TaskBuilder::new()
+        .name("semaphore.waiter2")
+        .spawn(move || loop {
+            recver2.wait();
+            sprintln!("收到计数信号");
+        });
+    TaskBuilder::new()
+        .name("semaphore.waiter3")
+        .spawn(move || loop {
+            recver3.wait();
+            sprintln!("收到计数信号");
+        });
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
-    xtask::spawn4("green", 256, 1, move || loop {
-        green.on();
-        xtask::sleep_ms(500);
-        green.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("green")
+        .priority(1)
+        .spawn(move || loop {
+            green.on();
+            xtask::sleep_ms(500);
+            green.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("red", 256, 1, move || loop {
-        red.on();
-        xtask::sleep_ms(500);
-        red.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("red")
+        .priority(1)
+        .spawn(move || loop {
+            red.on();
+            xtask::sleep_ms(500);
+            red.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("blue", 256, 1, move || loop {
-        blue.on();
-        xtask::sleep_ms(500);
-        blue.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("blue")
+        .priority(1)
+        .spawn(move || loop {
+            blue.on();
+            xtask::sleep_ms(500);
+            blue.off();
+            xtask::sleep_ms(500);
+        });
 }

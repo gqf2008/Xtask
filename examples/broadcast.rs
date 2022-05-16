@@ -2,39 +2,17 @@
 #![no_main]
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
-use core::arch::asm;
-use core::arch::global_asm;
 use gd32vf103xx_hal as hal;
-use hal::{
-    backup_domain::BkpExt,
-    eclic::{EclicExt, Level, LevelPriorityBits, Priority, TriggerType},
-    gpio::GpioExt,
-    pac,
-    prelude::*,
-    rcu::RcuExt,
-    rtc::Rtc,
-    signature,
-    timer::{Event, Timer},
-};
+use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt, signature};
 use xtask::bsp::longan_nano::led::BLUE;
 use xtask::bsp::longan_nano::led::GREEN;
 use xtask::bsp::longan_nano::led::RED;
-use xtask::sync::broadcast::Broadcast;
-use xtask::sync::queue::Queue;
 
-use pac::interrupt::Nr;
-use pac::{interrupt, Interrupt, CTIMER, ECLIC, RTC};
 use panic_halt as _;
-use riscv_rt as rt;
+
+use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
-use xtask::sprintln;
-use xtask::sync::notifier::Notifier;
-use xtask::sync::semaphore::Semaphore;
 
 fn init() {
     extern "C" {
@@ -98,52 +76,62 @@ fn example_broadcast() {
     let waiter3 = caster.clone();
     let waiter4 = caster.clone();
     let waiter5 = caster.clone();
-    xtask::spawn2("caster", move || loop {
+
+    TaskBuilder::new().name("caster").spawn(move || loop {
         sprintln!("发送广播信号 {}", xtask::tick());
         caster.notify();
         xtask::sleep_ms(1000);
     });
-    xtask::spawn2("listener1", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter1.wait();
         sprintln!("1收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener2", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter2.wait();
         sprintln!("2收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener3", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter3.wait();
         sprintln!("3收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener4", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter4.wait();
         sprintln!("4收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener5", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter5.wait();
         sprintln!("5收到广播信号 {}", xtask::tick());
     });
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
-    xtask::spawn4("green", 256, 1, move || loop {
-        green.on();
-        xtask::sleep_ms(500);
-        green.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("green")
+        .priority(1)
+        .spawn(move || loop {
+            green.on();
+            xtask::sleep_ms(500);
+            green.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("red", 256, 1, move || loop {
-        red.on();
-        xtask::sleep_ms(500);
-        red.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("red")
+        .priority(1)
+        .spawn(move || loop {
+            red.on();
+            xtask::sleep_ms(500);
+            red.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("blue", 256, 1, move || loop {
-        blue.on();
-        xtask::sleep_ms(500);
-        blue.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("blue")
+        .priority(1)
+        .spawn(move || loop {
+            blue.on();
+            xtask::sleep_ms(500);
+            blue.off();
+            xtask::sleep_ms(500);
+        });
 }
