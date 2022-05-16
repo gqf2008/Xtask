@@ -5,12 +5,14 @@
 #![feature(const_intrinsic_copy)]
 #![feature(alloc_error_handler)]
 #![feature(ptr_internals)]
+#![feature(const_btree_new)]
 
 extern crate alloc;
 
 mod allocator;
 pub mod arch;
 pub mod bsp;
+pub mod bus;
 pub mod chip;
 pub mod io;
 pub mod port;
