@@ -37,7 +37,7 @@ macro_rules! sprint {
 #[macro_export]
 macro_rules! sprintln {
     () => {
-        $crate::io::write_str("\n")
+        $crate::sync::free(|_|$crate::io::write_str("\n"))
     };
     ($s:expr) => {
         $crate::sync::free(|_|$crate::io::write_str(concat!(file!(),":",line!()," ",$s, "\n")))

@@ -1,6 +1,7 @@
-//! 实现了spsc单生产者单消费者模型
+//! 一对一通知
 
 use crate::sync;
+use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use alloc::sync::Arc;
@@ -39,6 +40,18 @@ impl Notifier {
             let blocker = &mut *(blocker as *mut Task);
             core::ptr::write_volatile(self.blocker.as_ref() as *const _ as *mut usize, 0);
             blocker.wakeup();
+        }
+    }
+
+    /// 产生一个信号，如果信号写入
+    /// 成功则唤醒挂起的任务否则报错
+    pub fn notify_isr(&self) -> nb::Result<(), Error> {
+        match self.signal.compare_exchange(false, true) {
+            Ok(_) => unsafe {
+                self.wakeup();
+                Ok(())
+            },
+            Err(_) => Err(nb::Error::WouldBlock),
         }
     }
 

@@ -1,11 +1,11 @@
-//! 计数信号量，公平调度，实现了mpmc多生产者多消费者模型
+//! 计数信号量，公平调度，多对多通知
 
 use crate::sync;
+use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::TaskQueue;
 use alloc::sync::Arc;
-use bare_metal::Mutex;
 use core::cell::RefCell;
 use crossbeam::atomic::AtomicCell;
 
@@ -15,53 +15,81 @@ use crossbeam::atomic::AtomicCell;
 /// 当信号量大于零时从挂起队列弹出任务交给调度器
 #[derive(Clone)]
 pub struct Semaphore {
-    waiters: Arc<Mutex<RefCell<TaskQueue>>>,
-    notifiers: Arc<Mutex<RefCell<TaskQueue>>>,
+    waiters: Arc<RefCell<TaskQueue>>,
+    notifiers: Arc<RefCell<TaskQueue>>,
     signal: Arc<AtomicCell<u64>>, //信号量
+    max_value: u64,
 }
 
 unsafe impl Send for Semaphore {}
 impl Semaphore {
     pub fn new() -> Self {
-        Self::with_value(0)
+        Self::with_signal(0)
     }
 
-    pub fn with_value(value: u64) -> Self {
+    pub fn with_signal(signal: u64) -> Self {
+        Self::with_signal_max_value(signal, u64::MAX)
+    }
+
+    pub fn with_max_value(max_value: u64) -> Self {
+        Self::with_signal_max_value(0, max_value)
+    }
+
+    pub fn with_signal_max_value(signal: u64, max_value: u64) -> Self {
         Self {
-            waiters: Arc::new(Mutex::new(RefCell::new(TaskQueue::new()))),
-            notifiers: Arc::new(Mutex::new(RefCell::new(TaskQueue::new()))),
-            signal: Arc::new(AtomicCell::new(value)),
+            waiters: Arc::new(RefCell::new(TaskQueue::new())),
+            notifiers: Arc::new(RefCell::new(TaskQueue::new())),
+            signal: Arc::new(AtomicCell::new(signal)),
+            max_value: max_value,
         }
     }
 }
 
 impl Semaphore {
+    /// 发送信号
+    /// 可以在中断服务中使用
+    ///
+    pub fn post_isr(&self) -> nb::Result<(), Error> {
+        loop {
+            if self.signal.fetch_add(1) <= self.max_value {
+                unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                        if let Some(waiter) = waiter.as_mut() {
+                            waiter.wakeup();
+                        }
+                    }
+                };
+            } else {
+                return Err(nb::Error::Other(Error::SemaphoreFull));
+            }
+        }
+    }
+    /// 发送信号
+    /// 不能在中断服务中使用
     pub fn post(&self) {
         loop {
-            if self.signal.fetch_add(1) == u64::MAX {
-                sync::free(|cs| {
-                    let task = xworker.current();
-                    self.notifiers
-                        .borrow(*cs)
-                        .borrow_mut()
-                        .push_back(task as *mut Task);
-                    task.block();
-                });
-            } else {
-                sync::free(|cs| unsafe {
-                    if let Some(waiter) = self.waiters.borrow(*cs).borrow_mut().pop_front() {
+            if self.signal.fetch_add(1) <= self.max_value {
+                sync::free(|_| unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
                         if let Some(waiter) = waiter.as_mut() {
                             waiter.wakeup();
                         }
                     }
                 });
                 break;
+            } else {
+                sync::free(|_| {
+                    let task = xworker.current();
+                    self.notifiers.borrow_mut().push_back(task as *mut Task);
+                    task.block();
+                });
             }
         }
     }
 
     /// 等待一个信号量
     /// 禁止在中断服务中调用
+    /// 注意：不要同时使用post_isr和post，不然可能会错误的唤醒poster
     pub fn wait(&self) {
         loop {
             match self.signal.fetch_update(
@@ -74,8 +102,8 @@ impl Semaphore {
                 },
             ) {
                 Ok(_) => {
-                    sync::free(|cs| unsafe {
-                        if let Some(poster) = self.notifiers.borrow(*cs).borrow_mut().pop_front() {
+                    sync::free(|_| unsafe {
+                        if let Some(poster) = self.notifiers.borrow_mut().pop_front() {
                             if let Some(poster) = poster.as_mut() {
                                 poster.wakeup();
                             }
@@ -84,9 +112,9 @@ impl Semaphore {
                     break;
                 }
                 Err(_) => {
-                    sync::free(|cs| {
+                    sync::free(|_| {
                         let task = xworker.current();
-                        self.waiters.borrow(*cs).borrow_mut().push_back(task);
+                        self.waiters.borrow_mut().push_back(task);
 
                         task.block();
                     });

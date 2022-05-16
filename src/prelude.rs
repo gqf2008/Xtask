@@ -1,5 +1,5 @@
 pub use crate::allocator::{free as free_memory, init as init_heap, used as used_memory};
-pub use crate::sync::{broadcast::*, mutex::*, notifier::*, queue::*, semaphore::*};
+pub use crate::sync::{broadcast::*, mutex::*, notify::*, queue::*, semaphore::*};
 
 pub use crate::bus::*;
 pub use crate::sync::*;

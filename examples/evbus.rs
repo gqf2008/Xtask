@@ -76,28 +76,50 @@ fn example_bus() {
         Key(u8),
         Mouse(isize, isize),
     }
-
-    BUS.subscribe("ev.key", |topic, ev| match ev {
+    let kqueue = Queue::new();
+    let krecv = kqueue.clone();
+    let mqueue = Queue::new();
+    let mrecv = mqueue.clone();
+    BUS.subscribe("ev.key", move |topic, ev| match ev {
         Event::Key(code) => {
             sprintln!("{} {:?}", topic, ev);
+            //kqueue.push_back_isr(ev);
+            kqueue.push_back(ev);
         }
         _ => {}
     });
-    BUS.subscribe("ev.mouse", |topic, ev| match ev {
+    BUS.subscribe("ev.mouse", move |topic, ev| match ev {
         Event::Mouse(x, y) => {
             sprintln!("{} {:?}", topic, ev);
+            //mqueue.push_back_isr(ev);
+            mqueue.push_back(ev);
         }
         _ => {}
     });
 
-    TaskBuilder::new().name("events").spawn(move || loop {
+    /// 模拟两个中断服务程序
+    TaskBuilder::new().name("isr1").spawn(move || loop {
         BUS.publish("ev.key", Event::Key(8));
         xtask::sleep_ms(1000);
     });
-    TaskBuilder::new().name("events").spawn(move || loop {
+    TaskBuilder::new().name("isr2").spawn(move || loop {
         BUS.publish("ev.mouse", Event::Mouse(8378, 10036));
-        xtask::sleep_ms(500);
+        xtask::sleep_ms(100);
     });
+
+    /// 两个从中断服务接收数据的服务
+    TaskBuilder::new().name("key.service").spawn(move || loop {
+        if let Some(msg) = krecv.pop_front() {
+            sprintln!("收到消息key {:?}", msg);
+        }
+    });
+    TaskBuilder::new()
+        .name("mouse.service")
+        .spawn(move || loop {
+            if let Some(msg) = mrecv.pop_front() {
+                sprintln!("收到消息mouse {:?}", msg);
+            }
+        });
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
