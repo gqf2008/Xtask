@@ -35,8 +35,8 @@
 
 如果您有一块longan-nano最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
 
-![多任务调试1](debug/gd32vf103/debug1.png "task1")
-![多任务调试2](debug/gd32vf103/debug2.png "task2")
+![多任务调试1](debug/gd32vf103/debug1.png =100)
+![多任务调试2](debug/gd32vf103/debug2.png =100)
 
 1. 打开一个终端
     - cd debug/gd32vf103
