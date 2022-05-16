@@ -57,6 +57,8 @@
         - cargo run --example queue --release --all-features
     - 信号量示例，两个发，三个收
         - cargo run --example semaphore --release --all-features
+    - 消息服务总线示例，
+        - cargo run --example evbus --release --all-features
 4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
