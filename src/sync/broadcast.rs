@@ -8,13 +8,6 @@ use alloc::sync::Arc;
 use bare_metal::Mutex;
 use core::cell::RefCell;
 
-pub type Result<T> = core::result::Result<T, Error>;
-
-#[derive(Debug)]
-pub enum Error {
-    Timeout,
-}
-
 #[derive(Clone)]
 pub struct Broadcast {
     waiters: Arc<Mutex<RefCell<TaskQueue>>>,

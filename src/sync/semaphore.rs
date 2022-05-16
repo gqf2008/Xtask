@@ -9,13 +9,6 @@ use bare_metal::Mutex;
 use core::cell::RefCell;
 use crossbeam::atomic::AtomicCell;
 
-pub type Result<T> = core::result::Result<T, Error>;
-
-#[derive(Debug)]
-pub enum Error {
-    Timeout,
-}
-
 /// 信号量
 /// 设计思想是维护两个任务挂起队列
 /// 当信号量为零时挂起当前任务到挂起队列

@@ -1,40 +1,19 @@
 #![no_std]
 #![no_main]
 extern crate alloc;
-
 use alloc::format;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::arch::asm;
-use core::arch::global_asm;
 use gd32vf103xx_hal as hal;
-use hal::{
-    backup_domain::BkpExt,
-    eclic::{EclicExt, Level, LevelPriorityBits, Priority, TriggerType},
-    gpio::GpioExt,
-    pac,
-    prelude::*,
-    rcu::RcuExt,
-    rtc::Rtc,
-    signature,
-    timer::{Event, Timer},
-};
+use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt, signature};
 use xtask::bsp::longan_nano::led::BLUE;
 use xtask::bsp::longan_nano::led::GREEN;
 use xtask::bsp::longan_nano::led::RED;
-use xtask::sync::broadcast::Broadcast;
-use xtask::sync::queue::Queue;
 
-use pac::interrupt::Nr;
-use pac::{interrupt, Interrupt, CTIMER, ECLIC, RTC};
 use panic_halt as _;
-use riscv_rt as rt;
+use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
-use xtask::sprintln;
-use xtask::sync::notifier::Notifier;
-use xtask::sync::semaphore::Semaphore;
 
 #[rt::entry]
 fn main() -> ! {
@@ -94,14 +73,14 @@ fn main() -> ! {
 fn example_notify() {
     let notifier = Notifier::new();
     let waiter = notifier.clone();
-    xtask::spawn2("notifier", move || loop {
-        // sprintln!("发送通知信号 {}", xtask::tick());
+    TaskBuilder::new().name("notifier").spawn(move || loop {
+        //  sprintln!("发送通知信号 {}", xtask::tick());
         notifier.notify();
         xtask::sleep_ms(1000);
     });
-    xtask::spawn2("waiter", move || loop {
+    TaskBuilder::new().name("waiter").spawn(move || loop {
         waiter.wait();
-        //sprintln!("收到通知信号 {}", xtask::tick());
+        // sprintln!("收到通知信号 {}", xtask::tick());
     });
 }
 
@@ -112,28 +91,29 @@ fn example_broadcast() {
     let waiter3 = caster.clone();
     let waiter4 = caster.clone();
     let waiter5 = caster.clone();
-    xtask::spawn2("caster", move || loop {
+
+    TaskBuilder::new().name("caster").spawn(move || loop {
         // sprintln!("发送广播信号 {}", xtask::tick());
         caster.notify();
         xtask::sleep_ms(1000);
     });
-    xtask::spawn2("listener1", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter1.wait();
         // sprintln!("1收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener2", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter2.wait();
-        //sprintln!("2收到广播信号 {}", xtask::tick());
+        //  sprintln!("2收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener3", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter3.wait();
         // sprintln!("3收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener4", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter4.wait();
-        //sprintln!("4收到广播信号 {}", xtask::tick());
+        // sprintln!("4收到广播信号 {}", xtask::tick());
     });
-    xtask::spawn2("listener5", move || loop {
+    TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter5.wait();
         // sprintln!("5收到广播信号 {}", xtask::tick());
     });
@@ -148,42 +128,47 @@ fn example_queue() {
     let qsender = Queue::new();
     let qsender2 = qsender.clone();
     let qrecv = qsender.clone();
-    let qrecv = qsender.clone();
     let qrecv2 = qsender.clone();
-    xtask::spawn2("queue.sender", move || {
+    let qrecv3 = qsender.clone();
+    TaskBuilder::new().name("queue.sender1").spawn(move || {
         let mut id = 0;
         loop {
             id += 1;
             let msg = Message {
                 id,
-                msg: format!("这是一条消息 {}", xtask::tick()),
+                msg: format!("这是一条消息1 {}", xtask::tick()),
                 data: Vec::new(),
             };
             qsender.push_back(msg);
             xtask::sleep_ms(100);
         }
     });
-    xtask::spawn2("queue.sender", move || {
+    TaskBuilder::new().name("queue.sender2").spawn(move || {
         let mut id = 0;
         loop {
             id += 1;
             let msg = Message {
                 id,
-                msg: format!("这是一条消息 {}", xtask::tick()),
+                msg: format!("这是一条消息2 {}", xtask::tick()),
                 data: Vec::new(),
             };
             qsender2.push_back(msg);
             xtask::sleep_ms(100);
         }
     });
-    xtask::spawn2("queue.recv", move || loop {
+    TaskBuilder::new().name("queue.recv1").spawn(move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            // sprintln!("收到消息 {:?}", msg);
+            // sprintln!("收到消息1 {:?}", msg);
         }
     });
-    xtask::spawn2("queue.recv", move || loop {
+    TaskBuilder::new().name("queue.recv2").spawn(move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            // sprintln!("收到消息 {:?}", msg);
+            // sprintln!("收到消息2 {:?}", msg);
+        }
+    });
+    TaskBuilder::new().name("queue.recv3").spawn(move || loop {
+        if let Some(msg) = qrecv3.pop_front() {
+            // sprintln!("收到消息3 {:?}", msg);
         }
     });
 }
@@ -194,29 +179,39 @@ fn example_semaphore() {
     let recver = sender.clone();
     let recver2 = sender.clone();
     let recver3 = sender.clone();
-    xtask::spawn2("semaphore.poster1", move || loop {
-        //  sprintln!("发送计数信号");
-        sender.post();
-        xtask::sleep_ms(100);
-    });
-    xtask::spawn2("semaphore.poster2", move || loop {
-        // sprintln!("发送计数信号");
-        sender2.post();
-        xtask::sleep_ms(100);
-    });
+    TaskBuilder::new()
+        .name("semaphore.poster1")
+        .spawn(move || loop {
+            //  sprintln!("发送计数信号");
+            sender.post();
+            xtask::sleep_ms(100);
+        });
+    TaskBuilder::new()
+        .name("semaphore.poster2")
+        .spawn(move || loop {
+            //sprintln!("发送计数信号");
+            sender2.post();
+            xtask::sleep_ms(100);
+        });
 
-    xtask::spawn2("semaphore.waiter", move || loop {
-        recver.wait();
-        //sprintln!("收到计数信号");
-    });
-    xtask::spawn2("semaphore.waiter2", move || loop {
-        recver2.wait();
-        // sprintln!("收到计数信号");
-    });
-    xtask::spawn2("semaphore.waiter3", move || loop {
-        recver3.wait();
-        // sprintln!("收到计数信号");
-    });
+    TaskBuilder::new()
+        .name("semaphore.waiter1")
+        .spawn(move || loop {
+            recver.wait();
+            //sprintln!("收到计数信号");
+        });
+    TaskBuilder::new()
+        .name("semaphore.waiter2")
+        .spawn(move || loop {
+            recver2.wait();
+            //sprintln!("收到计数信号");
+        });
+    TaskBuilder::new()
+        .name("semaphore.waiter3")
+        .spawn(move || loop {
+            recver3.wait();
+            //sprintln!("收到计数信号");
+        });
 }
 
 fn example_task() {
@@ -254,24 +249,33 @@ fn example_task() {
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
-    xtask::spawn4("green", 256, 1, move || loop {
-        green.on();
-        xtask::sleep_ms(500);
-        green.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("green")
+        .priority(1)
+        .spawn(move || loop {
+            green.on();
+            xtask::sleep_ms(500);
+            green.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("red", 256, 1, move || loop {
-        red.on();
-        xtask::sleep_ms(500);
-        red.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("red")
+        .priority(1)
+        .spawn(move || loop {
+            red.on();
+            xtask::sleep_ms(500);
+            red.off();
+            xtask::sleep_ms(500);
+        });
 
-    xtask::spawn4("blue", 256, 1, move || loop {
-        blue.on();
-        xtask::sleep_ms(500);
-        blue.off();
-        xtask::sleep_ms(500);
-    });
+    TaskBuilder::new()
+        .name("blue")
+        .priority(1)
+        .spawn(move || loop {
+            blue.on();
+            xtask::sleep_ms(500);
+            blue.off();
+            xtask::sleep_ms(500);
+        });
 }
