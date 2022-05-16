@@ -13,4 +13,4 @@ pub const TICK_CLOCK_HZ: usize = 1000;
 /// 是否启用软件定时器
 pub const TIMER_TASK_ENABLE: bool = false;
 /// 是否启用调试任务
-pub const DEBUG_TASK_ENABLE: bool = true;
+pub const DEBUG_TASK_ENABLE: bool = false;

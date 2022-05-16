@@ -81,13 +81,7 @@ impl<'a> TaskBuilder<'a> {
         }
         let f: Box<Box<dyn FnOnce() + Send + 'static>> = Box::new(Box::new(f));
         let args = &*f as *const _ as *mut c_void;
-        let task = Task::new(
-            self.name.to_string(),
-            self.stack_size,
-            self.priority,
-            entry,
-            args,
-        );
+        let task = Task::new(self.name, self.stack_size, self.priority, entry, args);
         core::mem::forget(f);
         schedulee.submit(task);
     }
