@@ -19,7 +19,7 @@
 - [x] mpmc队列  
 - [x] 临界段 
 - [x] 简单的任务栈溢出检查 
-- [ ] 互斥锁
+- [x] PubSub模式消息总线
 - [ ] 软件定时器 
 
 ### 移植的芯片  
@@ -57,6 +57,8 @@
         - cargo run --example queue --release --all-features
     - 信号量示例，两个发，三个收
         - cargo run --example semaphore --release --all-features
+    - 消息服务总线示例，
+        - cargo run --example evbus --release --all-features
 4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
