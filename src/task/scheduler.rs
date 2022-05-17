@@ -1,8 +1,8 @@
 //! 调度器抽象
-
+#[cfg(feature = "debug_task")]
+mod debug;
 mod idle;
-mod misc;
-mod xtask;
+pub(crate) mod xtask;
 pub(crate) mod xworker;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
@@ -16,6 +16,10 @@ use xtask::XTaskScheduler;
 pub(crate) static schedulee: XTaskScheduler = ();
 
 pub fn start() -> ! {
+    #[cfg(feature = "timer")]
+    crate::timer::start_timer_task();
+    #[cfg(feature = "debug_task")]
+    debug::start_debug_task();
     schedulee.start()
 }
 pub(crate) unsafe fn exit_current_task() {

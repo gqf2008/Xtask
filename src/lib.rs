@@ -6,6 +6,7 @@
 #![feature(alloc_error_handler)]
 #![feature(ptr_internals)]
 #![feature(const_btree_new)]
+#![feature(binary_heap_retain)]
 
 extern crate alloc;
 
@@ -20,6 +21,7 @@ pub mod prelude;
 pub mod sync;
 pub mod task;
 pub mod time;
+#[cfg(feature = "timer")]
 pub mod timer;
 
 pub use prelude::*;

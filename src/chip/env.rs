@@ -10,7 +10,5 @@ pub const CPU_CLOCK_HZ: usize = 108000000;
 pub const RTC_CLOCK_HZ: usize = 108000000 / 4;
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
 pub const TICK_CLOCK_HZ: usize = 1000;
-/// 是否启用软件定时器
-pub const TIMER_TASK_ENABLE: bool = false;
-/// 是否启用调试任务
-pub const DEBUG_TASK_ENABLE: bool = false;
+/// 软件定时器任务栈大小（单位：字长），默认1k字节栈空间
+pub const TIMER_STACK_SIZE_WORD: usize = 256;

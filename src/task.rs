@@ -200,18 +200,18 @@ impl Task {
 }
 impl Task {
     /// 挂起任务，立即立刻中断
-    /// 这段代码需要临界区保护，不允许被中断
+    /// 这段代码需要临界区保护，禁止在中断里调用
     pub(crate) fn block(&mut self) {
         self.state = State::Suspended;
         self.queue = None;
         yield_now();
     }
     /// 唤醒任务，进入就绪队列待调度
-    /// 这段代码需要临界区保护，不允许被中断
+    /// 这个函数如果在用户任务里调用需要临界区保护
     pub(crate) fn wakeup(&mut self) {
         if self.state == State::Suspended {
             self.state = State::Ready;
-            schedulee.submit(self);
+            unsafe { scheduler::xtask::submit(self) };
         }
     }
     //任务退出，立即立刻中断
@@ -227,27 +227,7 @@ impl Task {
         if let Some(from) = &mut self.queue {
             if *from != target {
                 (*from).retain(|item| *item != ptr);
-                // isr_sprint!(
-                //     "{}:{} '{}'/{}/{:?} from {:p}",
-                //     Location::caller().file(),
-                //     Location::caller().line(),
-                //     self.name,
-                //     self.priority,
-                //     self.state,
-                //     *from
-                // );
             }
-            // isr_sprintln!(" to {:p}", target,);
-        } else {
-            // isr_sprintln!(
-            //     "{}:{} '{}'/{}/{:?} to {:p}",
-            //     Location::caller().file(),
-            //     Location::caller().line(),
-            //     self.name,
-            //     self.priority,
-            //     self.state,
-            //     target
-            // );
         }
         target.push_back(self);
         self.queue = Some(target);

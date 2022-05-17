@@ -1,37 +1,14 @@
-//! 杂项
+//! 打印出任务列表
 
-use crate::chip::{DEBUG_TASK_ENABLE, TIMER_TASK_ENABLE};
-use crate::scheduler::Scheduler;
 use crate::task::executor::{xworker, Executor};
+use crate::task::sleep_ms;
+use crate::task::Task;
 use crate::*;
-
-use crate::task::{sleep_ms, DEBUG_TIMER_NAME};
-use crate::task::{Task, TIMER_TASK_NAME};
 use core::ffi::c_void;
 
-/// 启动几个系统任务
-pub(crate) fn start_sys_task() {
-    if TIMER_TASK_ENABLE {
-        start_timer_task();
-    }
-    if DEBUG_TASK_ENABLE {
-        start_debug_task();
-    }
-}
+use crate::task::DEBUG_TIMER_NAME;
 
-fn start_timer_task() {
-    fn timer_task(_args: *mut c_void) {
-        loop {
-            sprintln!(":{} {}", xworker.current().name(), systick());
-            sleep_ms(1000);
-        }
-    }
-
-    let task = Task::new(TIMER_TASK_NAME, 1024, 1, timer_task, core::ptr::null_mut());
-    crate::task::schedulee.submit(task);
-}
-
-fn start_debug_task() {
+pub(crate) fn start_debug_task() {
     fn debug_task(_args: *mut c_void) {
         loop {
             let ticks_sec = tick_ms() / 1000 / 60;
@@ -56,9 +33,10 @@ fn start_debug_task() {
     }
 
     let task = Task::new(DEBUG_TIMER_NAME, 256, 16, debug_task, core::ptr::null_mut());
-    crate::task::schedulee.submit(task);
+    unsafe {
+        crate::task::scheduler::xtask::submit(task);
+    }
 }
-
 unsafe fn print_ready_task() {
     use super::xtask::*;
     let readys = &[
@@ -73,7 +51,6 @@ unsafe fn print_ready_task() {
         }
     }
 }
-
 unsafe fn print_blocked_task() {
     use super::xtask::*;
     if let Some(q) = &BLOCKED {
@@ -82,7 +59,6 @@ unsafe fn print_blocked_task() {
         });
     }
 }
-
 unsafe fn print_delay_task() {
     use super::xtask::*;
     if let Some(q) = &DELAY {

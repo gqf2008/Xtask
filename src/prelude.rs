@@ -6,5 +6,6 @@ pub use crate::sync::*;
 pub use crate::task::scheduler::start;
 pub use crate::task::*;
 pub use crate::time::*;
+pub use crate::timer;
 pub use crate::{sprint, sprintln};
 pub use bare_metal::*;
