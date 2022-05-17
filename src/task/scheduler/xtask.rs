@@ -7,7 +7,6 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use super::idle::start_idle_task;
-use super::misc::start_sys_task;
 
 pub(super) type XTaskScheduler = ();
 
@@ -23,9 +22,7 @@ impl Scheduler for XTaskScheduler {
                 init_queue();
             }
         }
-
         start_idle_task();
-        start_sys_task();
         Porting::start_scheduler()
     }
     /// 提交一个任务进队列，待调度
@@ -106,7 +103,7 @@ impl Scheduler for XTaskScheduler {
 /// 任务入队列
 #[track_caller]
 #[inline(always)]
-unsafe fn submit(task: *mut Task) {
+pub(crate) unsafe fn submit(task: *mut Task) {
     if !INITED {
         init_queue();
     }

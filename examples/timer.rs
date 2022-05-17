@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+
 extern crate alloc;
 
 use gd32vf103xx_hal as hal;
@@ -9,7 +10,6 @@ use xtask::bsp::longan_nano::led::GREEN;
 use xtask::bsp::longan_nano::led::RED;
 
 use panic_halt as _;
-
 use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
@@ -59,67 +59,39 @@ fn init() {
     //三个led
     example_led(red, green, blue);
 }
+
 #[rt::entry]
 fn main() -> ! {
     //初始化外设&内存
     init();
-    //bus
-    example_bus();
+    xtask::spawn(|| {
+        timer::Timer::after(10000, || sprintln!("一次性定时任务10000"));
+        timer::Timer::after(20000, || sprintln!("一次性定时任务20000"));
+        static mut TIMER: Option<timer::Timer> = None;
+        static mut TIMER2: Option<timer::Timer> = None;
+        let timer = timer::Timer::period(1000, || {
+            sprintln!("周期定时任务1000");
+        });
+        let timer2 = timer::Timer::period(5000, || {
+            sprintln!("周期定时任务5000");
+        });
+        unsafe {
+            TIMER.replace(timer);
+            TIMER2.replace(timer2);
+        }
+
+        sleep_ms(30000);
+        free(|_| unsafe {
+            TIMER.take();
+        });
+        sleep_ms(60000);
+        free(|_| unsafe {
+            TIMER2.take();
+        });
+    });
+
     //启动调度器
     xtask::start()
-}
-
-fn example_bus() {
-    static BUS: Bus<Event> = Bus::new();
-    #[derive(Debug, Clone, Copy)]
-    enum Event {
-        Key(u8),
-        Mouse(isize, isize),
-    }
-    let kqueue = Queue::new();
-    let krecv = kqueue.clone();
-    let mqueue = Queue::new();
-    let mrecv = mqueue.clone();
-    BUS.subscribe("ev.key", move |topic, ev| match ev {
-        Event::Key(code) => {
-            //sprintln!("{} {:?}", topic, ev);
-            //kqueue.push_back_isr(ev);
-            kqueue.push_back(ev);
-        }
-        _ => {}
-    });
-    BUS.subscribe("ev.mouse", move |topic, ev| match ev {
-        Event::Mouse(x, y) => {
-            //sprintln!("{} {:?}", topic, ev);
-            //mqueue.push_back_isr(ev);
-            mqueue.push_back(ev);
-        }
-        _ => {}
-    });
-
-    /// 模拟两个中断服务程序
-    TaskBuilder::new().name("isr1").spawn(move || loop {
-        BUS.publish("ev.key", Event::Key(8));
-        xtask::sleep_ms(1000);
-    });
-    TaskBuilder::new().name("isr2").spawn(move || loop {
-        BUS.publish("ev.mouse", Event::Mouse(8378, 10036));
-        xtask::sleep_ms(100);
-    });
-
-    /// 两个从中断服务接收数据的服务
-    TaskBuilder::new().name("key.service").spawn(move || loop {
-        if let Some(msg) = krecv.pop_front() {
-            sprintln!("收到消息key {:?}", msg);
-        }
-    });
-    TaskBuilder::new()
-        .name("mouse.service")
-        .spawn(move || loop {
-            if let Some(msg) = mrecv.pop_front() {
-                sprintln!("收到消息mouse {:?}", msg);
-            }
-        });
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
