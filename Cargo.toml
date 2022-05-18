@@ -23,13 +23,13 @@ timer = []
 # 默认调度器
 xtask_scheduler = []
 # 芯片 
-chip = ["gd32vf103"]
+chip = ["stm32f4"]
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal"]
-# stm32f10x
-stm32f10x = []
-# stm32f40x
-stm32f40x = []
+# stm32f1xx
+stm32f1 = []
+# stm32f4xx
+stm32f4 = ["stm32f4xx-hal"]
 # 板级支持包
 bsp = ["longan_nano"]
 # longan_nano
@@ -47,12 +47,20 @@ nb = "1.0.0"
 profont = "0.4.0"
 spin = "0.9.3"
 
-gd32vf103xx-hal = {path = "hal/gd32vf103xx-hal", optional = true}
 # mpu6050 = "0.1.4"
 # nalgebra = {version = "0.28.0", default-features = false, features = ["alloc", "macros", "rand-no-std", "libm"]}
 # optimath = "0.3.1"
 mpu6050 = {version = "0.1.4", optional = true}
 st7735-lcd = {version = "0.8", optional = true}
+
+[dependencies.gd32vf103xx-hal]
+optional = true
+path = "hal/gd32vf103xx-hal"
+
+[dependencies.stm32f4xx-hal]
+features = ["rt", "stm32f401"]
+optional = true
+version = "0.13.2"
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.4"

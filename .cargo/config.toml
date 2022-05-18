@@ -1,7 +1,7 @@
 [env]
 
 [build]
-target = "riscv32imac-unknown-none-elf"
+target = "thumbv7em-none-eabihf"
 
 [target.riscv32imac-unknown-none-elf]
 runner = 'riscv64-unknown-elf-gdb -x openocd.gdb'
@@ -10,21 +10,9 @@ rustflags = [
   "-Clink-arg=-Tlink.x",
 ]
 
-[target.x86_64-unknown-linux-gnu]
-linker = '/usr/bin/clang'
+[target.thumbv7em-none-eabihf]
+runner = 'probe-run --chip stm32f401'
 rustflags = [
-  '-Clink-arg=-fuse-ld=lld',
-  '-Zshare-generics=y',
-]
-
-[target.x86_64-pc-windows-msvc]
-linker = 'rust-lld.exe'
-rustflags = ['-Zshare-generics=y']
-
-[target.x86_64-apple-darwin]
-rustflags = [
-  '-C',
-  'link-arg=-fuse-ld=/usr/local/bin/zld',
-  '-Zshare-generics=y',
-  '-Csplit-debuginfo=unpacked',
+  "-C",
+  "link-arg=-Tlink.x",
 ]
