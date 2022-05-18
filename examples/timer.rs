@@ -14,13 +14,13 @@ use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
 
-fn init() {
+unsafe fn init() {
     extern "C" {
         /// 堆内存开始地址，在riscv-rt link.x文件里定义
         static _sheap: u8;
         //static _heap_size: u8; //默认为2k
     }
-    let start_addr = unsafe { &_sheap as *const u8 as usize };
+    let start_addr = &_sheap as *const u8 as usize;
     xtask::init_heap(start_addr, 32 * 1024);
 
     let dp = pac::Peripherals::take().unwrap();
@@ -63,7 +63,7 @@ fn init() {
 #[rt::entry]
 fn main() -> ! {
     //初始化外设&内存
-    init();
+    unsafe { init() };
     xtask::spawn(|| {
         timer::Timer::after(10000, || sprintln!("一次性定时任务10000"));
         timer::Timer::after(20000, || sprintln!("一次性定时任务20000"));
