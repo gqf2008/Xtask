@@ -3,6 +3,7 @@
         "window.zoomLevel": 0,
         "editor.formatOnSave": true,
         "rust-analyzer.cargo.target": "thumbv7em-none-eabihf",
+        //"rust-analyzer.cargo.target": "riscv32imac-unknown-none-elf",
         "rust-analyzer.checkOnSave.allTargets": false,
         "rust-analyzer.lru.capacity": 1000, // 分析器最大缓存深度
     }

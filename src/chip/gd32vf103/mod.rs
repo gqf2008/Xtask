@@ -5,8 +5,7 @@
 mod port;
 pub mod stdout;
 
-use super::{CPU_CLOCK_HZ, RTC_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
-use crate::arch::riscv;
+use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
 use crate::task::Task;
@@ -94,7 +93,7 @@ impl Portable for Gd32vf103Porting {
     /// 1. 配置定时器中断、软中断触发类型和优先级
     /// 2、把第一个任务恢复到CPU中，内联汇编实现
     fn start_scheduler() -> ! {
-        Self::reset_systick();
+        reset_systick();
         //配置中断，这个函数就是定时中断和软中断使能
         setup_intrrupt();
         //从任务栈恢复CPU状态，汇编实现
@@ -139,27 +138,6 @@ impl Portable for Gd32vf103Porting {
 
     /// 重新设置mtimecmp寄存器
     /// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
-    #[inline]
-    fn reset_systick() {
-        /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
-        /// RTC_CLOCK_HZ、TICK_CLOCK_HZ在env.rs里配置
-        const TICKS: usize = RTC_CLOCK_HZ / TICK_CLOCK_HZ;
-        /// 设置mtimecmp比较寄存器
-        fn set_mtimecmp(v: u64) {
-            let hi = ((v >> 32) as u32) & 0xffffffff;
-            let lo = (v as u32) & 0xffffffff;
-            let mtimecmp_lo = (TIMER_CTRL_ADDR + TIMER_MTIMECMP) as *mut u32;
-            let mtimecmp_hi = (TIMER_CTRL_ADDR + TIMER_MTIMECMP + 4) as *mut u32;
-            unsafe {
-                mtimecmp_lo.write_volatile(0xffffffff);
-                mtimecmp_hi.write_volatile(hi);
-                mtimecmp_lo.write_volatile(lo);
-            }
-        }
-        let mtime = Self::systick();
-        let mtimecmp = TICKS as u64 + mtime;
-        set_mtimecmp(mtimecmp);
-    }
 
     /// 硬件延时，单位us
     #[inline]
@@ -214,4 +192,26 @@ impl Portable for Gd32vf103Porting {
     fn printf(str: &str) {
         stdout::write_str(str)
     }
+}
+
+#[inline]
+pub(crate) fn reset_systick() {
+    /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
+    /// RTC_CLOCK_HZ、TICK_CLOCK_HZ在env.rs里配置
+    const TICKS: usize = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ;
+    /// 设置mtimecmp比较寄存器
+    fn set_mtimecmp(v: u64) {
+        let hi = ((v >> 32) as u32) & 0xffffffff;
+        let lo = (v as u32) & 0xffffffff;
+        let mtimecmp_lo = (TIMER_CTRL_ADDR + TIMER_MTIMECMP) as *mut u32;
+        let mtimecmp_hi = (TIMER_CTRL_ADDR + TIMER_MTIMECMP + 4) as *mut u32;
+        unsafe {
+            mtimecmp_lo.write_volatile(0xffffffff);
+            mtimecmp_hi.write_volatile(hi);
+            mtimecmp_lo.write_volatile(lo);
+        }
+    }
+    let mtime = Gd32vf103Porting::systick();
+    let mtimecmp = TICKS as u64 + mtime;
+    set_mtimecmp(mtimecmp);
 }

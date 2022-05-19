@@ -4,17 +4,9 @@
 #[cfg(feature = "gd32vf103")]
 pub const TIMER_CTRL_ADDR: usize = 0xd100_0000;
 
-/// 中断控制状态寄存器地址
-#[cfg(feature = "stm32f4")]
-pub const NVIC_INT_CTL_ADDR: usize = 0xE000ED04;
-#[cfg(feature = "stm32f4")]
-pub const NVIC_SYSTICK_CTL_ADDR: usize = 0xE000E010;
-#[cfg(feature = "stm32f4")]
-pub const NVIC_SYSTICK_LOAD_ADDR: usize = 0xE000E014;
-
 /// CPU时钟频率
 pub const CPU_CLOCK_HZ: usize = 84000000;
-/// RTC时钟频率
+/// SYSTICK时钟频率
 pub const SYSTICK_CLOCK_HZ: usize = CPU_CLOCK_HZ;
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
 pub const TICK_CLOCK_HZ: usize = 1000;
