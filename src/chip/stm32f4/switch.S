@@ -16,8 +16,8 @@ SVCall:
     cpsie f # 开异常
     dsb
     isb
-    orr r14, #0xd
-    bx r14
+    orr r14, #0xd //返回任务模式，sp使用psp里的地址
+    bx r14 //svcall异常返回，使用psp指向的地址出栈，也就是回到任务栈里了
 
 // 上下文切换
 .global PendSV

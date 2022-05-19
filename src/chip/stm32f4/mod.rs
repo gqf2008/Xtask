@@ -154,11 +154,20 @@ impl Portable for STM32F4Porting {
         cortex_m::asm::delay(clock as u32);
     }
     /// 保存任务环境到任务栈
-    fn save_context(_task: &mut Task) {
-        unimplemented!()
+    fn save_context(task: &mut Task) {
+        unsafe {
+            //任务栈指针移到栈顶，也就是数组的最后一个元素起始位置
+            let mut sp = task.stack.add(task.stack_size - 1);
+            sp = ((sp as usize) & !(0x0007)) as *mut usize;
+            sp.offset(-1).write_volatile(0x01000000);
+            sp.offset(-2)
+                .write_volatile((task.entry as *const ()).addr() | 0xfffffffe);
+            sp.offset(-3)
+                .write_volatile((port::task_exit as *const ()).addr());
+            sp.offset(-8).write_volatile(task.args.addr());
+            task.sp = sp.offset(-16).addr();
+        }
     }
     /// 打印文本函数
-    fn printf(_str: &str) {
-        unimplemented!()
-    }
+    fn printf(_str: &str) {}
 }
