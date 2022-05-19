@@ -1,0 +1,142 @@
+_svd: ../GD32VF103.svd
+
+RTC:
+  "PSCH,PSCL":
+    _modify:
+      PSC:
+        access: write-only
+  _modify:
+    "ALRMH,ALRML":
+      access: write-only
+
+ECLIC:
+  _modify:
+# Fix offsets
+    CLICINTIP_85:
+      addressOffset: "0x1154"
+    CLICINTIP_86:
+      addressOffset: "0x1158"
+
+# Fix displayName:
+# * CLICINTATTR_* registers have CLICINTIE_* there
+# * Prepare for merging into a cluster: strip the "_xx" part
+    "CLICINTIP_*":
+      displayName: CLICINTIP
+    "CLICINTIE_*":
+      displayName: CLICINTIE
+    "CLICINTATTR_*":
+      displayName: CLICINTATTR
+    "CLICINTCTL_*":
+      displayName: CLICINTCTL
+
+  _cluster:
+    "CLICINTS[%s]":
+      description: "Core-local Interrupt Controller Interrupt Registers"
+      "CLICINTIP_*":
+        name: CLICINTIP
+      "CLICINTIE_*":
+        name: CLICINTIE
+      "CLICINTATTR_*":
+        name: CLICINTATTR
+      "CLICINTCTL_*":
+        name: CLICINTCTL
+
+  _add:
+    _interrupts:
+      INT_SFT:
+        value: 3
+        description: "Software interrupt"
+      INT_TMR:
+        value: 7
+        description: "Timer interrupt"
+      INT_BWEI:
+        value: 17
+        description: "Bus Error interrupt"
+      INT_PMOVI:
+        value: 18
+        description: "Performance Monitor interrupt"
+
+_add:
+  CTIMER:
+    description: "Core timer"
+    baseAddress: 0xD1000000
+    addressBlock:
+      offset: 0x0000
+      size: 0x1000
+      usage: registers
+    registers:
+      mtime_lo:
+        description: Timer value (lower half)
+        addressOffset: 0x000
+        access: read-write
+        resetValue: 0x00000000
+      mtime_hi:
+        description: Timer value (upper half)
+        addressOffset: 0x004
+        access: read-write
+        resetValue: 0x00000000
+      mtimecmp_lo:
+        description: Timer comparison value (lower half)
+        addressOffset: 0x008
+        access: read-write
+        resetValue: 0xffffffff
+      mtimecmp_hi:
+        description: Timer comparison value (upper half)
+        addressOffset: 0x00c
+        access: read-write
+        resetValue: 0xffffffff
+      mstop:
+        description: Timer control register
+        addressOffset: 0xff8
+        access: read-write
+        resetValue: 0x00000000
+        fields:
+          TIMESTOP:
+            description: Pause (1) or run (0) the timer
+            bitOffset: 0
+            bitWidth: 1
+      msip:
+        description: Software interrupt register
+        addressOffset: 0xffc
+        access: read-write
+        resetValue: 0x00000000
+        fields:
+          MSIP:
+            description: Generate software interrupts
+            bitOffset: 0
+            bitWidth: 1
+
+WWDGT:
+  _modify:
+    _interrupts:
+      WWDGT:
+        value: 19
+
+EXTI:
+  _add:
+    _interrupts:
+      EXTI_LVD:
+        value: 20
+
+
+I2C0:
+  _add:
+    _registers:
+      FMPCFG:
+        description: "Fast mode plus configure register"
+        addressOffset: 0x90
+        size: 0x10
+        access: read-write
+        resetValue: 0x0000
+        fields:
+          FMPEN:
+            description: Fast mode plus enable
+            bitOffset: 0
+            bitWidth: 1
+
+TIMER1:
+  _modify:
+    "CH*CV":
+      size: 0x10
+    DMATB:
+      size: 0x10
