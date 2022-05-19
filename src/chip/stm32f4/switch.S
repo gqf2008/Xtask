@@ -1,9 +1,13 @@
-// 调度器启动时恢复第一个任务到CPU寄存器
 
-.extern CURRENT_TASK_PTR #全局任务指针
-.extern switch_context //任务切换函数
+/*
+  调度器启动时恢复第一个任务到CPU寄存器
+*/
 
-// 恢复第一个任务
+.extern CURRENT_TASK_PTR # 全局任务指针
+.extern switch_context # 任务切换函数
+
+# 恢复第一个任务
+.section .text
 .global SVCall 
 SVCall:
     ldr r3, = CURRENT_TASK_PTR
@@ -16,10 +20,13 @@ SVCall:
     cpsie f # 开异常
     dsb
     isb
-    orr r14, #0xd //返回任务模式，sp使用psp里的地址
-    bx r14 //svcall异常返回，使用psp指向的地址出栈，也就是回到任务栈里了
+    # 返回任务模式，sp使用psp里的地址
+    orr r14, #0xd 
+    # svcall异常返回，使用psp指向的地址出栈，也就是回到任务栈里了
+    bx r14 
 
-// 上下文切换
+# 上下文切换
+.section .text
 .global PendSV
 PendSV:
     msr r0, psp

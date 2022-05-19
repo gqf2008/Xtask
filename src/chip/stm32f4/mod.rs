@@ -1,12 +1,14 @@
 mod port;
+pub mod stdout;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
 use crate::CriticalSection;
 use core::arch::asm;
+use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
-use cortex_m::peripheral::SYST;
+use cortex_m::peripheral::{SCB, SYST};
 
 pub struct STM32F4Porting;
 
@@ -16,6 +18,45 @@ unsafe fn setup_intrrupt() {
     cortex_m::peripheral::SYST::reset_current();
     cortex_m::peripheral::SYST::open_counter();
     cortex_m::peripheral::SYST::open_interrupt();
+    cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0);
+    cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0);
+}
+
+trait ScbExt {
+    unsafe fn priority(system_handler: SystemHandler, prio: u8);
+}
+
+impl ScbExt for SCB {
+    #[inline]
+    unsafe fn priority(system_handler: SystemHandler, prio: u8) {
+        let index = system_handler as u8;
+
+        #[cfg(not(armv6m))]
+        {
+            // NOTE(unsafe): Index is bounded to [4,15] by SystemHandler design.
+            // TODO: Review it after rust-lang/rust/issues/13926 will be fixed.
+            let priority_ref = (*Self::ptr()).shpr.get_unchecked(usize::from(index - 4));
+
+            priority_ref.write(prio)
+        }
+
+        #[cfg(armv6m)]
+        {
+            // NOTE(unsafe): Index is bounded to [11,15] by SystemHandler design.
+            // TODO: Review it after rust-lang/rust/issues/13926 will be fixed.
+            let priority_ref = (*Self::ptr())
+                .shpr
+                .get_unchecked(usize::from((index - 8) / 4));
+
+            priority_ref.modify(|value| {
+                let shift = 8 * (index % 4);
+                let mask = 0x0000_00ff << shift;
+                let prio = u32::from(prio) << shift;
+
+                (value & !mask) | prio
+            });
+        }
+    }
 }
 
 trait SystExt {
@@ -146,7 +187,7 @@ impl Portable for STM32F4Porting {
 
     /// 获取rtc tick
     fn systick() -> u64 {
-        unimplemented!()
+        unsafe { core::ptr::read_volatile(&port::SYSTICKS) }
     }
     /// 硬件延时，单位us
     fn delay_us(us: u64) {
@@ -169,5 +210,7 @@ impl Portable for STM32F4Porting {
         }
     }
     /// 打印文本函数
-    fn printf(_str: &str) {}
+    fn printf(str: &str) {
+        stdout::write_str(str)
+    }
 }

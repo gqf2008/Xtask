@@ -31,9 +31,11 @@ stm32f1 = []
 # stm32f4xx
 stm32f4 = ["stm32f4xx-hal"]
 # 板级支持包
-bsp = ["longan_nano"]
+bsp = ["greenpill"]
 # longan_nano
 longan_nano = ["st7735-lcd", "mpu6050"]
+# greenpill stm32f401ccu6
+greenpill = []
 
 [dependencies]
 bare-metal = "1.0.0"
