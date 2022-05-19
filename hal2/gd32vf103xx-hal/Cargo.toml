@@ -1,0 +1,23 @@
+[package]
+authors = ["The RISC-V Team <risc-v@teams.rust-embedded.org>"]
+categories = ["embedded", "hardware-support", "no-std"]
+description = "HAL for GD32VF103 microcontrollers"
+edition = "2018"
+keywords = ["riscv", "gd32", "hal"]
+license = "ISC"
+name = "gd32vf103xx-hal"
+repository = "https://github.com/riscv-rust/gd32vf103xx-hal"
+version = "0.5.0"
+
+[dependencies]
+cast = {version = "0.2.3", default-features = false}
+embedded-dma = "0.1.2"
+gd32vf103-pac = {path = "../gd32vf103-pac"}
+nb = "0.1.2"
+riscv = "0.8.0"
+vcell = "0.1.2"
+void = {version = "1.0.2", default-features = false}
+
+[dependencies.embedded-hal]
+features = ["unproven"]
+version = "0.2.3"

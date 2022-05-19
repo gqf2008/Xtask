@@ -1,0 +1,40 @@
+#[doc = "Reader of register CH6PADDR"]
+pub type R = crate::R<u32, super::CH6PADDR>;
+#[doc = "Writer for register CH6PADDR"]
+pub type W = crate::W<u32, super::CH6PADDR>;
+#[doc = "Register CH6PADDR `reset()`'s with value 0"]
+impl crate::ResetValue for super::CH6PADDR {
+    type Type = u32;
+    #[inline(always)]
+    fn reset_value() -> Self::Type {
+        0
+    }
+}
+#[doc = "Reader of field `PADDR`"]
+pub type PADDR_R = crate::R<u32, u32>;
+#[doc = "Write proxy for field `PADDR`"]
+pub struct PADDR_W<'a> {
+    w: &'a mut W,
+}
+impl<'a> PADDR_W<'a> {
+    #[doc = r"Writes raw bits to the field"]
+    #[inline(always)]
+    pub unsafe fn bits(self, value: u32) -> &'a mut W {
+        self.w.bits = (self.w.bits & !0xffff_ffff) | ((value as u32) & 0xffff_ffff);
+        self.w
+    }
+}
+impl R {
+    #[doc = "Bits 0:31 - Peripheral base address"]
+    #[inline(always)]
+    pub fn paddr(&self) -> PADDR_R {
+        PADDR_R::new((self.bits & 0xffff_ffff) as u32)
+    }
+}
+impl W {
+    #[doc = "Bits 0:31 - Peripheral base address"]
+    #[inline(always)]
+    pub fn paddr(&mut self) -> PADDR_W {
+        PADDR_W { w: self }
+    }
+}
