@@ -35,7 +35,6 @@ fn init() {
 fn main() -> ! {
     init();
 
-    loop {}
     //启动多任务
     // example_task();
     //启动调度器
@@ -81,6 +80,7 @@ fn example_led(mut blue: Led) {
         .name("blue")
         .priority(1)
         .spawn(move || loop {
+            sprintln!("example_led");
             blue.on();
             xtask::sleep_ms(500);
             blue.off();

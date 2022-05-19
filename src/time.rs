@@ -2,6 +2,7 @@
 
 use crate::chip::TICK_CLOCK_HZ;
 use crate::port::{Portable, Porting};
+#[cfg(feature = "timer")]
 use crate::timer;
 /// 启动到现在总的systick数
 static mut TICKS: u64 = 0;
