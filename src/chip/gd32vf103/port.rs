@@ -40,7 +40,7 @@ global_asm!(include_str!("port.S"));
 unsafe extern "C" fn mtimer_irq_isr() {
     //isr_sprintln!("mtimer_irq_isr");
     //设置下一次中断时间
-    super::Gd32vf103Porting::reset_systick();
+    super::reset_systick();
     scheduler::systick();
 }
 
@@ -55,7 +55,6 @@ unsafe extern "C" fn mtimer_irq_isr() {
 /// 4.从新任务恢复cpu状态在port.S里实现）
 #[export_name = "INT_SFT"]
 unsafe extern "C" fn soft_irq_isr() {
-    // isr_sprintln!("soft_irq_isr");
     //关闭软中断
     super::Gd32vf103Porting::disable_irq();
     scheduler::schedule();

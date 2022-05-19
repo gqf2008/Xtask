@@ -2,6 +2,7 @@
 
 [build]
 target = "thumbv7em-none-eabihf"
+# target = "riscv32imac-unknown-none-elf"
 
 [target.riscv32imac-unknown-none-elf]
 runner = 'riscv64-unknown-elf-gdb -x openocd.gdb'
@@ -13,6 +14,6 @@ rustflags = [
 [target.thumbv7em-none-eabihf]
 runner = 'probe-run --chip stm32f401'
 rustflags = [
-  "-C",
-  "link-arg=-Tlink.x",
+  "-Clink-arg=-Tmemory.x",
+  "-Clink-arg=-Tlink.x",
 ]

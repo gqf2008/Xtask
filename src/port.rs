@@ -21,7 +21,6 @@ pub trait Portable {
     fn free<F, R>(f: F) -> R
     where
         F: FnOnce(&CriticalSection) -> R;
-
     /// 开全局中断
     fn enable_interrupt();
     /// 关全局中断
@@ -32,9 +31,6 @@ pub trait Portable {
     fn irq();
     /// 关闭软中断
     fn disable_irq();
-
-    // /// 重置下一次中断时间
-    // fn reset_systick();
     /// 获取systick
     fn systick() -> u64;
     /// 硬件延时，单位us
@@ -82,8 +78,6 @@ impl Portable for DefaultPorting {
     fn disable_irq() {
         unimplemented!()
     }
-    // /// 重置下一次中断时间
-    // fn reset_systick() {}
     /// 获取rtc tick
     fn systick() -> u64 {
         unimplemented!()
