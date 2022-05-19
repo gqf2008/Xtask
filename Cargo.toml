@@ -55,7 +55,7 @@ st7735-lcd = {version = "0.8", optional = true}
 
 [dependencies.gd32vf103xx-hal]
 optional = true
-path = "hal/gd32vf103xx-hal"
+path = "hal2/gd32vf103xx-hal"
 
 [dependencies.stm32f4xx-hal]
 features = ["rt", "stm32f401"]
