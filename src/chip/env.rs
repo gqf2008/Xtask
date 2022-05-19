@@ -5,11 +5,15 @@
 pub const TIMER_CTRL_ADDR: usize = 0xd100_0000;
 
 /// CPU时钟频率
+#[cfg(feature = "gd32vf103")]
+pub const CPU_CLOCK_HZ: usize = 108000000;
+/// CPU时钟频率
+#[cfg(feature = "stm32f4")]
 pub const CPU_CLOCK_HZ: usize = 84000000;
 /// SYSTICK时钟频率
 pub const SYSTICK_CLOCK_HZ: usize = CPU_CLOCK_HZ;
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
-pub const TICK_CLOCK_HZ: usize = 1000;
+pub const TICK_CLOCK_HZ: usize = 10;
 
 // /// CPU时钟频率
 // pub const CPU_CLOCK_HZ: usize = 108000000;
