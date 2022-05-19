@@ -4,7 +4,7 @@ use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
-use crate::CriticalSection;
+use crate::{sprintln, CriticalSection};
 use core::arch::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
@@ -13,6 +13,7 @@ use cortex_m::peripheral::{SCB, SYST};
 pub struct STM32F4Porting;
 
 unsafe fn setup_intrrupt() {
+    sprintln!("setup_intrrupt");
     cortex_m::peripheral::SYST::clock_source(SystClkSource::External);
     cortex_m::peripheral::SYST::reload(SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32 - 1);
     cortex_m::peripheral::SYST::reset_current();
@@ -142,7 +143,7 @@ impl Portable for STM32F4Porting {
     /// 启动调度器
     fn start_scheduler() -> ! {
         //配置中断，这个函数就是定时中断和软中断使能
-
+        sprintln!("start_scheduler");
         //从任务栈恢复CPU状态，汇编实现
         unsafe {
             setup_intrrupt();
@@ -156,7 +157,7 @@ impl Portable for STM32F4Porting {
         cpsie f //使能全局异常
         dsb //数据同步
         isb //指令同步
-        svc 11  //调用SVCall异常服务，在SVCall里恢复第一个任务
+        svc 0  //调用SVCall异常服务，在SVCall里恢复第一个任务
         nop
         nop
         "
@@ -196,6 +197,7 @@ impl Portable for STM32F4Porting {
     }
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task) {
+        sprintln!("save_context");
         unsafe {
             //任务栈指针移到栈顶，也就是数组的最后一个元素起始位置
             let mut sp = task.stack.add(task.stack_size - 1);

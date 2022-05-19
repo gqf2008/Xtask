@@ -13,7 +13,8 @@ rustflags = [
 
 [target.thumbv7em-none-eabihf]
 # runner = 'probe-run --chip stm32f401'
-runner = "/Volumes/gqf/toolchain/gcc-arm-none-eabi-10-2020-q4-major/bin/arm-none-eabi-gdb -q -x openocd.gdb"
+# runner = "/Volumes/gqf/toolchain/gcc-arm-none-eabi-10-2020-q4-major/bin/arm-none-eabi-gdb -q -x openocd.gdb"
+runner = "D:\\toolchain\\arm\\bin\\arm-none-eabi-gdb -q -x openocd.gdb"
 rustflags = [
   # "-Clink-arg=-Tmemory.x",
   "-Clink-arg=-Tlink.x",

@@ -46,11 +46,11 @@ unsafe fn PendSV() {
     str r0, [r2]
 
     stmdb sp!, {{r3,r14}}
-    cpsid i // 关中断
+    cpsid i 
     dsb
     isb
     bl switch_context
-    cpsie i // 开中断
+    cpsie i 
     dsb
     isb
     ldmia sp!, {{r3,r14}}
