@@ -2,7 +2,6 @@
 
 use crate::chip::TICK_CLOCK_HZ;
 use crate::port::{Portable, Porting};
-use crate::sprintln;
 #[cfg(feature = "timer")]
 use crate::timer;
 /// 启动到现在总的systick数
@@ -11,15 +10,12 @@ static mut TICKS: u64 = 0;
 /// 每TICK多少毫秒
 const TICK_PREIOD_MS: usize = 1000 / TICK_CLOCK_HZ;
 
-/// 每毫秒多少TICK
-const MS_PREIOD_TICK: f32 = TICK_CLOCK_HZ as f32 / 1000.0;
+// /// 每毫秒多少TICK
+// const MS_PREIOD_TICK: f32 = TICK_CLOCK_HZ as f32 / 1000.0;
 
 #[inline]
 pub(crate) unsafe fn increase_tick() {
     let tick = core::ptr::read_volatile(&TICKS);
-    if tick % 1000 == 0 {
-        sprintln!("tick {}", tick);
-    }
     core::ptr::write_volatile(&mut TICKS, tick + 1);
     #[cfg(feature = "timer")]
     timer::do_tick(tick + 1);
@@ -34,10 +30,11 @@ pub fn tick() -> u64 {
 /// 毫秒转tick
 #[inline(always)]
 pub fn ms2ticks(ms: usize) -> usize {
-    if ms < TICK_PREIOD_MS {
-        return 0;
-    }
-    (ms as f32 * MS_PREIOD_TICK) as usize
+    ms * TICK_PREIOD_MS
+    // if ms < TICK_PREIOD_MS {
+    //     return 0;
+    // }
+    // (ms as f32 * MS_PREIOD_TICK) as usize
 }
 
 /// 返回tick时长，单位毫秒

@@ -4,7 +4,7 @@ use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
-use crate::{isr_sprintln, sprintln, CriticalSection};
+use crate::{sprintln, CriticalSection};
 use core::arch::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
@@ -27,11 +27,10 @@ unsafe fn enable_vfp() {
 }
 
 unsafe fn setup_intrrupt() {
-    sprintln!("setup_intrrupt");
     cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0xff);
     cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xfe);
-    cortex_m::peripheral::SYST::clock_source(SystClkSource::External);
-    cortex_m::peripheral::SYST::reload(SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32 - 1);
+    cortex_m::peripheral::SYST::clock_source(SystClkSource::Core);
+    cortex_m::peripheral::SYST::reload(16000000 / 1000 - 1);
     cortex_m::peripheral::SYST::reset_current();
     cortex_m::peripheral::SYST::open_counter();
     cortex_m::peripheral::SYST::open_interrupt();
@@ -142,7 +141,20 @@ impl Portable for STM32F4Porting {
         unsafe {
             setup_intrrupt();
             //enable_vfp();
-            asm!(include_str!("restore_ctx.S"))
+            asm!(
+                "
+            ldr r0, =0xE000ED08 // 向量表地址，将 0xE000ED08 加载到 R0
+            ldr r0, [r0] //将 0xE000ED08 中的值，也就是向量表的实际地址加载到 R0
+            ldr r0, [r0] //根据向量表实际存储地址，取出向量表中的第一项,向量表第一项存储主堆栈指针MSP的初始值
+            msr msp, r0 //将堆栈地址写入主堆栈指针
+            cpsie i //使能全局中断
+            cpsie f //使能全局异常
+            dsb //数据同步，将流水线中的数据全部执行完毕
+            isb //指令同步，将流水线中的指令全部执行完毕
+            svc 0xff  //调用SVCall异常服务，在SVCall里恢复第一个任务
+            nop
+            "
+            )
         };
         panic!("~!@#$%^&*()_")
     }
@@ -169,7 +181,7 @@ impl Portable for STM32F4Porting {
         unsafe {
             //任务栈指针移到栈顶，也就是数组的最后一个元素起始位置
             let mut sp = task.stack.add(task.stack_size - 1);
-            sp = (sp.addr() & !0x0007) as *mut usize;
+            // sp = (sp.addr() & !0x0007) as *mut usize;
             sp = sp.offset(-1);
             sp.write_volatile(0x01000000); /* xPSR */
             sp = sp.offset(-1);
@@ -182,7 +194,6 @@ impl Portable for STM32F4Porting {
             sp.write_volatile(0xfffffffd); //返回线程模式，sp=psp
             sp = sp.offset(-8); /* R11, R10, R9, R8, R7, R6, R5 and R4. */
             task.sp = sp.addr();
-            sprintln!("top of stack {:#08x}", task.sp);
         }
     }
     /// 打印文本函数
