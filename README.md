@@ -11,29 +11,29 @@
 
 ### 主要功能  
 
-- [x] 单物理线程任务优先级+时间片调度机制
+- [x] 单物理线程任务优先级+时间片调度
 - [x] 堆内存分配器
-- [x] 二值信号量
-- [x] 计数信号量  
-- [x] 信号广播
-- [x] mpmc队列  
+- [x] 二值信号量、计数信号量、信号广播
+- [x] 多生产者多消费者队列  
 - [x] 临界段 
-- [x] 简单的任务栈溢出检查 
+- [x] 栈溢出检查 
 - [x] PubSub模式消息总线
 - [x] 软件定时器 
 
 ### 移植的芯片  
 
 - [x] GD32VF103xx
-- [ ] STM32F40x
-- [ ] STM32F10x
+- [x] CM4F(STM32F401CCU6)
+- [ ] CM3
+- [ ] CM0
+- [ ] CM7
 - [ ] CH32V3
 - [ ] CH32V2
 - [ ] CH32V1
 
 ### 快速开始
 
-如果您有一块longan-nano最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
+如果您有一块longan-nano或者stm32f401ccu6最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
 
 ![多任务调试1](debug/gd32vf103/debug1.png)![多任务调试2](debug/gd32vf103/debug2.png)
 
@@ -74,69 +74,6 @@
 4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 
 
-### 目录结构
-
-```
-.
-|____src                     源码目录
-| |____lib.rs
-| |____chip                  芯片移植目录
-| | |____gd32vf103           gd32vf103vf103移植代码
-| | | |____mod.rs            
-| | | |____port.S            汇编代码，中断上下文保存
-| | | |____port.rs           中断处理函数
-| | | |____restore_ctx.S     首次启动恢复任务汇编代码
-| | | |____stdout.rs         串口输出
-| | | |____memory.x          内存布局链接脚本
-| | |____env.rs              移植环境参数
-| | |____mod.rs
-| |____port.rs               port接口定义
-| |____task.rs               任务定义
-| |____allocator.rs          内存分配器
-| |____timer.rs
-| |____arch                  指令集架构，官方嵌入式工程组项目重新导出
-| | |____x86_64
-| | | |____mod.rs
-| | |____mod.rs
-| | |____riscv
-| | | |____mod.rs
-| | |____cortex_m
-| | | |____mod.rs
-| |____task
-| | |____executor.rs        单物理线程执行器实现
-| | |____scheduler          调度器实现
-| | | |____xtask.rs
-| | | |____idle.rs
-| | | |____xworker.rs
-| | | |____misc.rs
-| | |____scheduler.rs
-| |____sync                 信号量、通知、队列、临界段等
-| | |____semaphore.rs
-| | |____queue.rs
-| | |____mod.rs
-| | |____mutex.rs
-| | |____notifier.rs
-| | |____broadcast.rs
-| |____bsp                 板级支持包
-| | |____mod.rs
-| | |____longan_nano       longan_nano最小系统板
-| | | |____mod.rs
-| | | |____led.rs
-| | | |____lcd.rs
-| | | |____hcsr04.rs
-| | | |____epd27b.rs
-| | | |____kalman.rs
-| |____io.rs               io读写之类
-| |____prelude.rs
-| |____time.rs             时间相关函数
-|____.vscode
-| |____settings.json
-|____Cargo.lock
-|____Cargo.toml
-|____hal                   依赖的hal库
-
-```
-
 ### 移植层接口
 
 ```rust
@@ -160,8 +97,6 @@ pub trait Portable {
     fn irq();
     /// 关闭软中断
     fn disable_irq();
-    /// 重置下一次中断时间
-    fn reset_systick();
     /// 获取systick
     fn systick() -> u64;
     /// 硬件延时，单位us

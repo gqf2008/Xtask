@@ -67,6 +67,7 @@ version = "0.13.2"
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.4"
 cortex-m-rt = "0.7.1"
+cortex-m-semihosting = "0.5.0"
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 cortex-a = "7.2.0"

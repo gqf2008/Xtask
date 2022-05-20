@@ -1,6 +1,7 @@
 pub use stm32f4xx_hal as hal;
 
 pub mod led;
+pub mod stdout;
 
 static mut TAKEN: bool = false;
 

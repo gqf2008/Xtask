@@ -37,8 +37,6 @@ pub trait Portable {
     fn delay_us(us: u64);
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task);
-    /// 打印文本函数
-    fn printf(str: &str);
 }
 
 /// 移植层默认实现
@@ -88,10 +86,6 @@ impl Portable for DefaultPorting {
     }
     /// 保存任务环境到任务栈
     fn save_context(_task: &mut Task) {
-        unimplemented!()
-    }
-    /// 打印文本函数
-    fn printf(_str: &str) {
         unimplemented!()
     }
 }
