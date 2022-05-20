@@ -4,7 +4,7 @@ pub(crate) mod scheduler;
 use crate::port::{Portable, Porting};
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::{schedulee, Scheduler};
-use crate::{isr_sprint, ms2ticks, sync};
+use crate::{isr_sprint, ms2ticks, sprintln, sync};
 use alloc::collections::VecDeque;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -146,6 +146,7 @@ impl Task {
     pub fn sleep_ms(&mut self, ms: usize) {
         if ms > 0 {
             let ticks = ms2ticks(ms);
+            sprintln!("wait tick count {}/{}", crate::time::tick(), ticks);
             if ticks > 0 {
                 self.wait(ticks);
                 yield_now();

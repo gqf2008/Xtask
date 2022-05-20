@@ -28,7 +28,7 @@ fn init() {
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
-        let clocks = rcc.cfgr.use_hse(25.MHz()).sysclk(84.MHz()).freeze();
+        let clocks = rcc.cfgr.use_hse(25.MHz()).sysclk(48.MHz()).freeze();
         let gpioa = dp.GPIOA.split();
         let gpioc = dp.GPIOC.split();
         let led = Led::new(gpioc.pc13);
@@ -91,6 +91,7 @@ fn example_led(mut blue: Led) {
         .name("blue")
         .priority(1)
         .spawn(move || loop {
+            sprintln!("example_led");
             blue.on();
             sprintln!("blue on");
             xtask::sleep_ms(500);

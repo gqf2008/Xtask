@@ -12,10 +12,24 @@ use cortex_m::peripheral::{SCB, SYST};
 
 pub struct STM32F4Porting;
 
+unsafe fn enable_vfp() {
+    asm!(
+        "
+        .align 3
+        ldr.w r0, =0xE000ED88
+        ldr r1, [ r0 ]
+        orr r1, r1, #( 0xf << 20 )
+        str r1, [ r0 ]
+        bx r14
+        nop
+ "
+    )
+}
+
 unsafe fn setup_intrrupt() {
     sprintln!("setup_intrrupt");
     cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0xff);
-    cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xff);
+    cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xfe);
     cortex_m::peripheral::SYST::clock_source(SystClkSource::External);
     cortex_m::peripheral::SYST::reload(SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32 - 1);
     cortex_m::peripheral::SYST::reset_current();
@@ -115,30 +129,10 @@ impl Portable for STM32F4Porting {
     /// 开全局中断
     fn enable_interrupt() {
         unsafe { cortex_m::interrupt::enable() }
-        // unsafe {
-        //     asm!(
-        //         "
-        //     cpsie i # 开中断
-        //     cpsie f # 开异常
-        //     dsb
-        //     isb
-        //     "
-        //     );
-        // }
     }
     /// 关全局中断
     fn disable_interrupt() {
         crate::arch::cortex_m::interrupt::disable()
-        // unsafe {
-        //     asm!(
-        //         "
-        // cpsid i # 关中断
-        // cpsid f # 关异常
-        // dsb
-        // isb
-        // "
-        //     );
-        // }
     }
     /// 启动调度器
     fn start_scheduler() -> ! {
@@ -147,6 +141,7 @@ impl Portable for STM32F4Porting {
         //从任务栈恢复CPU状态，汇编实现
         unsafe {
             setup_intrrupt();
+            //enable_vfp();
             asm!(include_str!("restore_ctx.S"))
         };
         panic!("~!@#$%^&*()_")
@@ -154,22 +149,10 @@ impl Portable for STM32F4Porting {
     /// 软中断
     fn irq() {
         cortex_m::peripheral::SCB::set_pendsv();
-        // let ptr = NVIC_INT_CTL_ADDR as *mut u32;
-        // unsafe {
-        //     ptr.write_volatile(1 << 28);
-        //     crate::arch::cortex_m::asm::dsb();
-        //     crate::arch::cortex_m::asm::isb();
-        // }
     }
 
     fn disable_irq() {
         cortex_m::peripheral::SCB::clear_pendsv();
-        // let ptr = NVIC_INT_CTL_ADDR as *mut u32;
-        // unsafe {
-        //     ptr.write_volatile(1 << 27);
-        //     crate::arch::cortex_m::asm::dsb();
-        //     crate::arch::cortex_m::asm::isb();
-        // }
     }
 
     /// 获取rtc tick
@@ -186,6 +169,7 @@ impl Portable for STM32F4Porting {
         unsafe {
             //任务栈指针移到栈顶，也就是数组的最后一个元素起始位置
             let mut sp = task.stack.add(task.stack_size - 1);
+            sp = (sp.addr() & !0x0007) as *mut usize;
             sp = sp.offset(-1);
             sp.write_volatile(0x01000000); /* xPSR */
             sp = sp.offset(-1);
@@ -195,7 +179,7 @@ impl Portable for STM32F4Porting {
             sp = sp.offset(-5); /* R12, R3, R2 and R1. */
             sp.write_volatile(task.args.addr()); /* R0 */
             sp = sp.offset(-1);
-            sp.write_volatile(0xfffffffd);
+            sp.write_volatile(0xfffffffd); //返回线程模式，sp=psp
             sp = sp.offset(-8); /* R11, R10, R9, R8, R7, R6, R5 and R4. */
             task.sp = sp.addr();
             sprintln!("top of stack {:#08x}", task.sp);
