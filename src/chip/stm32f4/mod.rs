@@ -4,7 +4,7 @@ use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
-use crate::{sprintln, CriticalSection};
+use crate::{isr_sprintln, sprintln, CriticalSection};
 use core::arch::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
@@ -14,13 +14,13 @@ pub struct STM32F4Porting;
 
 unsafe fn setup_intrrupt() {
     sprintln!("setup_intrrupt");
+    cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0xff);
+    cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xff);
     cortex_m::peripheral::SYST::clock_source(SystClkSource::External);
     cortex_m::peripheral::SYST::reload(SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32 - 1);
     cortex_m::peripheral::SYST::reset_current();
     cortex_m::peripheral::SYST::open_counter();
     cortex_m::peripheral::SYST::open_interrupt();
-    cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0);
-    cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0);
 }
 
 trait ScbExt {
@@ -79,7 +79,7 @@ impl SystExt for SYST {
     }
     #[inline]
     fn open_interrupt() {
-        unsafe { (*Self::ptr()).csr.modify(|v| v | (1 << 0)) }
+        unsafe { (*Self::ptr()).csr.modify(|v| v | (1 << 1)) }
     }
     #[inline]
     fn open_counter() {
@@ -147,23 +147,9 @@ impl Portable for STM32F4Porting {
         //从任务栈恢复CPU状态，汇编实现
         unsafe {
             setup_intrrupt();
-            asm!(
-                "
-        ldr r0, =0xE000ED08 // 向量表地址
-        ldr r0, [r0]
-        ldr r0, [r0]
-        msr msp, r0
-        cpsie i //使能全局中断
-        cpsie f //使能全局异常
-        dsb //数据同步
-        isb //指令同步
-        svc 0  //调用SVCall异常服务，在SVCall里恢复第一个任务
-        nop
-        nop
-        "
-            )
+            asm!(include_str!("restore_ctx.S"))
         };
-        panic!("~!@#$%^&*()_");
+        panic!("~!@#$%^&*()_")
     }
     /// 软中断
     fn irq() {
@@ -197,18 +183,22 @@ impl Portable for STM32F4Porting {
     }
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task) {
-        sprintln!("save_context");
         unsafe {
             //任务栈指针移到栈顶，也就是数组的最后一个元素起始位置
             let mut sp = task.stack.add(task.stack_size - 1);
-            sp = ((sp as usize) & !(0x0007)) as *mut usize;
-            sp.offset(-1).write_volatile(0x01000000);
-            sp.offset(-2)
-                .write_volatile((task.entry as *const ()).addr() | 0xfffffffe);
-            sp.offset(-3)
-                .write_volatile((port::task_exit as *const ()).addr());
-            sp.offset(-8).write_volatile(task.args.addr());
-            task.sp = sp.offset(-16).addr();
+            sp = sp.offset(-1);
+            sp.write_volatile(0x01000000); /* xPSR */
+            sp = sp.offset(-1);
+            sp.write_volatile((task.entry as *const ()).addr()); /* PC */
+            sp = sp.offset(-1);
+            sp.write_volatile((port::task_exit as *const ()).addr()); /* LR */
+            sp = sp.offset(-5); /* R12, R3, R2 and R1. */
+            sp.write_volatile(task.args.addr()); /* R0 */
+            sp = sp.offset(-1);
+            sp.write_volatile(0xfffffffd);
+            sp = sp.offset(-8); /* R11, R10, R9, R8, R7, R6, R5 and R4. */
+            task.sp = sp.addr();
+            sprintln!("top of stack {:#08x}", task.sp);
         }
     }
     /// 打印文本函数
