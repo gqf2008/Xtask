@@ -6,6 +6,9 @@ pub use crate::chip::gd32vf103::Gd32vf103Porting as Porting;
 #[cfg(feature = "stm32f4")]
 pub use crate::chip::stm32f4::STM32F4Porting as Porting;
 
+#[cfg(feature = "stm32f1")]
+pub use crate::chip::stm32f1::STM32F1Porting as Porting;
+
 #[cfg(not(any(feature = "gd32vf103", feature = "stm32f4", feature = "stm32f1")))]
 pub use DefaultPorting as Porting;
 

@@ -5,3 +5,6 @@ pub mod longan_nano;
 
 #[cfg(all(feature = "stm32f4", feature = "greenpill"))]
 pub mod greenpill;
+
+#[cfg(all(feature = "stm32f1", feature = "bluepill"))]
+pub mod bluepill;
