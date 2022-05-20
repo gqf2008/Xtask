@@ -103,8 +103,6 @@ pub trait Portable {
     fn delay_us(us: u64);
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task);
-    /// 打印文本函数
-    fn printf(str: &str);
 }
 
 ```
