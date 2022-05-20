@@ -15,7 +15,7 @@ pub mod arch;
 pub mod bsp;
 pub mod bus;
 pub mod chip;
-pub mod io;
+// pub mod io;
 pub mod port;
 pub mod prelude;
 pub mod sync;

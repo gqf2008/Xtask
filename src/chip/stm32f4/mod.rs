@@ -1,5 +1,5 @@
 mod port;
-pub mod stdout;
+// pub mod stdout;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
@@ -126,7 +126,6 @@ impl Portable for STM32F4Porting {
         //从任务栈恢复CPU状态，汇编实现
         unsafe {
             setup_intrrupt();
-            //enable_vfp();
             asm!(
                 "
             ldr r0, =0xE000ED08 // 向量表地址，将 0xE000ED08 加载到 R0
@@ -181,9 +180,5 @@ impl Portable for STM32F4Porting {
             sp = sp.offset(-8); /* R11, R10, R9, R8, R7, R6, R5 and R4. */
             task.sp = sp.addr();
         }
-    }
-    /// 打印文本函数
-    fn printf(str: &str) {
-        stdout::write_str(str)
     }
 }

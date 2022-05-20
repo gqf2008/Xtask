@@ -4,15 +4,15 @@ extern crate alloc;
 
 //use panic_halt as _;
 
+use core::panic::PanicInfo;
+use core::sync::atomic::{self, Ordering};
+use cortex_m_semihosting::*;
 use xtask::arch::cortex_m::rt;
 use xtask::bsp::greenpill;
 use xtask::bsp::greenpill::hal::prelude::*;
 use xtask::bsp::greenpill::led::Led;
-use xtask::chip::stm32f4;
+use xtask::bsp::greenpill::stdout;
 use xtask::prelude::*;
-
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
 
 #[inline(never)]
 #[panic_handler]
@@ -32,12 +32,12 @@ fn init() {
         let gpioa = dp.GPIOA.split();
         let gpioc = dp.GPIOC.split();
         let led = Led::new(gpioc.pc13);
-        let tx = dp
-            .USART1
-            .tx(gpioa.pa9.into_alternate(), 115200.bps(), &clocks)
-            .unwrap();
-        stm32f4::stdout::use_tx1(tx);
-        sprintln!("Greenpill initialize ok");
+        // let tx = dp
+        //     .USART1
+        //     .tx(gpioa.pa9.into_alternate(), 115200.bps(), &clocks)
+        //     .unwrap();
+        // stdout::use_tx1(tx);
+        hprintln!("Greenpill initialize ok");
         example_led(led);
     }
 }
@@ -81,8 +81,8 @@ fn example_task() {
     });
 
     xtask::spawn(|| loop {
-        sprintln!("死循环测试任务 {}", tick());
-        xtask::sleep_ms(10000);
+        hprintln!("死循环测试任务 {}", tick());
+        xtask::sleep_ms(1000);
     });
 }
 
