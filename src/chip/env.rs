@@ -13,8 +13,12 @@ pub const CPU_CLOCK_HZ: usize = 108000000;
 /// CPU时钟频率
 #[cfg(feature = "stm32f4")]
 pub const CPU_CLOCK_HZ: usize = 84000000;
+
+#[cfg(feature = "stm32f1")]
+pub const CPU_CLOCK_HZ: usize = 74000000;
+
 /// SYSTICK时钟频率
-pub const SYSTICK_CLOCK_HZ: usize = 16_000_000;
+pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
 pub const TICK_CLOCK_HZ: usize = 1000;
 
