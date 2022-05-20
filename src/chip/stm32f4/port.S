@@ -10,48 +10,61 @@
 .section .text
 .global SVCall 
 SVCall:
-    ldr r3, = CURRENT_TASK_PTR
+    bl print_sp 
+    ldr r3, =CURRENT_TASK_PTR
     ldr r1, [r3]
     ldr r0, [r1]
-    ldmia r0!, {r4-r11}
+    bl print_sp 
+    ldmia r0!, {{r4-r11, r14}}
     msr psp, r0
-    isb 
-    cpsie i # 开中断
-    cpsie f # 开异常
-    dsb
     isb
+    mov r0, #0
+    msr	basepri, r0
     # 返回任务模式，sp使用psp里的地址
-    orr r14, #0xd 
+    # orr r14, #0xd
     # svcall异常返回，使用psp指向的地址出栈，也就是回到任务栈里了
-    bx r14 
+    bx r14
+    .align 4
 
 # 上下文切换
 .section .text
 .global PendSV
 PendSV:
-    msr r0, psp
+    bl print_sp
+    mrs r0, psp
     isb
-    ldr r3, = CURRENT_TASK_PTR
-    ldr r2, [r3]
 
-    stmdb r0!, {r4-r11}
+    ldr r3, =CURRENT_TASK_PTR
+    ldr r2, [r3]
+    
+    tst r14, #0x10
+    it eq
+    vstmdbeq r0!, {{s16-s31}}
+
+    stmdb r0!, {{r4-r11, r14}}
     str r0, [r2]
 
-    stmdb sp!, {r3,r14}
-    cpsid i # 关中断
+    stmdb sp!, {{r0, r3}}
+    
+    cpsid i 
     dsb
     isb
     bl switch_context
-    cpsie i # 开中断
-    dsb
-    isb
-    ldmia sp!, {r3,r14}
+   
+    cpsie i 
+    ldmia sp!, {{r0, r3}}
 
     ldr r1, [r3]
     ldr r0, [r1]
-    ldmia r0!, {r4-r11}
+
+    ldmia r0!, {{r4-r11, r14}}
+
+    tst r14, #0x10				
+    it eq
+    vldmiaeq r0!, {{s16-s31}}
+
     msr psp, r0
     isb
     bx r14
-    nop
+    .align 4
     
