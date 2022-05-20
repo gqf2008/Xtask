@@ -6,6 +6,6 @@ cpsie i //使能全局中断
 cpsie f //使能全局异常
 dsb //数据同步，将流水线中的数据全部执行完毕
 isb //指令同步，将流水线中的指令全部执行完毕
-svc 0  //调用SVCall异常服务，在SVCall里恢复第一个任务
+svc 0xff  //调用SVCall异常服务，在SVCall里恢复第一个任务
 nop
 nop

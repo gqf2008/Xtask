@@ -146,7 +146,6 @@ impl Task {
     pub fn sleep_ms(&mut self, ms: usize) {
         if ms > 0 {
             let ticks = ms2ticks(ms);
-            sprintln!("wait tick count {}/{}", crate::time::tick(), ticks);
             if ticks > 0 {
                 self.wait(ticks);
                 yield_now();
