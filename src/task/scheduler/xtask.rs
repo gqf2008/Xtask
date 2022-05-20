@@ -31,7 +31,6 @@ impl Scheduler for XTaskScheduler {
     }
 
     fn do_systick(&self) {
-        isr_sprintln!("do_systick");
         unsafe {
             let mut ready = false;
             //更新延时任务
@@ -82,7 +81,7 @@ impl Scheduler for XTaskScheduler {
     }
     // 找到一个就绪任务把当前任务切出去
     fn do_schedule(&self) {
-        isr_sprintln!("do_schedule");
+        //isr_sprintln!("do_schedule");
         unsafe {
             //弹出一个就绪任务
             let new = pop_ready();
