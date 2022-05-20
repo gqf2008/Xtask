@@ -4,7 +4,7 @@ pub(crate) mod scheduler;
 use crate::port::{Portable, Porting};
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::{schedulee, Scheduler};
-use crate::{isr_sprint, ms2ticks, sprintln, sync};
+use crate::{isr_sprint, ms2ticks, sync};
 use alloc::collections::VecDeque;
 use alloc::string::ToString;
 use alloc::vec::Vec;

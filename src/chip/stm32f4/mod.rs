@@ -12,25 +12,11 @@ use cortex_m::peripheral::{SCB, SYST};
 
 pub struct STM32F4Porting;
 
-unsafe fn enable_vfp() {
-    asm!(
-        "
-        .align 3
-        ldr.w r0, =0xE000ED88
-        ldr r1, [ r0 ]
-        orr r1, r1, #( 0xf << 20 )
-        str r1, [ r0 ]
-        bx r14
-        nop
- "
-    )
-}
-
 unsafe fn setup_intrrupt() {
     cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0xff);
     cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xfe);
     cortex_m::peripheral::SYST::clock_source(SystClkSource::Core);
-    cortex_m::peripheral::SYST::reload(16000000 / 1000 - 1);
+    cortex_m::peripheral::SYST::reload(SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32 - 1);
     cortex_m::peripheral::SYST::reset_current();
     cortex_m::peripheral::SYST::open_counter();
     cortex_m::peripheral::SYST::open_interrupt();
