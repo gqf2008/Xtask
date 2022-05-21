@@ -30,11 +30,7 @@ pub fn tick() -> u64 {
 /// 毫秒转tick
 #[inline(always)]
 pub fn ms2ticks(ms: usize) -> usize {
-    ms * TICK_PREIOD_MS
-    // if ms < TICK_PREIOD_MS {
-    //     return 0;
-    // }
-    // (ms as f32 * MS_PREIOD_TICK) as usize
+    ms / TICK_PREIOD_MS
 }
 
 /// 返回tick时长，单位毫秒

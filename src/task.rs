@@ -4,7 +4,7 @@ pub(crate) mod scheduler;
 use crate::port::{Portable, Porting};
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::{schedulee, Scheduler};
-use crate::{isr_sprint, ms2ticks, sync};
+use crate::{isr_sprintln, ms2ticks, sync};
 use alloc::collections::VecDeque;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -279,7 +279,12 @@ impl Task {
     pub(crate) fn stack_overflow(&self) {
         unsafe {
             if self.stack.read_volatile() != STACK_FENCE {
-                isr_sprint!("stack overflow\n");
+                isr_sprintln!(
+                    "stack overflow stack addr:{:p} sp->0x{:08x}",
+                    // self.name(),
+                    self.stack,
+                    self.sp
+                );
                 panic!(
                     "stack overflow `{}` stack addr:{:p} sp->0x{:08x}",
                     self.name(),

@@ -5,11 +5,13 @@ use cortex_m::interrupt;
 use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::arch::cortex_m::rt::exception;
 use crate::task::scheduler;
+use crate::{isr_sprint, isr_sprintln};
 
 pub(crate) static mut SYSTICKS: u64 = 0;
 
 #[exception]
 unsafe fn SVCall() {
+    isr_sprintln!("SVCall");
     asm!(
         "
         // 加载任务栈顶地址到r0
@@ -28,13 +30,14 @@ unsafe fn SVCall() {
         msr basepri, r0
         // 退出中断函数，使得sp=psp，进入用户模式（thumb）
         // 进入用户任务后，其他寄存器自动出栈，恢复pc值等
-        orr r14, #0xd
+        mov r14, #0xfffffffd
         bx r14
     "
     )
 }
 #[exception]
 unsafe fn PendSV() {
+    isr_sprintln!("PendSV from {:#08x}", cortex_m::register::psp::read());
     asm!(
         "
         // 硬件自动压栈部分xPSR,r15(PC),r14(LR),r12,r3,r2,r1,r0
@@ -76,6 +79,7 @@ unsafe fn PendSV() {
         // 设置sp=psp
         msr psp, r0
         isb
+        mov r14, #0xfffffffd
         // 回到任务模式，硬件自动恢复pc
         bx r14
         "
@@ -86,11 +90,11 @@ unsafe fn PendSV() {
 #[exception]
 unsafe fn SysTick() {
     const TICKS: u32 = SYSTICK_CLOCK_HZ as u32 / TICK_CLOCK_HZ as u32;
-    interrupt::free(|_| {
-        let tick = core::ptr::read_volatile(&SYSTICKS);
-        core::ptr::write_volatile(&mut SYSTICKS, tick + TICKS as u64);
-        scheduler::systick();
-    });
+    //interrupt::free(|_| {
+    let tick = core::ptr::read_volatile(&SYSTICKS);
+    core::ptr::write_volatile(&mut SYSTICKS, tick + TICKS as u64);
+    scheduler::systick();
+    //});
 }
 
 /// 软中断切换任务

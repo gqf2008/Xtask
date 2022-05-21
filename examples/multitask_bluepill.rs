@@ -27,7 +27,7 @@ fn panic(info: &PanicInfo) -> ! {
 
 fn init() {
     let start_addr = rt::heap_start() as usize;
-    xtask::init_heap(start_addr, 20 * 1024);
+    xtask::init_heap(start_addr, 16 * 1024);
     let dp = pac::Peripherals::take().unwrap();
     let mut flash = dp.FLASH.constrain();
     let rcc = dp.RCC.constrain();
@@ -58,31 +58,31 @@ fn main() -> ! {
     init();
 
     //启动多任务
-    example_task();
+    //example_task();
     //启动调度器
     xtask::start()
 }
 
 fn example_task() {
-    xtask::spawn(|| {
-        for i in 0..10 {
-            sprintln!("{} 循环测试任务0", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
-    xtask::spawn(|| {
-        for i in 0..50 {
-            sprintln!("{} 循环测试任务1", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
+    // xtask::spawn(|| {
+    //     for i in 0..10 {
+    //         sprintln!("{} 循环测试任务0", i + 1);
+    //         xtask::sleep_ms(1000);
+    //     }
+    // });
+    // xtask::spawn(|| {
+    //     for i in 0..50 {
+    //         sprintln!("{} 循环测试任务1", i + 1);
+    //         xtask::sleep_ms(1000);
+    //     }
+    // });
 
-    xtask::spawn(|| {
-        for i in 0..100 {
-            sprintln!("{} 循环测试任务2", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
+    // xtask::spawn(|| {
+    //     for i in 0..100 {
+    //         sprintln!("{} 循环测试任务2", i + 1);
+    //         xtask::sleep_ms(1000);
+    //     }
+    // });
 
     xtask::spawn(|| {
         for i in 0..500 {
@@ -91,10 +91,10 @@ fn example_task() {
         }
     });
 
-    xtask::spawn(|| loop {
-        sprintln!("死循环测试任务 {}", tick());
-        xtask::sleep_ms(1000);
-    });
+    // xtask::spawn(|| loop {
+    //     sprintln!("死循环测试任务 {}", tick());
+    //     xtask::sleep_ms(1000);
+    // });
 }
 
 fn example_led(mut blue: Led) {
@@ -103,8 +103,8 @@ fn example_led(mut blue: Led) {
         .priority(1)
         .spawn(move || loop {
             blue.on();
-            xtask::sleep_ms(500);
+            xtask::sleep_ms(5000);
             blue.off();
-            xtask::sleep_ms(500);
+            xtask::sleep_ms(5000);
         });
 }
