@@ -76,7 +76,6 @@ unsafe fn PendSV() {
         // 设置sp=psp
         msr psp, r0
         isb
-        // mov r14, #0xfffffffd
         // 回到任务模式，硬件自动恢复pc
         bx r14
         "
