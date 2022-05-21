@@ -92,7 +92,7 @@ fn example_task() {
     });
 
     xtask::spawn(|| loop {
-        hprintln!("死循环测试任务 {}", tick());
+        sprintln!("死循环测试任务 {}", tick());
         xtask::sleep_ms(1000);
     });
 }
