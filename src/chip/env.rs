@@ -15,7 +15,7 @@ pub const SYSTICK_CLOCK_HZ: usize = 108000000 / 4;
 #[cfg(feature = "stm32f4")]
 pub const CPU_CLOCK_HZ: usize = 84000000;
 #[cfg(feature = "stm32f4")]
-pub const SYSTICK_CLOCK_HZ: usize = 25_000_000;
+pub const SYSTICK_CLOCK_HZ: usize = 16_000_000;
 
 #[cfg(feature = "stm32f1")]
 pub const CPU_CLOCK_HZ: usize = 74000000;
@@ -23,7 +23,7 @@ pub const CPU_CLOCK_HZ: usize = 74000000;
 pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
-pub const TICK_CLOCK_HZ: usize = 10;
+pub const TICK_CLOCK_HZ: usize = 1000;
 
 /// 软件定时器任务栈大小（单位：字长），默认1k字节栈空间
 pub const TIMER_STACK_SIZE_WORD: usize = 256;
