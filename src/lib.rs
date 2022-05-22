@@ -24,10 +24,19 @@ pub mod time;
 #[cfg(feature = "timer")]
 pub mod timer;
 
+use core::panic::PanicInfo;
+use core::sync::atomic::{self, Ordering};
 pub use prelude::*;
-
 // 内存不足执行此处代码(调试用)
 #[alloc_error_handler]
 fn alloc_error(_layout: core::alloc::Layout) -> ! {
     panic!("memory out");
+}
+
+#[inline(never)]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    loop {
+        atomic::compiler_fence(Ordering::SeqCst);
+    }
 }

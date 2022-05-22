@@ -7,6 +7,7 @@ mod port;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
+use crate::sprintln;
 use crate::task::Task;
 use core::arch::asm;
 use gd32vf103xx_hal::eclic::*;
@@ -99,7 +100,7 @@ impl Portable for Gd32vf103Porting {
         unsafe { asm!(include_str!("restore_ctx.S")) };
         //这个函数不会返回，因为在汇编中最后一条指令是mret，而不是ret
         //mret把mepc更新到PC，而ret把ra更新到PC
-        stdout::write_str("start_scheduler ~!@#$%^&*()_");
+        sprintln!("start_scheduler ~!@#$%^&*()_");
         panic!("~!@#$%^&*()_");
     }
 

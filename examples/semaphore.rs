@@ -8,7 +8,6 @@ use xtask::bsp::longan_nano::led::BLUE;
 use xtask::bsp::longan_nano::led::GREEN;
 use xtask::bsp::longan_nano::led::RED;
 
-use panic_halt as _;
 use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::prelude::*;
@@ -41,7 +40,7 @@ fn init() {
 
     let mut afio = dp.AFIO.constrain(&mut rcu);
 
-    xtask::chip::gd32vf103::stdout::configure(
+    xtask::bsp::longan_nano::stdout::configure(
         dp.USART0,
         gpioa.pa9,
         gpioa.pa10,

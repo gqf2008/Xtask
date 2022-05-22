@@ -48,28 +48,28 @@
 
 3. 打开另外一个终端
     - 信号广播示例
-        - cargo run --example broadcast --release --all-features
+        - cargo run --example broadcast --release 
 
     - LED示例，三个任务分别控制三色LED
-        - cargo run --example led --release --all-features
+        - cargo run --example led --release 
 
     - 多任务切换示例，5个任务，4个任务循环一段时间后退出
-        - cargo run --example multitask --release --all-features
+        - cargo run --example multitask --release 
 
     - 通知示例，一个通知另外一个
-        - cargo run --example notify --release --all-features
+        - cargo run --example notify --release 
 
     - 队列示例，两个发，三个收消息
-        - cargo run --example queue --release --all-features
+        - cargo run --example queue --release 
 
     - 信号量示例，两个发，三个收
-        - cargo run --example semaphore --release --all-features
+        - cargo run --example semaphore --release 
 
     - 消息服务总线示例，
-        - cargo run --example evbus --release --all-features
+        - cargo run --example evbus --release 
 
     - 软件定时器
-        - cargo run --example timer --release --all-features
+        - cargo run --example timer --release 
         
 4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
 

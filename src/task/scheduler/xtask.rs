@@ -30,7 +30,7 @@ impl Scheduler for XTaskScheduler {
         sync::free(|_| unsafe { submit(task) });
     }
 
-    fn do_systick(&self) {
+    fn do_systick(&self) -> bool {
         unsafe {
             let mut ready = false;
             //更新延时任务
@@ -73,10 +73,8 @@ impl Scheduler for XTaskScheduler {
                     }
                 }
             }
-            //有就绪任务，立刻切换
-            if ready {
-                yield_now();
-            }
+            //有就绪任务
+            ready
         }
     }
     // 找到一个就绪任务把当前任务切出去

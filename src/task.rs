@@ -4,7 +4,7 @@ pub(crate) mod scheduler;
 use crate::port::{Portable, Porting};
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::{schedulee, Scheduler};
-use crate::{isr_sprintln, ms2ticks, sync};
+use crate::{isr_sprintln, ms2ticks, sprintln, sync};
 use alloc::collections::VecDeque;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -26,7 +26,7 @@ pub fn spawn<F: FnOnce() + Send + 'static>(f: F) {
 /// 禁止在中断服务中调用
 #[inline]
 pub fn sleep_ms(ms: usize) {
-    sync::free(|_| xworker.current().sleep_ms(ms))
+    xworker.current().sleep_ms(ms);
 }
 
 /// 中断当前任务
@@ -143,7 +143,7 @@ impl Task {
     }
 
     /// 暂停一会儿
-    pub fn sleep_ms(&mut self, ms: usize) {
+    pub(crate) fn sleep_ms(&mut self, ms: usize) {
         if ms > 0 {
             let ticks = ms2ticks(ms);
             if ticks > 0 {
@@ -204,7 +204,6 @@ impl Task {
     pub(crate) fn block(&mut self) {
         self.state = State::Suspended;
         self.queue = None;
-        yield_now();
     }
     /// 唤醒任务，进入就绪队列待调度
     /// 这个函数如果在用户任务里调用需要临界区保护
@@ -281,7 +280,6 @@ impl Task {
             if self.stack.read_volatile() != STACK_FENCE {
                 isr_sprintln!(
                     "stack overflow stack addr:{:p} sp->0x{:08x}",
-                    // self.name(),
                     self.stack,
                     self.sp
                 );

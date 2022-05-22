@@ -13,6 +13,11 @@ use cortex_m::peripheral::{SCB, SYST};
 pub struct STM32F1Porting;
 
 unsafe fn setup_intrrupt() {
+    // let mut shpr = 0xE000_ED20u32;
+    // let mut val = core::ptr::read_volatile(&shpr);
+    // val |= (0xffu32 << 16);
+    // val |= (0xffu32 << 24);
+    // core::ptr::write_volatile(&mut shpr, val);
     cortex_m::peripheral::SCB::priority(SystemHandler::PendSV, 0xff);
     cortex_m::peripheral::SCB::priority(SystemHandler::SysTick, 0xfe);
     cortex_m::peripheral::SYST::clock_source(SystClkSource::Core);
@@ -102,7 +107,7 @@ impl Portable for STM32F1Porting {
     /// 完全内存屏障
     /// 保证在屏障之前的任何存储操作先于屏障之后的代码执行。
     fn barrier() {
-        unimplemented!()
+        cortex_m::asm::dsb();
     }
     fn free<F, R>(f: F) -> R
     where
@@ -128,10 +133,12 @@ impl Portable for STM32F1Porting {
             setup_intrrupt();
             asm!(
                 "
-            ldr r0, =0xE000ED08 // 向量表地址，将 0xE000ED08 加载到 R0
-            ldr r0, [r0] //将 0xE000ED08 中的值，也就是向量表的实际地址加载到 R0
-            ldr r0, [r0] //根据向量表实际存储地址，取出向量表中的第一项,向量表第一项存储主堆栈指针MSP的初始值
-            msr msp, r0 //将堆栈地址写入主堆栈指针
+            // ldr r0, =0xE000ED08 // 向量表地址，将 0xE000ED08 加载到 R0
+            // ldr r0, [r0] //将 0xE000ED08 中的值，也就是向量表的实际地址加载到 R0
+            // ldr r0, [r0] //根据向量表实际存储地址，取出向量表中的第一项,向量表第一项存储主堆栈指针MSP的初始值
+            // msr msp, r0 //将堆栈地址写入主堆栈指针
+            mov r0, #0			
+		    msr control, r0	// sp=msp	
             cpsie i //使能全局中断
             cpsie f //使能全局异常
             dsb //数据同步，将流水线中的数据全部执行完毕
@@ -146,6 +153,8 @@ impl Portable for STM32F1Porting {
     /// 软中断
     fn irq() {
         cortex_m::peripheral::SCB::set_pendsv();
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
     }
 
     fn disable_irq() {
