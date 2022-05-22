@@ -13,7 +13,8 @@ use xtask::prelude::*;
 
 fn init() {
     let start_addr = rt::heap_start() as usize;
-    xtask::init_heap(start_addr, 64 * 1024);
+    //4k留给主栈
+    xtask::init_heap(start_addr, 60 * 1024);
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
