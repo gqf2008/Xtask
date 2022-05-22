@@ -1,9 +1,9 @@
 //! 一对一通知
 
-use crate::sync;
 use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
+use crate::{sync, yield_now};
 use alloc::sync::Arc;
 use crossbeam::atomic::AtomicCell;
 
@@ -71,6 +71,7 @@ impl Notifier {
                     sync::free(|_| unsafe {
                         self.block();
                     });
+                    yield_now();
                 }
             }
         }
@@ -91,6 +92,7 @@ impl Notifier {
                     sync::free(|_cs| unsafe {
                         self.block();
                     });
+                    yield_now();
                 }
             }
         }

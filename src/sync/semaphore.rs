@@ -1,10 +1,10 @@
 //! 计数信号量，公平调度，多对多通知
 
-use crate::sync;
 use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::TaskQueue;
+use crate::{sync, yield_now};
 use alloc::sync::Arc;
 use core::cell::RefCell;
 use crossbeam::atomic::AtomicCell;
@@ -83,6 +83,7 @@ impl Semaphore {
                     self.notifiers.borrow_mut().push_back(task as *mut Task);
                     task.block();
                 });
+                yield_now();
             }
         }
     }
@@ -118,6 +119,7 @@ impl Semaphore {
 
                         task.block();
                     });
+                    yield_now();
                 }
             }
         }

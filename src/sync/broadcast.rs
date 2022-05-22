@@ -1,9 +1,9 @@
 //! 一对多通知
 //! 当有信号时会通知所有消费者
 
-use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::TaskQueue;
+use crate::{sync, yield_now};
 use alloc::sync::Arc;
 use core::cell::RefCell;
 
@@ -62,5 +62,7 @@ impl Broadcast {
             self.waiters.borrow_mut().push_back(task);
             task.block();
         });
+
+        yield_now();
     }
 }

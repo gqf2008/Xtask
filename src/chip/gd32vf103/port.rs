@@ -41,7 +41,9 @@ unsafe extern "C" fn mtimer_irq_isr() {
     //isr_sprintln!("mtimer_irq_isr");
     //设置下一次中断时间
     super::reset_systick();
-    scheduler::systick();
+    if scheduler::systick() {
+        super::Gd32vf103Porting::irq();
+    }
 }
 
 /// 软中断服务函数，这里只要实现任务切换即可，上下文保存

@@ -27,7 +27,7 @@ pub(crate) unsafe fn exit_current_task() {
 }
 
 #[inline]
-pub(crate) unsafe fn systick() {
+pub(crate) unsafe fn systick() -> bool {
     time::increase_tick();
     schedulee.do_systick()
 }
@@ -54,7 +54,7 @@ pub trait Scheduler {
     /// 心跳，推动任务状态机运行
     /// 分时任务调度精度就看这个函数的调用频率
     /// 只能在中断服务里调用
-    fn do_systick(&self);
+    fn do_systick(&self) -> bool;
 
     /// 把当前任务切出去
     /// 只能在中断服务里调用

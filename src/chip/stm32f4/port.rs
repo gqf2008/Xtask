@@ -35,54 +35,42 @@ unsafe fn SVCall() {
 unsafe fn PendSV() {
     asm!(
         "
-        // 硬件自动压栈部分xPSR,r15(PC),r14(LR),r12,r3,r2,r1,r0
-        // 将当前任务psp保存到r0，开始保存上文
         mrs r0, psp
         isb
-        // 如果有FPU，则浮点计算寄存器入任务栈
         tst r14, #0x10
         it eq
         vstmdbeq r0!, {{s16-s31}}
         // 手动压栈
         stmdb r0!, {{r4-r11, r14}}
-        // 加载用户任务地址[CURRENT_TASK_PTR]->[TASK]->[SP]
         ldr r3, =CURRENT_TASK_PTR
-        // 任务地址存入r2
-         ldr r2, [r3]
-        // 保存栈顶到任务第一个sp字段，即任务栈顶指针地址
+        ldr r2, [r3]
         str r0, [r2]
-        // 这里开始操作msp，r0，r3=CURRENT_TASK_PTR入主栈备份
         stmdb sp!, {{r0, r3}}
-
         ///////////////////////////////////////////////////////////
         // 关全局中断
         cpsid i
+        cpsid f
         isb
         // 切换任务
         bl switch_context
         // 开全局中断
+        cpsie f
         cpsie i
-        isb
         /////////////////////////////////////////////////////////
-
-        // 恢复下文
-        // 从主栈恢复r0，r3
         ldmia sp!, {{r0, r3}}
-        // 从r3=CURRENT_TASK_PTR取新任务地址
         ldr r1, [r3]
-        // 新任务栈顶指针
         ldr r0, [r1]
-        // 恢复手动保存的寄存器
         ldmia r0!, {{r4-r11, r14}}
         // FPU处理
         tst r14, #0x10
         it eq
         vldmiaeq r0!, {{s16-s31}}
-        // 设置sp=psp
         msr psp, r0
         isb
-        mov r14, #0xfffffffd
-        // 回到任务模式，硬件自动恢复pc
+        ldr r0, =0xE000ED08 // 向量表地址，将 0xE000ED08 加载到 R0
+        ldr r0, [r0] //将 0xE000ED08 中的值，也就是向量表的实际地址加载到 R0
+        ldr r0, [r0] //根据向量表实际存储地址，取出向量表中的第一项,向量表第一项存储主堆栈指针MSP的初始值
+        msr msp, r0 //将堆栈地址写入主堆栈指针
         bx r14
         "
     );
@@ -95,7 +83,9 @@ unsafe fn SysTick() {
     interrupt::free(|_| {
         let tick = core::ptr::read_volatile(&SYSTICKS);
         core::ptr::write_volatile(&mut SYSTICKS, tick + TICKS as u64);
-        scheduler::systick();
+        if scheduler::systick() {
+            cortex_m::peripheral::SCB::set_pendsv();
+        }
     });
 }
 

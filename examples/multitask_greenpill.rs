@@ -4,23 +4,12 @@ extern crate alloc;
 
 //use panic_halt as _;
 
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-use cortex_m_semihosting::*;
 use xtask::arch::cortex_m::rt;
 use xtask::bsp::greenpill;
 use xtask::bsp::greenpill::hal::prelude::*;
 use xtask::bsp::greenpill::led::Led;
 use xtask::bsp::greenpill::stdout;
 use xtask::prelude::*;
-
-#[inline(never)]
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    loop {
-        atomic::compiler_fence(Ordering::SeqCst);
-    }
-}
 
 fn init() {
     let start_addr = rt::heap_start() as usize;
@@ -37,7 +26,7 @@ fn init() {
             .tx(gpioa.pa9.into_alternate(), 115200.bps(), &clocks)
             .unwrap();
         stdout::use_tx1(tx);
-        hprintln!("Greenpill initialize ok");
+        sprintln!("Greenpill initialize ok");
         example_led(led);
     }
 }
@@ -81,7 +70,7 @@ fn example_task() {
     });
 
     xtask::spawn(|| loop {
-        hprintln!("死循环测试任务 {}", tick());
+        sprintln!("死循环测试任务 {}", tick());
         xtask::sleep_ms(1000);
     });
 }
