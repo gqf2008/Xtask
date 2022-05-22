@@ -2,8 +2,8 @@
 
 [build]
 # target = "thumbv7m-none-eabi"
-# target = "thumbv7em-none-eabihf"
-target = "riscv32imac-unknown-none-elf"
+target = "thumbv7em-none-eabihf"
+# target = "riscv32imac-unknown-none-elf"
 
 [target.riscv32imac-unknown-none-elf]
 runner = 'riscv64-unknown-elf-gdb -x openocd.gdb'

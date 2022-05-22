@@ -22,8 +22,8 @@ debug_task = []
 timer = []
 # 默认调度器
 xtask_scheduler = []
-# 芯片 
-chip = ["gd32vf103"]
+# 芯片，可选项gd32vf103、stm32f1、stm32f4
+chip = ["stm32f4"]
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal"]
 # stm32f1xx
@@ -31,7 +31,7 @@ stm32f1 = ["stm32f1xx-hal"]
 # stm32f4xx
 stm32f4 = ["stm32f4xx-hal"]
 # 板级支持包
-bsp = ["longan_nano"]
+bsp = ["greenpill"]
 # longan_nano
 longan_nano = ["st7735-lcd", "mpu6050"]
 # bluepill stm32f401ccu6
