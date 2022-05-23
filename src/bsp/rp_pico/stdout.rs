@@ -51,10 +51,10 @@ pub fn write_fmt(args: fmt::Arguments) {
 #[macro_export]
 macro_rules! sprint {
     ($s:expr) => {
-        $crate::sync::free(|_|$crate::bsp::greenpill::stdout::write_str($s))
+        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str($s))
     };
     ($($tt:tt)*) => {
-        $crate::sync::free(|_|$crate::bsp::greenpill::stdout::write_fmt(format_args!($($tt)*)))
+        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_fmt(format_args!($($tt)*)))
     };
 }
 
@@ -62,13 +62,13 @@ macro_rules! sprint {
 #[macro_export]
 macro_rules! sprintln {
     () => {
-        $crate::sync::free(|_|$crate::bsp::greenpill::stdout::write_str("\n"))
+        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str("\n"))
     };
     ($s:expr) => {
-        $crate::sync::free(|_|$crate::bsp::greenpill::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n")))
+        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n")))
     };
     ($s:expr, $($tt:tt)*) => {
-        $crate::sync::free(|_|$crate::bsp::greenpill::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*)))
+        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*)))
     };
 }
 
@@ -77,10 +77,10 @@ macro_rules! sprintln {
 #[macro_export]
 macro_rules! isr_sprint {
     ($s:expr) => {
-        $crate::bsp::greenpill::stdout::write_str($s)
+        $crate::bsp::rp_pico::stdout::write_str($s)
     };
     ($($tt:tt)*) => {
-        $crate::bsp::greenpill::stdout::write_fmt(format_args!($($tt)*))
+        $crate::bsp::rp_pico::stdout::write_fmt(format_args!($($tt)*))
     };
 }
 
@@ -89,12 +89,12 @@ macro_rules! isr_sprint {
 #[macro_export]
 macro_rules! isr_sprintln {
     () => {
-        $crate::bsp::greenpill::stdout::write_str("\n")
+        $crate::bsp::rp_pico::stdout::write_str("\n")
     };
     ($s:expr) => {
-        $crate::bsp::greenpill::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n"))
+        $crate::bsp::rp_pico::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n"))
     };
     ($s:expr, $($tt:tt)*) => {
-        $crate::bsp::greenpill::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*))
+        $crate::bsp::rp_pico::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*))
     };
 }

@@ -24,29 +24,43 @@ pub fn stack_start() -> usize {
 fn init() {
     let start_addr = rt::heap_start() as usize;
     //2k留给主栈
-    xtask::init_heap(start_addr, 18 * 1024);
-    let dp = pac::Peripherals::take().unwrap();
-    let mut flash = dp.FLASH.constrain();
-    let rcc = dp.RCC.constrain();
-    let clocks = rcc.cfgr.freeze(&mut flash.acr);
-    let mut afio = dp.AFIO.constrain();
-    let mut gpioc = dp.GPIOC.split();
-    let mut gpioa = dp.GPIOA.split();
-
-    let led_pin = gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
-    let led = Led::new(led_pin);
-    let tx_pin = gpioa.pa9.into_alternate_push_pull(&mut gpioa.crh);
-    let rx_pin = gpioa.pa10;
-
-    let (tx, _rx) = serial::Serial::usart1(
-        dp.USART1,
-        (tx_pin, rx_pin),
-        &mut afio.mapr,
-        serial::Config::default().baudrate(115200.bps()),
-        clocks,
+    xtask::init_heap(start_addr, 128 * 1024);
+    let mut pac = pac::Peripherals::take().unwrap();
+    let core = pac::CorePeripherals::take().unwrap();
+    let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
+    let clocks = hal::clocks::init_clocks_and_plls(
+        rp_pico::XOSC_CRYSTAL_FREQ,
+        pac.XOSC,
+        pac.CLOCKS,
+        pac.PLL_SYS,
+        pac.PLL_USB,
+        &mut pac.RESETS,
+        &mut watchdog,
     )
-    .split();
-    stdout::use_tx1(tx);
+    .ok()
+    .unwrap();
+    let sio = hal::Sio::new(pac.SIO);
+    let pins = rp_pico::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio.gpio_bank0,
+        &mut pac.RESETS,
+    );
+
+    let led_pin = pins.led.into_push_pull_output();
+    let led = Led::new(led_pin);
+
+    let uart_pins = (
+        pins.gpio0.into_mode::<hal::gpio::FunctionUart>(),
+        pins.gpio1.into_mode::<hal::gpio::FunctionUart>(),
+    );
+    let uart = hal::uart::UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+        .enable(
+            hal::uart::common_configs::_9600_8_N_1,
+            clocks.peripheral_clock.into(),
+        )
+        .unwrap();
+    stdout::use_uart0(uart);
     let msp = cortex_m::register::msp::read();
     let psp = cortex_m::register::psp::read();
     sprintln!(

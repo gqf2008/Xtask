@@ -1,18 +1,18 @@
 
 .extern CURRENT_TASK_PTR 
 .extern switch_context
-.section .text.exception
-.align 3
-.global SVCall
-SVCall
-    ldr r3, =CURRENT_TASK_PTR
-    ldr r1, [r3]
-    ldr r0, [r1]
-    ldmia r0!, {{r4-r11}}
-    msr psp, r0
-    isb
-    mov r14, #0xfffffffd
-    bx r14
+# .section .text.exception
+# .align 3
+# .global SVCall
+# SVCall
+#     ldr r3, =CURRENT_TASK_PTR
+#     ldr r1, [r3]
+#     ldr r0, [r1]
+#     ldmia r0!, {{r4-r11}}
+#     msr psp, r0
+#     isb
+#     mov r14, #0xfffffffd
+#     bx r14
 
 .section .text.exception
 .align 3
