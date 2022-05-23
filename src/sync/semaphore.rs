@@ -14,12 +14,17 @@ use core::sync::atomic::Ordering;
 /// 设计思想是维护两个任务挂起队列
 /// 当信号量为零时挂起当前任务到挂起队列
 /// 当信号量大于零时从挂起队列弹出任务交给调度器
-#[derive(Clone)]
 pub struct Semaphore {
     waiters: Rc<RefCell<TaskQueue>>,
     notifiers: Rc<RefCell<TaskQueue>>,
     signal: Rc<AtomicUsize>, //信号量
     max_value: usize,
+}
+
+impl Clone for Semaphore {
+    fn clone(&self) -> Self {
+        sync::free(|_| self.clone())
+    }
 }
 
 unsafe impl Send for Semaphore {}

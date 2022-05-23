@@ -10,10 +10,15 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
 // use crossbeam::atomic::AtomicCell;
 
-#[derive(Clone)]
 pub struct Notifier {
     blocker: Rc<usize>,     //当前挂起者任务指针
     signal: Rc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
+}
+
+impl Clone for Notifier {
+    fn clone(&self) -> Self {
+        sync::free(|_| self.clone())
+    }
 }
 
 impl Notifier {
