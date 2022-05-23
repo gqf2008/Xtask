@@ -9,7 +9,15 @@ pub use crate::chip::stm32f4::STM32F4Porting as Porting;
 #[cfg(feature = "stm32f1")]
 pub use crate::chip::stm32f1::STM32F1Porting as Porting;
 
-#[cfg(not(any(feature = "gd32vf103", feature = "stm32f4", feature = "stm32f1")))]
+#[cfg(feature = "rp2040")]
+pub use crate::chip::rp2040::RP2040Porting as Porting;
+
+#[cfg(not(any(
+    feature = "gd32vf103",
+    feature = "stm32f4",
+    feature = "stm32f1",
+    feature = "rp2040"
+)))]
 pub use DefaultPorting as Porting;
 
 use crate::task::Task;

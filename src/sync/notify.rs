@@ -4,20 +4,28 @@ use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::{sync, yield_now};
-use alloc::sync::Arc;
-use crossbeam::atomic::AtomicCell;
+use alloc::rc::Rc;
+// use alloc::sync::Arc;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering;
+// use crossbeam::atomic::AtomicCell;
 
-#[derive(Clone)]
 pub struct Notifier {
-    blocker: Arc<usize>,           //当前挂起者任务指针
-    signal: Arc<AtomicCell<bool>>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
+    blocker: Rc<usize>,     //当前挂起者任务指针
+    signal: Rc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
+}
+
+impl Clone for Notifier {
+    fn clone(&self) -> Self {
+        sync::free(|_| self.clone())
+    }
 }
 
 impl Notifier {
     pub fn new() -> Self {
         Self {
-            blocker: Arc::new(0),
-            signal: Arc::new(AtomicCell::new(false)),
+            blocker: Rc::new(0),
+            signal: Rc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -46,12 +54,28 @@ impl Notifier {
     /// 产生一个信号，如果信号写入
     /// 成功则唤醒挂起的任务否则报错
     pub fn notify_isr(&self) -> nb::Result<(), Error> {
-        match self.signal.compare_exchange(false, true) {
-            Ok(_) => unsafe {
-                self.wakeup();
+        #[cfg(not(target_has_atomic = "8"))]
+        {
+            if !self.signal.load(Ordering::SeqCst) {
+                self.signal.store(true, Ordering::SeqCst);
+                unsafe { self.wakeup() };
                 Ok(())
-            },
-            Err(_) => Err(nb::Error::WouldBlock),
+            } else {
+                Err(nb::Error::WouldBlock)
+            }
+        }
+        #[cfg(target_has_atomic = "8")]
+        {
+            match self
+                .signal
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => unsafe {
+                    self.wakeup();
+                    Ok(())
+                },
+                Err(_) => Err(nb::Error::WouldBlock),
+            }
         }
     }
 
@@ -60,18 +84,41 @@ impl Notifier {
     /// 信号写入失败则挂起自己
     pub fn notify(&self) {
         loop {
-            match self.signal.compare_exchange(false, true) {
-                Ok(_) => {
-                    sync::free(|_| unsafe {
+            #[cfg(not(target_has_atomic = "8"))]
+            {
+                match sync::free(|_| unsafe {
+                    if !self.signal.load(Ordering::SeqCst) {
+                        self.signal.store(true, Ordering::SeqCst);
                         self.wakeup();
-                    });
-                    break;
-                }
-                Err(_) => {
-                    sync::free(|_| unsafe {
+                        true
+                    } else {
                         self.block();
-                    });
-                    yield_now();
+                        false
+                    }
+                }) {
+                    true => break,
+                    false => yield_now(),
+                }
+            }
+
+            #[cfg(target_has_atomic = "8")]
+            {
+                match self
+                    .signal
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                {
+                    Ok(_) => {
+                        sync::free(|_| unsafe {
+                            self.wakeup();
+                        });
+                        break;
+                    }
+                    Err(_) => {
+                        sync::free(|_| unsafe {
+                            self.block();
+                        });
+                        yield_now();
+                    }
                 }
             }
         }
@@ -81,18 +128,41 @@ impl Notifier {
     /// 如果有信号则唤醒通知者，否则挂起自己
     pub fn wait(&self) {
         loop {
-            match self.signal.compare_exchange(true, false) {
-                Ok(_) => {
-                    sync::free(|_cs| unsafe {
+            #[cfg(not(target_has_atomic = "8"))]
+            {
+                match sync::free(|_| unsafe {
+                    if self.signal.load(Ordering::SeqCst) {
+                        self.signal.store(false, Ordering::SeqCst);
                         self.wakeup();
-                    });
-                    break;
-                }
-                Err(_) => {
-                    sync::free(|_cs| unsafe {
+                        true
+                    } else {
                         self.block();
-                    });
-                    yield_now();
+                        false
+                    }
+                }) {
+                    true => break,
+                    false => yield_now(),
+                }
+            }
+
+            #[cfg(target_has_atomic = "8")]
+            {
+                match self
+                    .signal
+                    .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                {
+                    Ok(_) => {
+                        sync::free(|_cs| unsafe {
+                            self.wakeup();
+                        });
+                        break;
+                    }
+                    Err(_) => {
+                        sync::free(|_cs| unsafe {
+                            self.block();
+                        });
+                        yield_now();
+                    }
                 }
             }
         }
