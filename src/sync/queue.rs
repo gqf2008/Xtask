@@ -1,7 +1,8 @@
 //! 多生产者，多消费者队列
 //! 不能在中断服务中使用
 
-use alloc::{collections::VecDeque, sync::Arc};
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
 
 use super::semaphore::*;
 use crate::sync;
@@ -9,7 +10,7 @@ use core::cell::RefCell;
 
 #[derive(Clone)]
 pub struct Queue<T> {
-    list: Arc<RefCell<VecDeque<T>>>,
+    list: Rc<RefCell<VecDeque<T>>>,
     sem: Semaphore,
 }
 unsafe impl<T> Send for Queue<T> {}
@@ -17,14 +18,14 @@ unsafe impl<T> Send for Queue<T> {}
 impl<T> Queue<T> {
     pub fn new() -> Self {
         Self {
-            list: Arc::new(RefCell::new(VecDeque::new())),
+            list: Rc::new(RefCell::new(VecDeque::new())),
             sem: Semaphore::new(),
         }
     }
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            list: Arc::new(RefCell::new(VecDeque::new())),
-            sem: Semaphore::with_max_value(capacity as u64),
+            list: Rc::new(RefCell::new(VecDeque::new())),
+            sem: Semaphore::with_max_value(capacity),
         }
     }
 }

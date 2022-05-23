@@ -12,6 +12,8 @@ pub(crate) static xworker: XTaskExecutor = ();
 
 /// 硬件工作线程抽象
 pub trait Executor {
+    /// 硬件线程数
+    fn threads() -> u16;
     fn current(&self) -> &'static mut Task;
     fn execute(&self, task: *mut Task) -> Option<*mut Task>;
     fn halt(&self);

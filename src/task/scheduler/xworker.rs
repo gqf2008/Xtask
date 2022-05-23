@@ -11,6 +11,9 @@ static mut CURRENT_TASK: *mut Task = core::ptr::null_mut();
 pub(crate) type XTaskExecutor = ();
 
 impl Executor for XTaskExecutor {
+    fn threads() -> u16 {
+        1
+    }
     fn current(&self) -> &'static mut Task {
         unsafe { CURRENT_TASK.as_mut().unwrap() }
     }

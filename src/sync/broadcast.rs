@@ -4,22 +4,23 @@
 use crate::task::executor::{xworker, Executor};
 use crate::TaskQueue;
 use crate::{sync, yield_now};
-use alloc::sync::Arc;
+use alloc::rc::Rc;
 use core::cell::RefCell;
 
 #[derive(Clone)]
 pub struct Broadcast {
-    waiters: Arc<RefCell<TaskQueue>>,
+    waiters: Rc<RefCell<TaskQueue>>,
 }
+
+unsafe impl Send for Broadcast {}
 
 impl Broadcast {
     pub fn new() -> Self {
         Self {
-            waiters: Arc::new(RefCell::new(TaskQueue::new())),
+            waiters: Rc::new(RefCell::new(TaskQueue::new())),
         }
     }
 }
-unsafe impl Send for Broadcast {}
 
 impl Broadcast {
     /// 可以在中断服务里调用

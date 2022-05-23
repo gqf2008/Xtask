@@ -25,7 +25,7 @@
 - [x] GD32VF103xx
 - [x] CM4F(STM32F401CCU6)
 - [x] CM3(STM32F103C8T6)
-- [ ] CM0
+- [ ] CM0(rp2040)
 - [ ] CM7
 - [ ] CH32V3
 - [ ] CH32V2

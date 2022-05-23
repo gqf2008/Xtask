@@ -1,8 +1,8 @@
 use crate::port::{Portable, Porting};
+use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::State;
 use crate::task::{scheduler::Scheduler, Task, TaskQueue};
-use crate::{isr_sprintln, sync, yield_now};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -306,12 +306,10 @@ unsafe fn push_ready(task: *mut Task) {
                 }
             }
             p => {
-                isr_sprintln!("push_task, illegal priority {}\n", p);
                 panic!("push_task,illegal priority {}", p);
             }
         }
     } else {
-        isr_sprintln!("put_task, illegal task {:p}\n", task);
         panic!("put_task, illegal task {:p}", task);
     }
 }

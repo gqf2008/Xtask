@@ -2,8 +2,9 @@
 
 [build]
 # target = "thumbv7m-none-eabi"
-target = "thumbv7em-none-eabihf"
+# target = "thumbv7em-none-eabihf"
 # target = "riscv32imac-unknown-none-elf"
+target = "thumbv6m-none-eabi"
 
 [target.riscv32imac-unknown-none-elf]
 runner = 'riscv64-unknown-elf-gdb -x openocd.gdb'
@@ -27,4 +28,18 @@ runner = "/Volumes/gqf/toolchain/gcc-arm-none-eabi-10-2020-q4-major/bin/arm-none
 rustflags = [
   # "-Clink-arg=-Tmemory.x",
   "-Clink-arg=-Tlink.x",
+]
+
+[target.thumbv6m-none-eabi]
+runner = "elf2uf2-rs -d"
+# runner = "probe-run --chip RP2040"
+rustflags = [
+  "-C",
+  "link-arg=--nmagic",
+  "-C",
+  "link-arg=-Tlink.x",
+  "-C",
+  "inline-threshold=5",
+  "-C",
+  "no-vectorize-loops",
 ]
