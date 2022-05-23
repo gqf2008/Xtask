@@ -3,7 +3,7 @@ use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
-use crate::CriticalSection;
+use crate::{sprintln, CriticalSection};
 use core::arch::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
@@ -127,6 +127,7 @@ impl Portable for RP2040Porting {
         //配置中断，这个函数就是定时中断和软中断使能
         unsafe {
             setup_intrrupt();
+            sprintln!("start scheduler");
             asm!(include_str!("startup.S"))
         };
         panic!("~!@#$%^&*()_")
