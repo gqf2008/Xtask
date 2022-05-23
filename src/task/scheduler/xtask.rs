@@ -17,16 +17,12 @@ impl Scheduler for XTaskScheduler {
 
     /// 启动调度器
     fn start(&self) -> ! {
-        sprintln!("start");
         unsafe {
             if !INITED {
-                sprintln!("init_queue");
                 init_queue();
             }
         }
-        sprintln!("start_idle_task");
         start_idle_task();
-        sprintln!("start_scheduler");
         Porting::start_scheduler()
     }
     /// 提交一个任务进队列，待调度

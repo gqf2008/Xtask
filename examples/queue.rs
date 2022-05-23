@@ -119,17 +119,17 @@ fn example_queue() {
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            sprintln!("收到消息1 {:?}", msg);
+            //sprintln!("收到消息1 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv2").spawn(move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            sprintln!("收到消息2 {:?}", msg);
+            //sprintln!("收到消息2 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv3").spawn(move || loop {
         if let Some(msg) = qrecv3.pop_front() {
-            sprintln!("收到消息3 {:?}", msg);
+            //sprintln!("收到消息3 {:?}", msg);
         }
     });
 }
