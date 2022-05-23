@@ -7,9 +7,14 @@ use crate::{sync, yield_now};
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
-#[derive(Clone)]
 pub struct Broadcast {
     waiters: Rc<RefCell<TaskQueue>>,
+}
+
+impl Clone for Broadcast {
+    fn clone(&self) -> Self {
+        sync::free(|_| self.clone())
+    }
 }
 
 unsafe impl Send for Broadcast {}

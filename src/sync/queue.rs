@@ -8,11 +8,17 @@ use super::semaphore::*;
 use crate::sync;
 use core::cell::RefCell;
 
-#[derive(Clone)]
 pub struct Queue<T> {
     list: Rc<RefCell<VecDeque<T>>>,
     sem: Semaphore,
 }
+
+impl<T> Clone for Queue<T> {
+    fn clone(&self) -> Self {
+        sync::free(|_| self.clone())
+    }
+}
+
 unsafe impl<T> Send for Queue<T> {}
 
 impl<T> Queue<T> {
