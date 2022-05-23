@@ -17,7 +17,10 @@ pub struct Notifier {
 
 impl Clone for Notifier {
     fn clone(&self) -> Self {
-        sync::free(|_| self.clone())
+        sync::free(|_| Self {
+            blocker: self.blocker.clone(),
+            signal: self.signal.clone(),
+        })
     }
 }
 

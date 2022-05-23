@@ -15,7 +15,6 @@ pub mod arch;
 pub mod bsp;
 pub mod bus;
 pub mod chip;
-// pub mod io;
 pub mod port;
 pub mod prelude;
 pub mod sync;
@@ -35,7 +34,7 @@ fn alloc_error(_layout: core::alloc::Layout) -> ! {
 
 #[inline(never)]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
+fn panic(_info: &PanicInfo) -> ! {
     loop {
         atomic::compiler_fence(Ordering::SeqCst);
     }

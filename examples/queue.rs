@@ -71,16 +71,22 @@ fn main() -> ! {
 }
 
 fn example_queue() {
+    sprintln!("example_queue");
     #[derive(Debug, Clone)]
     struct Message {
         id: u64,
         msg: String,
         data: Vec<u8>,
     }
+
     let qsender = Queue::new();
+
     let qsender2 = qsender.clone();
+
     let qrecv = qsender.clone();
+
     let qrecv2 = qsender.clone();
+
     let qrecv3 = qsender.clone();
     TaskBuilder::new().name("queue.sender1").spawn(move || {
         let mut id = 0;
@@ -91,8 +97,9 @@ fn example_queue() {
                 msg: format!("这是一条消息1 {}", xtask::tick()),
                 data: Vec::new(),
             };
+
             qsender.push_back(msg);
-            xtask::sleep_ms(2000);
+            xtask::sleep_ms(10);
         }
     });
     TaskBuilder::new().name("queue.sender2").spawn(move || {
@@ -104,8 +111,10 @@ fn example_queue() {
                 msg: format!("这是一条消息2 {}", xtask::tick()),
                 data: Vec::new(),
             };
+
             qsender2.push_back(msg);
-            xtask::sleep_ms(5000);
+
+            xtask::sleep_ms(100);
         }
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {
