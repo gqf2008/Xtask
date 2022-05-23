@@ -1,10 +1,10 @@
 pub(crate) mod executor;
 pub(crate) mod scheduler;
 
+use crate::ms2ticks;
 use crate::port::{Portable, Porting};
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::{schedulee, Scheduler};
-use crate::{isr_sprintln, ms2ticks, sprintln, sync};
 use alloc::collections::VecDeque;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -127,6 +127,7 @@ pub struct Task {
     pub(crate) delay_ticks: usize,
     pub(crate) id: u16,
     pub(crate) priority: u8,
+    pub(crate) hwid: Option<u16>,
     pub(crate) state: State,
 }
 
@@ -175,6 +176,7 @@ impl Task {
             name: name.to_string(),
             id: 1,
             priority,
+            hwid: None,
             state: State::Ready,
         });
         //从堆上分配任务栈空间，多申请一个字用于保存栈围栏标志
@@ -278,11 +280,6 @@ impl Task {
     pub(crate) fn stack_overflow(&self) {
         unsafe {
             if self.stack.read_volatile() != STACK_FENCE {
-                isr_sprintln!(
-                    "stack overflow stack addr:{:p} sp->0x{:08x}",
-                    self.stack,
-                    self.sp
-                );
                 panic!(
                     "stack overflow `{}` stack addr:{:p} sp->0x{:08x}",
                     self.name(),

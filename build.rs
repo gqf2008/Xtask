@@ -14,5 +14,9 @@ fn main() {
     #[cfg(feature = "stm32f1")]
     fs::copy("src/chip/stm32f1/memory.x", out_dir.join("memory.x")).unwrap();
 
+    #[cfg(feature = "rp2040")]
+    fs::copy("src/chip/rp2040/memory.x", out_dir.join("memory.x")).unwrap();
+
+
     println!("cargo:rerun-if-changed=memory.x");
 }

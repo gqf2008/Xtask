@@ -8,3 +8,6 @@ pub mod greenpill;
 
 #[cfg(all(feature = "stm32f1", feature = "bluepill"))]
 pub mod bluepill;
+
+#[cfg(all(feature = "rp2040", feature = "rp-pico"))]
+pub mod rp_pico;
