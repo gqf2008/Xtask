@@ -100,7 +100,7 @@ impl Portable for Gd32vf103Porting {
         unsafe { asm!(include_str!("restore_ctx.S")) };
         //这个函数不会返回，因为在汇编中最后一条指令是mret，而不是ret
         //mret把mepc更新到PC，而ret把ra更新到PC
-        sprintln!("start_scheduler ~!@#$%^&*()_");
+
         panic!("~!@#$%^&*()_");
     }
 

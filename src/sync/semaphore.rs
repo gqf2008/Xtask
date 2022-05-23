@@ -3,7 +3,7 @@
 use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
-use crate::TaskQueue;
+use crate::{sprintln, TaskQueue};
 use crate::{sync, yield_now};
 use alloc::rc::Rc;
 use core::cell::RefCell;
@@ -23,7 +23,12 @@ pub struct Semaphore {
 
 impl Clone for Semaphore {
     fn clone(&self) -> Self {
-        sync::free(|_| self.clone())
+        sync::free(|_| Self {
+            waiters: self.waiters.clone(),
+            notifiers: self.notifiers.clone(),
+            signal: self.signal.clone(),
+            max_value: self.max_value,
+        })
     }
 }
 

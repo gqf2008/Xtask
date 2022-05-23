@@ -68,6 +68,7 @@ fn main() -> ! {
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
+    sprintln!("example_led.green");
     TaskBuilder::new()
         .name("green")
         .priority(1)
@@ -77,7 +78,7 @@ fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
             green.off();
             xtask::sleep_ms(500);
         });
-
+    sprintln!("example_led.red");
     TaskBuilder::new()
         .name("red")
         .priority(1)
@@ -87,7 +88,7 @@ fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
             red.off();
             xtask::sleep_ms(500);
         });
-
+    sprintln!("example_led.blue");
     TaskBuilder::new()
         .name("blue")
         .priority(1)

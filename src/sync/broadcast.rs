@@ -13,7 +13,9 @@ pub struct Broadcast {
 
 impl Clone for Broadcast {
     fn clone(&self) -> Self {
-        sync::free(|_| self.clone())
+        sync::free(|_| Self {
+            waiters: self.waiters.clone(),
+        })
     }
 }
 

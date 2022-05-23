@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["chip", "bsp", "xtask_executor", "xtask_scheduler"]
+default = ["chip", "bsp", "xtask_executor", "xtask_scheduler", "debug_task"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -23,7 +23,7 @@ timer = []
 # 默认调度器
 xtask_scheduler = []
 # 芯片，可选项gd32vf103、stm32f1、stm32f4、rp2040
-chip = ["rp2040"]
+chip = ["gd32vf103"]
 # rp2040
 rp2040 = ["rp2040-hal", "rp2040-boot2"]
 # gd32vf103
@@ -33,7 +33,7 @@ stm32f1 = ["stm32f1xx-hal"]
 # stm32f4xx
 stm32f4 = ["stm32f4xx-hal"]
 # 板级支持包
-bsp = ["rp-pico"]
+bsp = ["longan_nano"]
 # longan_nano
 longan_nano = ["st7735-lcd", "mpu6050"]
 # bluepill stm32f401ccu6

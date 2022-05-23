@@ -5,7 +5,7 @@ use alloc::collections::VecDeque;
 use alloc::rc::Rc;
 
 use super::semaphore::*;
-use crate::sync;
+use crate::{sprintln, sync};
 use core::cell::RefCell;
 
 pub struct Queue<T> {
@@ -15,7 +15,10 @@ pub struct Queue<T> {
 
 impl<T> Clone for Queue<T> {
     fn clone(&self) -> Self {
-        sync::free(|_| self.clone())
+        sync::free(|_| Self {
+            list: self.list.clone(),
+            sem: self.sem.clone(),
+        })
     }
 }
 
