@@ -48,7 +48,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -80,7 +80,7 @@ fn example_bus() {
     let mrecv = mqueue.clone();
     BUS.subscribe("ev.key", move |topic, ev| match ev {
         Event::Key(code) => {
-            //sprintln!("{} {:?}", topic, ev);
+            //log::info!("{} {:?}", topic, ev);
             //kqueue.push_back_isr(ev);
             kqueue.push_back(ev);
         }
@@ -88,7 +88,7 @@ fn example_bus() {
     });
     BUS.subscribe("ev.mouse", move |topic, ev| match ev {
         Event::Mouse(x, y) => {
-            //sprintln!("{} {:?}", topic, ev);
+            //log::info!("{} {:?}", topic, ev);
             //mqueue.push_back_isr(ev);
             mqueue.push_back(ev);
         }
@@ -108,14 +108,14 @@ fn example_bus() {
     /// 两个从中断服务接收数据的服务
     TaskBuilder::new().name("key.service").spawn(move || loop {
         if let Some(msg) = krecv.pop_front() {
-            sprintln!("收到消息key {:?}", msg);
+            log::info!("收到消息key {:?}", msg);
         }
     });
     TaskBuilder::new()
         .name("mouse.service")
         .spawn(move || loop {
             if let Some(msg) = mrecv.pop_front() {
-                sprintln!("收到消息mouse {:?}", msg);
+                log::info!("收到消息mouse {:?}", msg);
             }
         });
 }

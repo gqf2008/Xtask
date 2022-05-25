@@ -48,7 +48,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -76,29 +76,29 @@ fn example_broadcast() {
     let waiter5 = caster.clone();
 
     TaskBuilder::new().name("caster").spawn(move || loop {
-        sprintln!("发送广播信号 {}", xtask::tick());
+        log::info!("发送广播信号 {}", xtask::tick());
         caster.notify();
         xtask::sleep_ms(1000);
     });
     TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter1.wait();
-        sprintln!("1收到广播信号 {}", xtask::tick());
+        log::info!("1收到广播信号 {}", xtask::tick());
     });
     TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter2.wait();
-        sprintln!("2收到广播信号 {}", xtask::tick());
+        log::info!("2收到广播信号 {}", xtask::tick());
     });
     TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter3.wait();
-        sprintln!("3收到广播信号 {}", xtask::tick());
+        log::info!("3收到广播信号 {}", xtask::tick());
     });
     TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter4.wait();
-        sprintln!("4收到广播信号 {}", xtask::tick());
+        log::info!("4收到广播信号 {}", xtask::tick());
     });
     TaskBuilder::new().name("listener1").spawn(move || loop {
         waiter5.wait();
-        sprintln!("5收到广播信号 {}", xtask::tick());
+        log::info!("5收到广播信号 {}", xtask::tick());
     });
 }
 

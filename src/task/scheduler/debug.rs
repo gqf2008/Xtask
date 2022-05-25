@@ -12,7 +12,7 @@ pub(crate) fn start_debug_task() {
     fn debug_task(_args: *mut c_void) {
         loop {
             let ticks_sec = tick_ms() / 1000 / 60;
-            sprintln!(
+            log::debug!(
                 ":{} systicks({}),ticks({}/{}min),used({}KiB),free({}KiB)",
                 xworker.current().name(),
                 systick(),
@@ -21,7 +21,7 @@ pub(crate) fn start_debug_task() {
                 used_memory() / 1024,
                 free_memory() / 1024
             );
-            sprintln!("任务列表");
+            log::debug!("任务列表");
             print_task_list("running", xworker.current());
             unsafe {
                 print_ready_task();
@@ -71,7 +71,7 @@ unsafe fn print_delay_task() {
 #[track_caller]
 fn print_task_list(prefix: &str, task: *mut Task) {
     if let Some(task) = unsafe { task.as_mut() } {
-        sprintln!(
+        log::debug!(
             "{} '{}'/{}/{}/{}/{:?}",
             prefix,
             task.name(),

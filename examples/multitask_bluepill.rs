@@ -49,7 +49,7 @@ fn init() {
     stdout::use_tx1(tx);
     let msp = cortex_m::register::msp::read();
     let psp = cortex_m::register::psp::read();
-    sprintln!(
+    log::info!(
         "stack_start {:#08x} msp {:#08x} psp {:#08x}",
         stack_start(),
         msp,
@@ -70,34 +70,34 @@ fn main() -> ! {
 fn example_task() {
     xtask::spawn(|| {
         for i in 0..10 {
-            sprintln!("{} 循环测试任务0", i + 1);
+            log::info!("{} 循环测试任务0", i + 1);
             xtask::sleep_ms(1000);
         }
     });
     xtask::spawn(|| {
         for i in 0..50 {
-            sprintln!("{} 循环测试任务1", i + 1);
+            log::info!("{} 循环测试任务1", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..100 {
-            sprintln!("{} 循环测试任务2", i + 1);
+            log::info!("{} 循环测试任务2", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..500 {
-            sprintln!("{} 循环测试任务4", i + 1);
+            log::info!("{} 循环测试任务4", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..u64::MAX {
-            sprintln!("死循环测试任务 {} {}", tick(), i);
+            log::info!("死循环测试任务 {} {}", tick(), i);
             xtask::sleep_ms(1000);
         }
     });
