@@ -3,3 +3,4 @@
 pub mod lcd;
 pub mod led;
 pub mod stdout;
+pub use gd32vf103xx_hal as hal;
