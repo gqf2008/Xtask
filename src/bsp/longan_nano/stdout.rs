@@ -104,10 +104,10 @@ macro_rules! sprintln {
         $crate::sync::free(|_|$crate::bsp::longan_nano::stdout::write_str("\n"))
     };
     ($s:expr) => {
-        $crate::sync::free(|_|$crate::bsp::longan_nano::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n")))
+        $crate::sync::free(|_|$crate::bsp::longan_nano::stdout::write_str(concat!($s, "\n")))
     };
     ($s:expr, $($tt:tt)*) => {
-        $crate::sync::free(|_|$crate::bsp::longan_nano::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*)))
+        $crate::sync::free(|_|$crate::bsp::longan_nano::stdout::write_fmt(format_args!(concat!($s, "\n"), $($tt)*)))
     };
 }
 

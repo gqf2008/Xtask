@@ -19,7 +19,7 @@ fn init() {
         //static _heap_size: u8; //默认为2k
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
-    xtask::init_heap(start_addr, 32 * 1024);
+    xtask::init(start_addr, 32 * 1024);
 
     let dp = pac::Peripherals::take().unwrap();
     // 配置时钟

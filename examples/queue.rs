@@ -22,7 +22,7 @@ fn init() {
         //static _heap_size: u8; //默认为2k
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
-    xtask::init_heap(start_addr, 32 * 1024);
+    xtask::init(start_addr, 32 * 1024);
 
     let dp = pac::Peripherals::take().unwrap();
     // 配置时钟
@@ -51,12 +51,13 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
         signature::sram_size_kb(),
     );
+
     //三个led
     example_led(red, green, blue);
 }
@@ -71,7 +72,6 @@ fn main() -> ! {
 }
 
 fn example_queue() {
-    sprintln!("example_queue");
     #[derive(Debug, Clone)]
     struct Message {
         id: u64,
@@ -118,17 +118,17 @@ fn example_queue() {
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            // sprintln!("收到消息1 {:?}", msg);
+            log::info!("收到消息1 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv2").spawn(move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            //sprintln!("收到消息2 {:?}", msg);
+            log::info!("收到消息2 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv3").spawn(move || loop {
         if let Some(msg) = qrecv3.pop_front() {
-            //sprintln!("收到消息3 {:?}", msg);
+            log::info!("收到消息3 {:?}", msg);
         }
     });
 }

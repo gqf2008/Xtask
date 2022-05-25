@@ -24,7 +24,7 @@ pub fn stack_start() -> usize {
 fn init() {
     let start_addr = rt::heap_start() as usize;
     //2k留给主栈
-    xtask::init_heap(start_addr, 128 * 1024);
+    xtask::init(start_addr, 128 * 1024);
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
