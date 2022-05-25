@@ -5,6 +5,7 @@
 //! - Blue = PA2
 
 use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::digital::v2::ToggleableOutputPin;
 use gd32vf103xx_hal::gpio::gpioa::{PA1, PA2};
 use gd32vf103xx_hal::gpio::gpioc::PC13;
 use gd32vf103xx_hal::gpio::{Active, Output, PushPull};
@@ -68,34 +69,45 @@ pub trait Led {
 
     /// Turns the LED on
     fn on(&mut self);
+    fn toggle(&mut self);
 }
 
 impl Led for RED {
     fn off(&mut self) {
-        self.port.set_high().unwrap();
+        self.port.set_high().ok();
     }
 
     fn on(&mut self) {
-        self.port.set_low().unwrap();
+        self.port.set_low().ok();
+    }
+    fn toggle(&mut self) {
+        self.port.toggle().ok();
     }
 }
 
 impl Led for GREEN {
     fn off(&mut self) {
-        self.port.set_high().unwrap();
+        self.port.set_high().ok();
     }
 
     fn on(&mut self) {
         self.port.set_low().unwrap();
+    }
+
+    fn toggle(&mut self) {
+        self.port.toggle().ok();
     }
 }
 
 impl Led for BLUE {
     fn off(&mut self) {
-        self.port.set_high().unwrap();
+        self.port.set_high().ok();
     }
 
     fn on(&mut self) {
-        self.port.set_low().unwrap();
+        self.port.set_low().ok();
+    }
+    fn toggle(&mut self) {
+        self.port.toggle().ok();
     }
 }
