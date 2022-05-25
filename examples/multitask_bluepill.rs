@@ -24,7 +24,7 @@ pub fn stack_start() -> usize {
 fn init() {
     let start_addr = rt::heap_start() as usize;
     //2k留给主栈
-    xtask::init_heap(start_addr, 18 * 1024);
+    xtask::init(start_addr, 18 * 1024);
     let dp = pac::Peripherals::take().unwrap();
     let mut flash = dp.FLASH.constrain();
     let rcc = dp.RCC.constrain();

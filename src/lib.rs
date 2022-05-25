@@ -15,6 +15,7 @@ pub mod arch;
 pub mod bsp;
 pub mod bus;
 pub mod chip;
+pub mod logger;
 pub mod port;
 pub mod prelude;
 pub mod sync;
@@ -26,6 +27,12 @@ pub mod timer;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 pub use prelude::*;
+
+pub fn init(start_addr: usize, size: usize) {
+    allocator::init(start_addr, size);
+    logger::init().ok();
+}
+
 // 内存不足执行此处代码(调试用)
 #[alloc_error_handler]
 fn alloc_error(_layout: core::alloc::Layout) -> ! {
