@@ -10,3 +10,4 @@ pub use crate::time::*;
 pub use crate::timer;
 pub use crate::{sprint, sprintln};
 pub use bare_metal::*;
+pub use log;
