@@ -34,7 +34,7 @@ pub(crate) fn start_debug_task() {
 
     let task = Task::new(DEBUG_TIMER_NAME, 256, 16, debug_task, core::ptr::null_mut());
     unsafe {
-        crate::task::scheduler::xtask::submit(task);
+        crate::task::scheduler::xtask::submit_task(task);
     }
 }
 unsafe fn print_ready_task() {

@@ -1,10 +1,11 @@
 use crate::port::{Portable, Porting};
+use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::State;
 use crate::task::{scheduler::Scheduler, Task, TaskQueue};
-use crate::{sprintln, sync};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use bit_field::BitField;
 
 use super::idle::start_idle_task;
 
@@ -27,7 +28,7 @@ impl Scheduler for XTaskScheduler {
     }
     /// 提交一个任务进队列，待调度
     fn submit(&self, task: *mut Task) {
-        sync::free(|_| unsafe { submit(task) });
+        sync::free(|_| unsafe { submit_task(task) });
     }
 
     fn do_systick(&self) -> bool {
@@ -52,7 +53,7 @@ impl Scheduler for XTaskScheduler {
                     .collect();
                 readys.iter().for_each(|i| {
                     if let Some(task) = delay.remove(*i) {
-                        submit(task);
+                        submit_task(task);
                     }
                 });
                 ready = !readys.is_empty();
@@ -60,18 +61,7 @@ impl Scheduler for XTaskScheduler {
 
             //如果延时队列没有就绪任务，那么再检查就绪队列
             if !ready {
-                let readys = &[
-                    &Q1, &Q2, &Q3, &Q4, &Q5, &Q6, &Q7, &Q8, &Q9, &Q10, &Q11, &Q12, &Q13, &Q14,
-                    &Q15, &Q16,
-                ];
-                for q in readys.iter() {
-                    if let Some(q) = *q {
-                        if !q.is_empty() {
-                            ready = true;
-                            break;
-                        }
-                    }
-                }
+                ready = ready_bits.trailing_zeros() < 16;
             }
             //有就绪任务
             ready
@@ -79,7 +69,6 @@ impl Scheduler for XTaskScheduler {
     }
     // 找到一个就绪任务把当前任务切出去
     fn do_schedule(&self) {
-        //isr_sprintln!("do_schedule");
         unsafe {
             //弹出一个就绪任务
             let new = pop_ready();
@@ -88,8 +77,7 @@ impl Scheduler for XTaskScheduler {
                     if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
                         //检查是否栈溢出
                         old.stack_overflow();
-                        submit(old);
-                        // isr_sprintln!("switch from {} to {}", old.name(), new.name());
+                        submit_task(old);
                     }
                 }
             }
@@ -100,17 +88,14 @@ impl Scheduler for XTaskScheduler {
 /// 任务入队列
 #[track_caller]
 #[inline(always)]
-pub(crate) unsafe fn submit(task: *mut Task) {
+pub(crate) unsafe fn submit_task(task: *mut Task) {
     if !INITED {
         init_queue();
     }
     if let Some(task) = task.as_mut() {
         match task.state {
             State::Ready => {
-                //空闲队列不处理
-                if task.id > 0 {
-                    push_ready(task);
-                }
+                push_ready(task);
             }
             State::Blocked => {
                 push_delay(task);
@@ -125,9 +110,7 @@ pub(crate) unsafe fn submit(task: *mut Task) {
             }
             State::Running => {
                 task.ready();
-                if task.id > 0 {
-                    push_ready(task);
-                }
+                push_ready(task);
             }
         }
     }
@@ -137,87 +120,115 @@ pub(crate) unsafe fn submit(task: *mut Task) {
 /// 如果任务队列里没有就绪任务，则返回IDLE任务
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    if let Some(q) = &mut Q1 {
-        if let Some(task) = q.pop_front() {
-            return task;
+    match match ready_bits.trailing_zeros() {
+        0 => &mut Q1,
+        1 => &mut Q2,
+        2 => &mut Q3,
+        3 => &mut Q4,
+        4 => &mut Q5,
+        5 => &mut Q6,
+        6 => &mut Q7,
+        7 => &mut Q8,
+        8 => &mut Q9,
+        9 => &mut Q10,
+        10 => &mut Q11,
+        11 => &mut Q12,
+        12 => &mut Q13,
+        13 => &mut Q14,
+        14 => &mut Q15,
+        15 => &mut Q16,
+        _ => return IDLE_TASK,
+    } {
+        Some(q) => {
+            if let Some(task) = q.pop_front() {
+                task
+            } else {
+                IDLE_TASK
+            }
         }
+        None => IDLE_TASK,
     }
-    if let Some(q) = &mut Q2 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q3 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q4 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q5 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q6 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q7 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q8 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q9 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q10 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q11 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q12 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q13 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q14 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q15 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    if let Some(q) = &mut Q16 {
-        if let Some(task) = q.pop_front() {
-            return task;
-        }
-    }
-    IDLE_TASK
+    // if let Some(q) = &mut Q1 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q2 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q3 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q4 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q5 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q6 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q7 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q8 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q9 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q10 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q11 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q12 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q13 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q14 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q15 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // if let Some(q) = &mut Q16 {
+    //     if let Some(task) = q.pop_front() {
+    //         return task;
+    //     }
+    // }
+    // IDLE_TASK
 }
 
 /// 推入就绪队列
@@ -305,10 +316,9 @@ unsafe fn push_ready(task: *mut Task) {
                     task.bind(q);
                 }
             }
-            p => {
-                panic!("push_task,illegal priority {}", p);
-            }
+            _ => {}
         }
+        ready_bits.set_bit((task.priority - 1) as usize, true);
     } else {
         panic!("put_task, illegal task {:p}", task);
     }
@@ -355,6 +365,8 @@ unsafe fn init_queue() {
     Q16.replace(TaskQueue::new());
     INITED = true;
 }
+
+static mut ready_bits: u16 = 0;
 
 /// 空闲任务，没有就绪任务时就切到这个任务
 pub(crate) static mut IDLE_TASK: *mut Task = core::ptr::null_mut();

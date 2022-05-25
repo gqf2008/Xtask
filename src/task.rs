@@ -212,7 +212,7 @@ impl Task {
     pub(crate) fn wakeup(&mut self) {
         if self.state == State::Suspended {
             self.state = State::Ready;
-            unsafe { scheduler::xtask::submit(self) };
+            unsafe { scheduler::xtask::submit_task(self) };
         }
     }
     //任务退出，立即立刻中断
