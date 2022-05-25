@@ -28,11 +28,23 @@ impl log::Log for StdoutLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
+            let ticks_sec = crate::tick_ms() / 1000 / 60;
             sprintln!(
-                "{} {:?}: {:?} {} - {}",
+                "{}/{}min used({}KiB) free({}KiB) {:?}: {:?} {} - {}",
                 time::tick(),
-                record.file(),
-                record.line(),
+                ticks_sec,
+                crate::used_memory() / 1024,
+                crate::free_memory() / 1024,
+                if let Some(file) = record.file() {
+                    file
+                } else {
+                    "-"
+                },
+                if let Some(line) = record.line() {
+                    line
+                } else {
+                    0
+                },
                 record.level(),
                 record.args()
             );

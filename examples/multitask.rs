@@ -47,7 +47,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -69,33 +69,33 @@ fn main() -> ! {
 fn example_task() {
     xtask::spawn(|| {
         for i in 0..10 {
-            sprintln!("{} 循环测试任务0", i + 1);
+            log::info!("{} 循环测试任务0", i + 1);
             xtask::sleep_ms(1000);
         }
     });
     xtask::spawn(|| {
         for i in 0..50 {
-            sprintln!("{} 循环测试任务1", i + 1);
+            log::info!("{} 循环测试任务1", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..100 {
-            sprintln!("{} 循环测试任务2", i + 1);
+            log::info!("{} 循环测试任务2", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| {
         for i in 0..500 {
-            sprintln!("{} 循环测试任务4", i + 1);
+            log::info!("{} 循环测试任务4", i + 1);
             xtask::sleep_ms(1000);
         }
     });
 
     xtask::spawn(|| loop {
-        sprintln!("死循环测试任务 {}", tick());
+        log::info!("死循环测试任务 {}", tick());
         xtask::sleep_ms(10000);
     });
 }

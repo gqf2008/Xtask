@@ -49,7 +49,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -68,7 +68,7 @@ fn main() -> ! {
 }
 
 fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
-    sprintln!("example_led.green");
+    log::info!("example_led.green");
     TaskBuilder::new()
         .name("green")
         .priority(1)
@@ -78,7 +78,7 @@ fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
             green.off();
             xtask::sleep_ms(500);
         });
-    sprintln!("example_led.red");
+    log::info!("example_led.red");
     TaskBuilder::new()
         .name("red")
         .priority(1)
@@ -88,7 +88,7 @@ fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
             red.off();
             xtask::sleep_ms(500);
         });
-    sprintln!("example_led.blue");
+    log::info!("example_led.blue");
     TaskBuilder::new()
         .name("blue")
         .priority(1)

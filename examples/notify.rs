@@ -48,7 +48,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -72,13 +72,13 @@ fn example_notify() {
     let notifier = Notifier::new();
     let waiter = notifier.clone();
     TaskBuilder::new().name("notifier").spawn(move || loop {
-        sprintln!("发送通知信号 {}", xtask::tick());
+        log::info!("发送通知信号 {}", xtask::tick());
         notifier.notify();
         xtask::sleep_ms(1000);
     });
     TaskBuilder::new().name("waiter").spawn(move || loop {
         waiter.wait();
-        sprintln!("收到通知信号 {}", xtask::tick());
+        log::info!("收到通知信号 {}", xtask::tick());
     });
 }
 

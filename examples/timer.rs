@@ -50,7 +50,7 @@ unsafe fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -65,15 +65,15 @@ fn main() -> ! {
     //初始化外设&内存
     unsafe { init() };
     xtask::spawn(|| {
-        timer::Timer::after(10000, || sprintln!("一次性定时任务10000"));
-        timer::Timer::after(20000, || sprintln!("一次性定时任务20000"));
+        timer::Timer::after(10000, || log::info!("一次性定时任务10000"));
+        timer::Timer::after(20000, || log::info!("一次性定时任务20000"));
         static mut TIMER: Option<timer::Timer> = None;
         static mut TIMER2: Option<timer::Timer> = None;
         let timer = timer::Timer::period(1000, || {
-            sprintln!("周期定时任务1000");
+            log::info!("周期定时任务1000");
         });
         let timer2 = timer::Timer::period(5000, || {
-            sprintln!("周期定时任务5000");
+            log::info!("周期定时任务5000");
         });
         unsafe {
             TIMER.replace(timer);

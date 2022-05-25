@@ -48,7 +48,7 @@ fn init() {
         &mut afio,
         &mut rcu,
     );
-    sprintln!(
+    log::info!(
         "Starting [debug_id={:#08X}, flash_size: {}KB, sram_size={}KB]",
         dp.DBG.id.read().bits(),
         signature::flash_size_kb(),
@@ -76,14 +76,14 @@ fn example_semaphore() {
     TaskBuilder::new()
         .name("semaphore.poster1")
         .spawn(move || loop {
-            sprintln!("1发送计数信号");
+            log::info!("1发送计数信号");
             sender.post();
             xtask::sleep_ms(1000);
         });
     TaskBuilder::new()
         .name("semaphore.poster2")
         .spawn(move || loop {
-            sprintln!("2发送计数信号");
+            log::info!("2发送计数信号");
             sender2.post();
             xtask::sleep_ms(2000);
         });
@@ -92,19 +92,19 @@ fn example_semaphore() {
         .name("semaphore.waiter1")
         .spawn(move || loop {
             recver.wait();
-            sprintln!("1收到计数信号");
+            log::info!("1收到计数信号");
         });
     TaskBuilder::new()
         .name("semaphore.waiter2")
         .spawn(move || loop {
             recver2.wait();
-            sprintln!("2收到计数信号");
+            log::info!("2收到计数信号");
         });
     TaskBuilder::new()
         .name("semaphore.waiter3")
         .spawn(move || loop {
             recver3.wait();
-            sprintln!("3收到计数信号");
+            log::info!("3收到计数信号");
         });
 }
 
