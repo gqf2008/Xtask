@@ -99,7 +99,7 @@ fn example_queue() {
             };
 
             qsender.push_back(msg);
-            xtask::sleep_ms(10);
+            xtask::sleep_ms(100);
         }
     });
     TaskBuilder::new().name("queue.sender2").spawn(move || {
@@ -111,25 +111,24 @@ fn example_queue() {
                 msg: format!("这是一条消息2 {}", xtask::tick()),
                 data: Vec::new(),
             };
-
             qsender2.push_back(msg);
 
-            xtask::sleep_ms(100);
+            xtask::sleep_ms(1000);
         }
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            //sprintln!("收到消息1 {:?}", msg);
+            sprintln!("收到消息1 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv2").spawn(move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            //sprintln!("收到消息2 {:?}", msg);
+            sprintln!("收到消息2 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv3").spawn(move || loop {
         if let Some(msg) = qrecv3.pop_front() {
-            //sprintln!("收到消息3 {:?}", msg);
+            sprintln!("收到消息3 {:?}", msg);
         }
     });
 }

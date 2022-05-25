@@ -1,8 +1,8 @@
 use crate::port::{Portable, Porting};
-use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::State;
 use crate::task::{scheduler::Scheduler, Task, TaskQueue};
+use crate::{sprintln, sync};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use bit_field::BitField;
@@ -120,7 +120,8 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
 /// 如果任务队列里没有就绪任务，则返回IDLE任务
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    match match ready_bits.trailing_zeros() {
+    let trailing_zeros = ready_bits.trailing_zeros();
+    match match trailing_zeros {
         0 => &mut Q1,
         1 => &mut Q2,
         2 => &mut Q3,
@@ -141,6 +142,9 @@ unsafe fn pop_ready() -> *mut Task {
     } {
         Some(q) => {
             if let Some(task) = q.pop_front() {
+                if q.is_empty() {
+                    ready_bits.set_bit(trailing_zeros as usize, false);
+                }
                 task
             } else {
                 IDLE_TASK
