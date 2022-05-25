@@ -118,17 +118,17 @@ fn example_queue() {
     });
     TaskBuilder::new().name("queue.recv1").spawn(move || loop {
         if let Some(msg) = qrecv.pop_front() {
-            sprintln!("收到消息1 {:?}", msg);
+            // sprintln!("收到消息1 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv2").spawn(move || loop {
         if let Some(msg) = qrecv2.pop_front() {
-            sprintln!("收到消息2 {:?}", msg);
+            //sprintln!("收到消息2 {:?}", msg);
         }
     });
     TaskBuilder::new().name("queue.recv3").spawn(move || loop {
         if let Some(msg) = qrecv3.pop_front() {
-            sprintln!("收到消息3 {:?}", msg);
+            //sprintln!("收到消息3 {:?}", msg);
         }
     });
 }
@@ -138,29 +138,23 @@ fn example_led(mut red: RED, mut green: GREEN, mut blue: BLUE) {
         .name("green")
         .priority(1)
         .spawn(move || loop {
-            green.on();
-            xtask::sleep_ms(500);
-            green.off();
-            xtask::sleep_ms(500);
+            green.toggle();
+            xtask::sleep_ms(1000);
         });
 
     TaskBuilder::new()
         .name("red")
         .priority(1)
         .spawn(move || loop {
-            red.on();
-            xtask::sleep_ms(500);
-            red.off();
-            xtask::sleep_ms(500);
+            red.toggle();
+            xtask::sleep_ms(1000);
         });
 
     TaskBuilder::new()
         .name("blue")
         .priority(1)
         .spawn(move || loop {
-            blue.on();
-            xtask::sleep_ms(500);
-            blue.off();
-            xtask::sleep_ms(500);
+            blue.toggle();
+            xtask::sleep_ms(1000);
         });
 }
