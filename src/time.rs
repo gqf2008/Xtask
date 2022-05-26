@@ -4,6 +4,8 @@ use crate::chip::TICK_CLOCK_HZ;
 use crate::port::{Portable, Porting};
 #[cfg(feature = "timer")]
 use crate::timer;
+use cast::u64;
+use embedded_hal::blocking::delay::{DelayMs, DelayUs};
 /// 启动到现在总的systick数
 static mut TICKS: u64 = 0;
 
@@ -58,5 +60,49 @@ impl Instant {
     }
     pub fn elapsed(self) -> u64 {
         systick().wrapping_sub(self.now)
+    }
+}
+
+pub struct Delay;
+
+impl Delay {
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl DelayMs<u32> for Delay {
+    fn delay_ms(&mut self, ms: u32) {
+        Porting::delay_us(u64(ms) * 1000)
+    }
+}
+
+impl DelayMs<u16> for Delay {
+    fn delay_ms(&mut self, ms: u16) {
+        Porting::delay_us(u64(ms) * 1000)
+    }
+}
+
+impl DelayMs<u8> for Delay {
+    fn delay_ms(&mut self, ms: u8) {
+        Porting::delay_us(u64(ms) * 1000)
+    }
+}
+
+impl DelayUs<u32> for Delay {
+    fn delay_us(&mut self, us: u32) {
+        Porting::delay_us(u64(us))
+    }
+}
+
+impl DelayUs<u16> for Delay {
+    fn delay_us(&mut self, us: u16) {
+        Porting::delay_us(u64(us))
+    }
+}
+
+impl DelayUs<u8> for Delay {
+    fn delay_us(&mut self, us: u8) {
+        Porting::delay_us(u64(us))
     }
 }

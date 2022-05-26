@@ -11,18 +11,7 @@ use crate::task::DEBUG_TIMER_NAME;
 pub(crate) fn start_debug_task() {
     fn debug_task(_args: *mut c_void) {
         loop {
-            let ticks_sec = tick_ms() / 1000 / 60;
-            log::debug!(
-                ":{} systicks({}),ticks({}/{}min),used({}KiB),free({}KiB)",
-                xworker.current().name(),
-                systick(),
-                tick(),
-                ticks_sec,
-                used_memory() / 1024,
-                free_memory() / 1024
-            );
-            log::debug!("任务列表");
-            print_task_list("running", xworker.current());
+            print_task_list(xworker.current());
             unsafe {
                 print_ready_task();
                 print_delay_task();
@@ -46,7 +35,7 @@ unsafe fn print_ready_task() {
     for q in readys.iter() {
         if let Some(q) = *q {
             q.iter().for_each(|item| {
-                print_task_list("ready.task", *item);
+                print_task_list(*item);
             });
         }
     }
@@ -55,7 +44,7 @@ unsafe fn print_blocked_task() {
     use super::xtask::*;
     if let Some(q) = &BLOCKED {
         q.iter().for_each(|item| {
-            print_task_list("block.task", *item);
+            print_task_list(*item);
         });
     }
 }
@@ -63,17 +52,16 @@ unsafe fn print_delay_task() {
     use super::xtask::*;
     if let Some(q) = &DELAY {
         q.iter().for_each(|item| {
-            print_task_list("delay.task", *item);
+            print_task_list(*item);
         });
     }
 }
 
 #[track_caller]
-fn print_task_list(prefix: &str, task: *mut Task) {
+fn print_task_list(task: *mut Task) {
     if let Some(task) = unsafe { task.as_mut() } {
         log::debug!(
-            "{} '{}'/{}/{}/{}/{:?}",
-            prefix,
+            "'{}'/{}/{}/{}/{:?}",
             task.name(),
             task.priority,
             task.ticks,
