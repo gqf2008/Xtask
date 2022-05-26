@@ -1,25 +1,25 @@
 //! Delays
 
-use crate::timer::Timer;
 use crate::time::U32Ext;
+use crate::timer::Timer;
 
+use crate::rcu::Clocks;
 use cast::u32;
 use embedded_hal::blocking::delay::{DelayMs, DelayUs};
 use embedded_hal::timer::CountDown;
 use gd32vf103_pac::{TIMER0, TIMER1, TIMER2, TIMER3, TIMER4, TIMER5, TIMER6};
-use crate::rcu::Clocks;
 
 /// Machine mode cycle counter (`mcycle`) as a delay provider
 #[derive(Copy, Clone)]
 pub struct McycleDelay {
-    core_frequency: u32
+    core_frequency: u32,
 }
 
 impl McycleDelay {
     /// Constructs the delay provider
     pub fn new(clocks: &Clocks) -> Self {
         Self {
-            core_frequency: clocks.sysclk().0
+            core_frequency: clocks.sysclk().0,
         }
     }
 }
@@ -28,7 +28,7 @@ impl DelayUs<u64> for McycleDelay {
     fn delay_us(&mut self, us: u64) {
         let t0 = riscv::register::mcycle::read64();
         let clocks = (us * (self.core_frequency as u64)) / 1_000_000;
-        while riscv::register::mcycle::read64().wrapping_sub(t0) <= clocks { }
+        while riscv::register::mcycle::read64().wrapping_sub(t0) <= clocks {}
     }
 }
 
@@ -92,16 +92,20 @@ impl DelayMs<u8> for McycleDelay {
 }
 
 /// TIMER as a delay provider
-pub struct Delay<TIMER> where Timer<TIMER>: CountDown {
+pub struct Delay<TIMER>
+where
+    Timer<TIMER>: CountDown,
+{
     timer: Timer<TIMER>,
 }
 
 macro_rules! delay {
-    ($($TIMER:ident,)+) => {
+
+    ($($TIMER:ident: $tim:ident,)+) => {
         $(
             impl Delay<$TIMER> {
                 /// Configures the timer as a delay provider
-                pub fn new(timer: Timer<$TIMER>) -> Self {
+                pub fn $tim(timer: Timer<$TIMER>) -> Self {
 
                     Delay { timer, }
                 }
@@ -155,11 +159,11 @@ macro_rules! delay {
 }
 
 delay! {
-    TIMER0,
-    TIMER1,
-    TIMER2,
-    TIMER3,
-    TIMER4,
-    TIMER5,
-    TIMER6,
+    TIMER0: timer0,
+    TIMER1: timer1,
+    TIMER2: timer2,
+    TIMER3: timer3,
+    TIMER4: timer4,
+    TIMER5: timer5,
+    TIMER6: timer6,
 }
