@@ -3,7 +3,7 @@
 use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
-use crate::{sprintln, TaskQueue};
+use crate::TaskQueue;
 use crate::{sync, yield_now};
 use alloc::rc::Rc;
 use core::cell::RefCell;

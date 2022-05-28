@@ -1,8 +1,8 @@
 use crate::port::{Portable, Porting};
+use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::State;
 use crate::task::{scheduler::Scheduler, Task, TaskQueue};
-use crate::{sprintln, sync};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use bit_field::BitField;
@@ -61,7 +61,7 @@ impl Scheduler for XTaskScheduler {
 
             //如果延时队列没有就绪任务，那么再检查就绪队列
             if !ready {
-                ready = ready_bits.trailing_zeros() < 16;
+                ready = READU_BITS.trailing_zeros() < 16;
             }
             //有就绪任务
             ready
@@ -120,7 +120,7 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
 /// 如果任务队列里没有就绪任务，则返回IDLE任务
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    let trailing_zeros = ready_bits.trailing_zeros();
+    let trailing_zeros = READU_BITS.trailing_zeros();
     match match trailing_zeros {
         0 => &mut Q1,
         1 => &mut Q2,
@@ -143,7 +143,7 @@ unsafe fn pop_ready() -> *mut Task {
         Some(q) => {
             if let Some(task) = q.pop_front() {
                 if q.is_empty() {
-                    ready_bits.set_bit(trailing_zeros as usize, false);
+                    READU_BITS.set_bit(trailing_zeros as usize, false);
                 }
                 task
             } else {
@@ -241,7 +241,7 @@ unsafe fn push_ready(task: *mut Task) {
             }
             _ => {}
         }
-        ready_bits.set_bit((task.priority - 1) as usize, true);
+        READU_BITS.set_bit((task.priority - 1) as usize, true);
     } else {
         panic!("put_task, illegal task {:p}", task);
     }
@@ -289,7 +289,7 @@ unsafe fn init_queue() {
     INITED = true;
 }
 
-static mut ready_bits: u16 = 0;
+static mut READU_BITS: u16 = 0;
 
 /// 空闲任务，没有就绪任务时就切到这个任务
 pub(crate) static mut IDLE_TASK: *mut Task = core::ptr::null_mut();
