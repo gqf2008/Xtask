@@ -7,7 +7,6 @@ mod port;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
-use crate::sprintln;
 use crate::task::Task;
 use core::arch::asm;
 use gd32vf103xx_hal::eclic::*;

@@ -5,7 +5,7 @@ use alloc::collections::VecDeque;
 use alloc::rc::Rc;
 
 use super::semaphore::*;
-use crate::{sprintln, sync};
+use crate::sync;
 use core::cell::RefCell;
 
 pub struct Queue<T> {
