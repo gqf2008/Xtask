@@ -33,7 +33,7 @@ impl Scheduler for XTaskScheduler {
 
     fn do_systick(&self) -> bool {
         unsafe {
-            let mut ready = false;
+            //let mut ready = false;
             //更新延时任务
             if let Some(delay) = &mut DELAY {
                 let readys: Vec<usize> = delay
@@ -56,15 +56,12 @@ impl Scheduler for XTaskScheduler {
                         submit_task(task);
                     }
                 });
-                ready = !readys.is_empty();
             }
 
-            //如果延时队列没有就绪任务，那么再检查就绪队列
-            if !ready {
-                ready = READU_BITS.trailing_zeros() < 16;
-            }
-            //有就绪任务
-            ready
+            // 检查尾零数，是否有比当前任务相等或更高优先级的任务
+            // 如果想等优先级则时间片调度，否则就一直抢占着，直到任务主动挂起
+            let trailing_zero = READY_BITS.trailing_zeros();
+            trailing_zero < 16 && (trailing_zero + 1) <= self.current().priority as u32
         }
     }
     // 找到一个就绪任务把当前任务切出去
@@ -120,7 +117,7 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
 /// 如果任务队列里没有就绪任务，则返回IDLE任务
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    let trailing_zeros = READU_BITS.trailing_zeros();
+    let trailing_zeros = READY_BITS.trailing_zeros();
     match match trailing_zeros {
         0 => &mut Q1,
         1 => &mut Q2,
@@ -143,7 +140,7 @@ unsafe fn pop_ready() -> *mut Task {
         Some(q) => {
             if let Some(task) = q.pop_front() {
                 if q.is_empty() {
-                    READU_BITS.set_bit(trailing_zeros as usize, false);
+                    READY_BITS.set_bit(trailing_zeros as usize, false);
                 }
                 task
             } else {
@@ -241,7 +238,7 @@ unsafe fn push_ready(task: *mut Task) {
             }
             _ => {}
         }
-        READU_BITS.set_bit((task.priority - 1) as usize, true);
+        READY_BITS.set_bit((task.priority - 1) as usize, true);
     } else {
         panic!("put_task, illegal task {:p}", task);
     }
@@ -289,7 +286,7 @@ unsafe fn init_queue() {
     INITED = true;
 }
 
-static mut READU_BITS: u16 = 0;
+static mut READY_BITS: u16 = 0;
 
 /// 空闲任务，没有就绪任务时就切到这个任务
 pub(crate) static mut IDLE_TASK: *mut Task = core::ptr::null_mut();
