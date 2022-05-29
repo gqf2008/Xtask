@@ -60,6 +60,7 @@ impl Scheduler for XTaskScheduler {
 
             // 检查尾零数，是否有比当前任务相等或更高优先级的任务
             // 如果想等优先级则时间片调度，否则就一直抢占着，直到任务主动挂起
+            // TODO 需改进 ARM CLZ指令计算前导零
             let trailing_zero = READY_BITS.trailing_zeros();
             trailing_zero < 16 && (trailing_zero + 1) <= self.current().priority as u32
         }
