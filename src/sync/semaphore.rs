@@ -62,36 +62,36 @@ impl Semaphore {
     /// 可以在中断服务中使用
     ///
     pub fn post_isr(&self) -> nb::Result<(), Error> {
-        loop {
-            #[cfg(not(target_has_atomic = "8"))]
-            {
-                let val = self.signal.load(Ordering::SeqCst);
-                if val <= self.max_value {
-                    self.signal.store(val + 1, Ordering::SeqCst);
-                    unsafe {
-                        if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                            if let Some(waiter) = waiter.as_mut() {
-                                waiter.wakeup();
-                            }
+        #[cfg(not(target_has_atomic = "8"))]
+        {
+            let val = self.signal.load(Ordering::SeqCst);
+            if val <= self.max_value {
+                self.signal.store(val + 1, Ordering::SeqCst);
+                unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                        if let Some(waiter) = waiter.as_mut() {
+                            waiter.wakeup();
                         }
-                    };
-                } else {
-                    return Err(nb::Error::Other(Error::SemaphoreFull));
-                }
+                    }
+                };
+                Ok(())
+            } else {
+                Err(nb::Error::Other(Error::SemaphoreFull))
             }
-            #[cfg(target_has_atomic = "8")]
-            {
-                if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
-                    unsafe {
-                        if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                            if let Some(waiter) = waiter.as_mut() {
-                                waiter.wakeup();
-                            }
+        }
+        #[cfg(target_has_atomic = "8")]
+        {
+            if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
+                unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                        if let Some(waiter) = waiter.as_mut() {
+                            waiter.wakeup();
                         }
-                    };
-                } else {
-                    return Err(nb::Error::Other(Error::SemaphoreFull));
-                }
+                    }
+                };
+                Ok(())
+            } else {
+                Err(nb::Error::Other(Error::SemaphoreFull))
             }
         }
     }

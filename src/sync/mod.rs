@@ -5,6 +5,7 @@ pub mod queue;
 pub mod semaphore;
 pub use mutex::free;
 
+#[derive(Debug)]
 pub enum Error {
     /// 信号量满了
     SemaphoreFull,
