@@ -9,11 +9,8 @@ use embedded_hal::blocking::delay::{DelayMs, DelayUs};
 /// 启动到现在总的systick数
 static mut TICKS: u64 = 0;
 
-/// 每TICK多少毫秒
-const TICK_PREIOD_MS: usize = 1000 / TICK_CLOCK_HZ;
-
-// /// 每毫秒多少TICK
-// const MS_PREIOD_TICK: f32 = TICK_CLOCK_HZ as f32 / 1000.0;
+/// 每TICK多少微秒
+const TICK_PREIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 
 #[inline]
 pub(crate) unsafe fn increase_tick() {
@@ -32,13 +29,19 @@ pub fn tick() -> u64 {
 /// 毫秒转tick
 #[inline(always)]
 pub fn ms2ticks(ms: usize) -> usize {
-    ms / TICK_PREIOD_MS
+    ms * 1000 / TICK_PREIOD_US
 }
 
 /// 返回tick时长，单位毫秒
 #[inline]
 pub fn tick_ms() -> u64 {
-    tick() * TICK_PREIOD_MS as u64
+    tick_us() / 1000
+}
+
+/// 返回tick时长，单位微秒
+#[inline]
+pub fn tick_us() -> u64 {
+    tick() * TICK_PREIOD_US as u64
 }
 
 /// 返回rtc tick

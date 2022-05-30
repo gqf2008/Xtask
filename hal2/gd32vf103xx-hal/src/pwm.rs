@@ -176,7 +176,7 @@ pub enum Channel {
 macro_rules! advanced_pwm_timer {
     ($TIM:ident: $tim:ident) => {
         impl<REMAP: Into<u8>> PwmTimer<$TIM, REMAP> {
-            pub fn new(
+            pub fn $tim(
                 timer: $TIM,
                 pins: impl Pins<$TIM, REMAP>,
                 rcu: &mut Rcu,
@@ -210,7 +210,7 @@ macro_rules! advanced_pwm_timer {
 macro_rules! general_pwm_timer {
     ($TIM:ident: $tim:ident) => {
         impl<REMAP: Into<u8> + Into<bool>> PwmTimer<$TIM, REMAP> {
-            pub fn new(
+            pub fn $tim(
                 timer: $TIM,
                 pins: impl Pins<$TIM, REMAP>,
                 rcu: &mut Rcu,
@@ -309,30 +309,34 @@ macro_rules! pwm_timer {
                 self.timer.chctl0_output().modify(|_r, w| unsafe {
                     w
                         // Enable PWM Mode 0 for channel 0 and 1
-                        .ch0comctl().bits(0b110)
-                        .ch1comctl().bits(0b110)
-
+                        .ch0comctl()
+                        .bits(0b110)
+                        .ch1comctl()
+                        .bits(0b110)
                         // Output mode for channel 0 and 1
-                        .ch0ms().bits(0b00)
-                        .ch1ms().bits(0b00)
+                        .ch0ms()
+                        .bits(0b00)
+                        .ch1ms()
+                        .bits(0b00)
                 });
                 self.timer.chctl1_output().modify(|_r, w| unsafe {
                     w
                         // Enable PWM Mode 0 for channel 2 and 3
-                        .ch2comctl().bits(0b110)
-                        .ch3comctl().bits(0b110)
-
+                        .ch2comctl()
+                        .bits(0b110)
+                        .ch3comctl()
+                        .bits(0b110)
                         // Output mode for channel 2 and 3
-                        .ch2ms().bits(0b00)
-                        .ch3ms().bits(0b00)
+                        .ch2ms()
+                        .bits(0b00)
+                        .ch3ms()
+                        .bits(0b00)
                 });
 
                 // Enable the timer
-                self.timer.ctl0.write(|w| {
-                    w
-                        .updis().clear_bit()
-                        .cen().set_bit()
-                });
+                self.timer
+                    .ctl0
+                    .write(|w| w.updis().clear_bit().cen().set_bit());
             }
         }
     };
