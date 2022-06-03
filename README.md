@@ -46,31 +46,39 @@
     - linux或者mac平台执行 screen /dev/$串口设备 57600
 
 3. 打开另外一个终端
+    - [x] gd32vf103: --target riscv32imac-unknown-none-elf
+    - [x] stm32f4: --target thumbv7em-none-eabihf
+    - [x] stm32f1: --target thumbv7m-none-eabi
+    - [ ] rp2040: --target thumbv6m-none-eabi
+    
     - 信号广播示例
-        - cargo run --example broadcast --release 
+        - cargo run --example broadcast --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release
 
     - LED示例，三个任务分别控制三色LED
-        - cargo run --example led --release 
+        - cargo run --example led --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 多任务切换示例，5个任务，4个任务循环一段时间后退出
-        - cargo run --example multitask --release 
+        - cargo run --example multitask --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 通知示例，一个通知另外一个
-        - cargo run --example notify --release 
+        - cargo run --example notify --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 队列示例，两个发，三个收消息
-        - cargo run --example queue --release 
+        - cargo run --example queue --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 信号量示例，两个发，三个收
-        - cargo run --example semaphore --release 
+        - cargo run --example semaphore --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 消息服务总线示例，
-        - cargo run --example evbus --release 
+        - cargo run --example evbus --feaures=gd32vf103 --target riscv32imac-unknown-none-elf --release 
 
     - 软件定时器
-        - cargo run --example timer --release 
+        - cargo run --example timer --feaures=gd32vf103,timer  --target riscv32imac-unknown-none-elf --release 
         
 4. 如果您能在终端看到任务工作时的日志输出，恭喜您已经成功了
+
+
+
 
 
 ### 移植层接口
