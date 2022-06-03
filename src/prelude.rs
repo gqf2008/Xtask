@@ -8,6 +8,7 @@ pub use crate::task::*;
 pub use crate::time::*;
 #[cfg(feature = "timer")]
 pub use crate::timer;
+#[cfg(any(feature = "gd32vf103", feature = "stm32f1", feature = "stm32f4",))]
 pub use crate::{sprint, sprintln};
 pub use bare_metal::*;
 pub use log;

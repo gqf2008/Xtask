@@ -34,12 +34,8 @@ rustflags = [
 runner = "elf2uf2-rs -d"
 # runner = "probe-run --chip RP2040"
 rustflags = [
-  "-C",
-  "link-arg=--nmagic",
-  "-C",
-  "link-arg=-Tlink.x",
-  "-C",
-  "inline-threshold=5",
-  "-C",
-  "no-vectorize-loops",
+  "-Clink-arg=--nmagic",
+  "-Clink-arg=-Tlink.x",
+  "-Cinline-threshold=5",
+  "-Cno-vectorize-loops",
 ]

@@ -51,7 +51,7 @@ pub trait Portable {
 }
 
 /// 移植层默认实现
-pub(crate) type DefaultPorting = ();
+pub type DefaultPorting = ();
 
 /// 默认实现
 impl Portable for DefaultPorting {
