@@ -17,4 +17,8 @@ impl Led {
     pub fn on(&mut self) {
         self.port.set_low();
     }
+
+    pub fn toggle(&mut self) {
+        self.port.toggle();
+    }
 }

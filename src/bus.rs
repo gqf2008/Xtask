@@ -8,6 +8,7 @@ use core::ffi::c_void;
 
 pub struct Bus<'a, E> {
     subscribers: RefCell<BTreeMap<&'a str, Vec<Box<dyn Fn(&'a str, E)>>>>,
+    callee: RefCell<BTreeMap<&'a str, Box<dyn Fn(&'a str, E)>>>,
 }
 
 unsafe impl<'a, E> Send for Bus<'a, E> {}
@@ -18,6 +19,7 @@ impl<'a, E> Bus<'a, E> {
     pub const fn new() -> Self {
         Self {
             subscribers: RefCell::new(BTreeMap::new()),
+            callee: RefCell::new(BTreeMap::new()),
         }
     }
 }
@@ -62,12 +64,7 @@ impl<'a, E: Copy> Bus<'a, E> {
     /// 发送事件
     /// 不能在中断服务中调用，中断服务中调用请用event_isr
     pub fn publish(&self, topic: &'a str, event: E) {
-        sync::free(|_| {
-            let mut subscribers = self.subscribers.borrow_mut();
-            if let Some(list) = subscribers.get_mut(topic) {
-                list.iter().for_each(|f| f(topic, event));
-            }
-        });
+        sync::free(|_| self.publish_isr(topic, event));
     }
 
     /// 发送事件
@@ -76,6 +73,36 @@ impl<'a, E: Copy> Bus<'a, E> {
         let mut subscribers = self.subscribers.borrow_mut();
         if let Some(list) = subscribers.get_mut(topic) {
             list.iter().for_each(|f| f(topic, event));
+        }
+    }
+
+    pub fn register_serivce<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) {
+        sync::free(|_| self.register_serivce_isr(name, f))
+    }
+
+    pub fn unregister_serivce(&self, name: &'a str) {
+        sync::free(|_| self.unregister_serivce_isr(name))
+    }
+
+    pub fn register_serivce_isr<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) {
+        let f = Box::new(f);
+        let mut callee = self.callee.borrow_mut();
+        callee.insert(name, f);
+    }
+
+    pub fn unregister_serivce_isr(&self, name: &'a str) {
+        let mut callee = self.callee.borrow_mut();
+        callee.remove(name);
+    }
+
+    pub fn call(&self, name: &'a str, event: E) {
+        sync::free(|_| self.call_isr(name, event))
+    }
+
+    pub fn call_isr(&self, name: &'a str, event: E) {
+        let callee = self.callee.borrow();
+        if let Some(f) = callee.get(name) {
+            f(name, event);
         }
     }
 }
