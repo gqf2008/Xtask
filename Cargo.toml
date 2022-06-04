@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["rp2040", "xtask_executor", "xtask_scheduler"]
+default = ["xtask_executor", "xtask_scheduler"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -24,7 +24,7 @@ timer = []
 xtask_scheduler = []
 # 芯片，可选项gd32vf103、stm32f1、stm32f4、rp2040
 # rp2040
-rp2040 = ["rp2040-boot2", "rp-pico"]
+rp2040 = ["rp2040-hal", "rp2040-boot2", "rp-pico"]
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal", "longan_nano"]
 # stm32f1xx
