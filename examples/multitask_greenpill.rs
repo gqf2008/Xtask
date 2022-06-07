@@ -14,11 +14,12 @@ use xtask::prelude::*;
 fn init() {
     let start_addr = rt::heap_start() as usize;
     //4k留给主栈
-    xtask::init(start_addr, 60 * 1024);
+    xtask::init(start_addr, 256 * 1024);
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
         let clocks = rcc.cfgr.freeze();
+
         let gpioa = dp.GPIOA.split();
         let gpioc = dp.GPIOC.split();
         let led = Led::new(gpioc.pc13);
@@ -27,6 +28,7 @@ fn init() {
             .tx(gpioa.pa9.into_alternate(), 115200.bps(), &clocks)
             .unwrap();
         stdout::use_tx1(tx);
+        log::info!("clocks {}", clocks.sysclk());
         log::info!("Greenpill initialize ok");
         example_led(led);
     }
