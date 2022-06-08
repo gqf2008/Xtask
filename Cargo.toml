@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["xtask_executor", "xtask_scheduler"]
+default = ["xtask_executor", "xtask_scheduler","rtt_log"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -40,6 +40,10 @@ bluepill = []
 greenpill = []
 # rp-pico
 rp-pico = []
+# rtt_log
+rtt_log=[]
+#stdout_log
+stdout_log=[]
 
 [dependencies]
 bare-metal = "1.0.0"
@@ -54,6 +58,7 @@ profont = "0.4.0"
 # spin = "0.9.3"
 cast = {version = "0.3.0", default-features = false}
 log = "0.4.17"
+panic-probe = { version = "0.3", features = ["print-rtt"] }
 
 # optional
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
@@ -67,7 +72,6 @@ stm32f4xx-hal = {version = "0.13.2", optional = true, features = ["rt", "stm32f4
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.4"
 cortex-m-rt = "0.7.1"
-# cortex-m-semihosting = "0.5.0"
 rtt-target = {version = "0.3.1", features = ["cortex-m"]}
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]

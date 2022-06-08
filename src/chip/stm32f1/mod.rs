@@ -127,7 +127,7 @@ impl Portable for STM32F1Porting {
     /// 启动调度器
     fn start_scheduler() -> ! {
         //配置中断，这个函数就是定时中断和软中断使能
-        sprintln!("start_scheduler");
+        log::info!("Start scheduler");
         //从任务栈恢复CPU状态，汇编实现
         unsafe {
             setup_intrrupt();

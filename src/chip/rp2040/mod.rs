@@ -127,7 +127,7 @@ impl Portable for RP2040Porting {
         //配置中断，这个函数就是定时中断和软中断使能
         unsafe {
             setup_intrrupt();
-            sprintln!("start scheduler");
+            log::info!("Start scheduler");
             asm!(include_str!("startup.S"))
         };
         panic!("~!@#$%^&*()_")

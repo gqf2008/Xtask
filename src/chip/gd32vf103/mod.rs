@@ -95,6 +95,7 @@ impl Portable for Gd32vf103Porting {
         reset_systick();
         //配置中断，这个函数就是定时中断和软中断使能
         setup_intrrupt();
+        log::info!("Start scheduler");
         //从任务栈恢复CPU状态，汇编实现
         unsafe { asm!(include_str!("restore_ctx.S")) };
         //这个函数不会返回，因为在汇编中最后一条指令是mret，而不是ret

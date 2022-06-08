@@ -1,12 +1,19 @@
 use log::{LevelFilter, Metadata, Record, SetLoggerError};
 
-use rtt_target::*;
 #[cfg(any(feature = "gd32vf103", feature = "stm32f1", feature = "stm32f4",))]
-use crate::{sprintln, time};
+use crate::sprintln;
+use crate::time;
 
+#[cfg(feature = "stdout_log")]
 static LOGGER: StdoutLogger = StdoutLogger::new(LevelFilter::Debug);
 
+#[cfg(feature = "rtt_log")]
+static LOGGER: RTTLogger = RTTLogger::new(LevelFilter::Debug);
+
 pub fn init() -> Result<(), SetLoggerError> {
+    #[cfg(feature = "rtt_log")]
+    rtt_target::rtt_init_print!();
+
     #[cfg(not(atomic_cas))]
     unsafe {
         log::set_logger_racy(&LOGGER).map(|()| log::set_max_level(LevelFilter::Debug))
@@ -78,7 +85,26 @@ impl log::Log for RTTLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            rprintln!("{} - {}", record.level(), record.args());
+            let ticks_sec = crate::tick_ms() / 1000 / 60;
+            rtt_target::rprintln!(
+                "{}/{}min used({}KiB) free({}KiB) {:?}: {:?} {} - {}",
+                time::tick(),
+                ticks_sec,
+                crate::used_memory() / 1024,
+                crate::free_memory() / 1024,
+                if let Some(file) = record.file() {
+                    file
+                } else {
+                    "-"
+                },
+                if let Some(line) = record.line() {
+                    line
+                } else {
+                    0
+                },
+                record.level(),
+                record.args()
+            );
         }
     }
 
