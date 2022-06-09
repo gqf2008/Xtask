@@ -1,7 +1,8 @@
 use core::fmt::{self, Write};
 use cortex_m::interrupt;
-
+use embedded_hal::serial::Write as _;
 use stm32f4xx_hal::pac::USART1;
+use stm32f4xx_hal::serial::Error;
 use stm32f4xx_hal::serial::{self, Tx};
 
 static mut STDOUT: Option<Stdout<Tx<USART1>>> = None;
@@ -23,6 +24,17 @@ where
             .iter()
             .try_for_each(|c| nb::block!(self.0.write(*c)))
             .map_err(|_| core::fmt::Error)
+    }
+}
+
+#[inline]
+pub fn write(b: &[u8]) -> Result<(), Error> {
+    unsafe {
+        if let Some(stdout) = STDOUT.as_mut() {
+            b.iter().try_for_each(|c| nb::block!(stdout.0.write(*c)))
+        } else {
+            Err(stm32f4xx_hal::serial::Error::Other)
+        }
     }
 }
 
