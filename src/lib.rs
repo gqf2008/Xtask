@@ -24,8 +24,7 @@ pub mod time;
 #[cfg(feature = "timer")]
 pub mod timer;
 
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
+use panic_probe as _;
 pub use prelude::*;
 
 pub fn init(start_addr: usize, size: usize) {
@@ -37,12 +36,4 @@ pub fn init(start_addr: usize, size: usize) {
 #[alloc_error_handler]
 fn alloc_error(_layout: core::alloc::Layout) -> ! {
     panic!("memory out");
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {
-        atomic::compiler_fence(Ordering::SeqCst);
-    }
 }
