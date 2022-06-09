@@ -1,10 +1,10 @@
 mod port;
 
-use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
+use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 
 use crate::port::Portable;
 use crate::task::Task;
-use crate::{sprintln, CriticalSection};
+use crate::CriticalSection;
 use core::arch::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::syst::SystClkSource;
