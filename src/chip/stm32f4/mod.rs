@@ -162,7 +162,7 @@ impl Portable for STM32F4Porting {
     }
     /// 硬件延时，单位us
     fn delay_us(us: u64) {
-        let clock = (us * (CPU_CLOCK_HZ as u64)) / 1_000_000;
+        let clock = (us * (SYSTICK_CLOCK_HZ as u64)) / 1_000_000;
         cortex_m::asm::delay(clock as u32);
     }
     /// 保存任务环境到任务栈
