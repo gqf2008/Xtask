@@ -63,46 +63,49 @@ impl<'a, E: Copy> Bus<'a, E> {
 
     /// 发送事件
     /// 不能在中断服务中调用，中断服务中调用请用event_isr
-    pub fn publish(&self, topic: &'a str, event: E) {
-        sync::free(|_| self.publish_isr(topic, event));
+    pub fn publish(&self, topic: &'a str, event: E) -> &Self {
+        sync::free(|_| self.publish_isr(topic, event))
     }
 
     /// 发送事件
     /// 只能在中断服务中调用
-    pub fn publish_isr(&self, topic: &'a str, event: E) {
+    pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
         let mut subscribers = self.subscribers.borrow_mut();
         if let Some(list) = subscribers.get_mut(topic) {
             list.iter().for_each(|f| f(topic, event));
         }
+        self
     }
 
-    pub fn register_serivce<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) {
-        sync::free(|_| self.register_serivce_isr(name, f))
+    pub fn register<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) -> &Self {
+        sync::free(|_| self.register_isr(name, f))
     }
 
-    pub fn unregister_serivce(&self, name: &'a str) {
-        sync::free(|_| self.unregister_serivce_isr(name))
+    pub fn unregister(&self, name: &'a str) {
+        sync::free(|_| self.unregister_isr(name))
     }
 
-    pub fn register_serivce_isr<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) {
+    pub fn register_isr<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) -> &Self {
         let f = Box::new(f);
         let mut callee = self.callee.borrow_mut();
         callee.insert(name, f);
+        self
     }
 
-    pub fn unregister_serivce_isr(&self, name: &'a str) {
+    pub fn unregister_isr(&self, name: &'a str) {
         let mut callee = self.callee.borrow_mut();
         callee.remove(name);
     }
 
-    pub fn call(&self, name: &'a str, event: E) {
+    pub fn call(&self, name: &'a str, event: E) -> &Self {
         sync::free(|_| self.call_isr(name, event))
     }
 
-    pub fn call_isr(&self, name: &'a str, event: E) {
+    pub fn call_isr(&self, name: &'a str, event: E) -> &Self {
         let callee = self.callee.borrow();
         if let Some(f) = callee.get(name) {
             f(name, event);
         }
+        self
     }
 }
