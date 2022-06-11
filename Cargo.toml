@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["xtask_executor", "xtask_scheduler","rtt_log"]
+default = ["xtask_executor", "xtask_scheduler", "rtt_log"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -31,6 +31,7 @@ gd32vf103 = ["gd32vf103xx-hal", "longan_nano"]
 stm32f1 = ["stm32f1xx-hal", "bluepill"]
 # stm32f4xx
 stm32f4 = ["stm32f4xx-hal", "greenpill"]
+stm32h7 = ["stm32h7xx-hal"]
 # 板级支持包
 # longan_nano
 longan_nano = ["st7735-lcd", "mpu6050"]
@@ -41,9 +42,9 @@ greenpill = []
 # rp-pico
 rp-pico = []
 # rtt_log
-rtt_log=[]
+rtt_log = []
 #stdout_log
-stdout_log=[]
+stdout_log = []
 
 [dependencies]
 bare-metal = "1.0.0"
@@ -58,7 +59,7 @@ profont = "0.4.0"
 # spin = "0.9.3"
 cast = {version = "0.3.0", default-features = false}
 log = "0.4.17"
-panic-probe = { version = "0.3", features = ["print-rtt"] }
+panic-probe = {version = "0.3", features = ["print-rtt"]}
 
 # optional
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
@@ -68,6 +69,7 @@ rp2040-hal = {version = "0.4.0", optional = true}
 st7735-lcd = {version = "0.8", optional = true}
 stm32f1xx-hal = {version = "0.9.0", optional = true, features = ["rt", "stm32f103"]}
 stm32f4xx-hal = {version = "0.13.2", optional = true, features = ["rt", "stm32f427"]}
+stm32h7xx-hal = {version = "0.12.2", optional = true, features = ["rt", "stm32h7b0"]}
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.4"
