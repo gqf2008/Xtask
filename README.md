@@ -26,7 +26,7 @@
 - [x] CM3(STM32F103C8T6)
 - [x] CM7(STM32H7B0VBT6,no test)
 - [ ] CM0(rp2040)
-- [ ] CM7
+- [ ] ESP32C3
 - [ ] CH32V3
 - [ ] CH32V2
 - [ ] CH32V1
