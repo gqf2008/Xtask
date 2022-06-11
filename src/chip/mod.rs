@@ -9,3 +9,5 @@ pub mod rp2040;
 pub mod stm32f1;
 #[cfg(feature = "stm32f4")]
 pub mod stm32f4;
+#[cfg(feature = "stm32h7")]
+pub mod stm32h7;

@@ -22,6 +22,11 @@ pub const CPU_CLOCK_HZ: usize = 74000000;
 #[cfg(feature = "stm32f1")]
 pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 
+#[cfg(feature = "stm32h7")]
+pub const CPU_CLOCK_HZ: usize = 280_000_000; //stm32f401: 84000000;
+#[cfg(feature = "stm32h7")]
+pub const SYSTICK_CLOCK_HZ: usize = 24_000_000;
+
 #[cfg(feature = "rp2040")]
 pub const CPU_CLOCK_HZ: usize = 125_000_000;
 #[cfg(feature = "rp2040")]
