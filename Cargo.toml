@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["xtask_executor", "xtask_scheduler", "rtt_log"]
+default = ["xtask_executor", "xtask_scheduler", "rtt_log", "fatfs"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -46,6 +46,9 @@ rtt_log = []
 #stdout_log
 stdout_log = []
 
+#fatfs
+fatfs=[]
+
 [dependencies]
 bare-metal = "1.0.0"
 bit_field = "0.10.1"
@@ -60,6 +63,7 @@ profont = "0.4.0"
 cast = {version = "0.3.0", default-features = false}
 log = "0.4.17"
 panic-probe = {version = "0.3", features = ["print-rtt"]}
+cty = "0.2.2"
 
 # optional
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
