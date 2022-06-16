@@ -1,0 +1,1 @@
+bindgen --use-core --no-layout-tests --no-derive-debug --size_t-is-usize --output binding.rs wrapper.h
