@@ -7,5 +7,12 @@
         //"rust-analyzer.cargo.target": "riscv32imac-unknown-none-elf",
         //"rust-analyzer.cargo.target": "thumbv6m-none-eabi",
         "rust-analyzer.checkOnSave.allTargets": false,
-        "rust-analyzer.lru.capacity": 1000, // 分析器最大缓存深度
+        "rust-analyzer.lru.capacity": 1000,
+        "files.associations": {
+            "string.h": "c",
+            "corecrt.h": "c",
+            "vcruntime.h": "c",
+            "corecrt_memory.h": "c",
+            "vcruntime_string.h": "c"
+        }, // 分析器最大缓存深度
     }

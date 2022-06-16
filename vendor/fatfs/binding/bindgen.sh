@@ -1,1 +1,0 @@
-bindgen --use-core --no-layout-tests --rust-target nightly --size_t-is-usize --output binding.rs wrapper.h
