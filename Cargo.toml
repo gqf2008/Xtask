@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["xtask_executor", "xtask_scheduler", "rtt_log", "fatfs"]
+default = ["xtask_executor", "xtask_scheduler", "rtt_log", "fs","timer"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -47,7 +47,7 @@ rtt_log = []
 stdout_log = []
 
 #fatfs
-fatfs=[]
+fs=["fatfs"]
 
 [dependencies]
 bare-metal = "1.0.0"
@@ -66,6 +66,7 @@ panic-probe = {version = "0.3", features = ["print-rtt"]}
 cty = "0.2.2"
 
 # optional
+fatfs = { git = "https://github.com/rafalh/rust-fatfs",optional = true,  features = ["unicode","alloc","lfn"], default-features = false }
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
 mpu6050 = {version = "0.1.4", optional = true}
 rp2040-boot2 = {version = "0.2.0", optional = true}

@@ -4,7 +4,6 @@
 use crate::chip::TIMER_STACK_SIZE_WORD;
 use crate::executor::xworker;
 use crate::executor::Executor;
-use crate::sprintln;
 use crate::sync;
 use crate::task::Func;
 use crate::task::TIMER_TASK_NAME;
@@ -24,7 +23,7 @@ static mut READY: Option<VecDeque<Box<TimerInner>>> = None;
 static mut TIMER_TASK: *mut Task = core::ptr::null_mut();
 
 pub(crate) fn start_timer_task() {
-    sprintln!("start_timer_task");
+    log::info!("start_timer_task");
     unsafe {
         if HEAP.is_none() {
             HEAP = Some(BinaryHeap::new());
