@@ -18,6 +18,8 @@ pub mod chip;
 #[cfg(feature = "fs")]
 pub mod fs;
 pub mod logger;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod port;
 pub mod prelude;
 pub mod sync;
