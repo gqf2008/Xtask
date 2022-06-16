@@ -15,6 +15,8 @@ pub mod arch;
 pub mod bsp;
 pub mod bus;
 pub mod chip;
+#[cfg(feature = "fatfs")]
+pub mod fs;
 pub mod logger;
 pub mod port;
 pub mod prelude;
