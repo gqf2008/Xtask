@@ -35,7 +35,7 @@ impl ScbExt for SCB {
         {
             // NOTE(unsafe): Index is bounded to [4,15] by SystemHandler design.
             // TODO: Review it after rust-lang/rust/issues/13926 will be fixed.
-            let priority_ref = (*Self::ptr()).shpr.get_unchecked(usize::from(index - 4));
+            let priority_ref = (*Self::PTR).shpr.get_unchecked(usize::from(index - 4));
 
             priority_ref.write(prio)
         }
@@ -72,29 +72,29 @@ impl SystExt for SYST {
     #[inline]
     fn clock_source(src: SystClkSource) {
         match src {
-            SystClkSource::External => unsafe { (*Self::ptr()).csr.modify(|v| v & !(1 << 2)) },
-            SystClkSource::Core => unsafe { (*Self::ptr()).csr.modify(|v| v | (1 << 2)) },
+            SystClkSource::External => unsafe { (*Self::PTR).csr.modify(|v| v & !(1 << 2)) },
+            SystClkSource::Core => unsafe { (*Self::PTR).csr.modify(|v| v | (1 << 2)) },
         }
     }
     #[inline]
     fn open_interrupt() {
-        unsafe { (*Self::ptr()).csr.modify(|v| v | (1 << 1)) }
+        unsafe { (*Self::PTR).csr.modify(|v| v | (1 << 1)) }
     }
     #[inline]
     fn open_counter() {
-        unsafe { (*Self::ptr()).csr.modify(|v| v | (1 << 0)) }
+        unsafe { (*Self::PTR).csr.modify(|v| v | (1 << 0)) }
     }
     #[inline]
     fn reset_current() {
-        unsafe { (*Self::ptr()).cvr.write(0) }
+        unsafe { (*Self::PTR).cvr.write(0) }
     }
     #[inline]
     fn current() -> u32 {
-        unsafe { (*Self::ptr()).cvr.read() }
+        unsafe { (*Self::PTR).cvr.read() }
     }
     #[inline]
     fn reload(value: u32) {
-        unsafe { (*Self::ptr()).rvr.write(value) }
+        unsafe { (*Self::PTR).rvr.write(value) }
     }
 }
 
