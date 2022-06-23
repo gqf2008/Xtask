@@ -44,7 +44,8 @@ unsafe fn SVCall() {
         isb
         mov r14, #0xfffffffd
         bx r14
-    "
+    ",
+        options(raw)
     )
 }
 
@@ -80,7 +81,7 @@ unsafe fn PendSV() {
             msr msp, r0 //将堆栈地址写入主堆栈指针
             bx r14
             "
-    );
+            , options(raw));
 }
 
 /// 系统节拍器中断

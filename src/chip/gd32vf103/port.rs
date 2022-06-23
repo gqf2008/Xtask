@@ -23,7 +23,7 @@ use crate::task::scheduler;
 use core::arch::global_asm;
 
 // 导入汇编代码
-global_asm!(include_str!("port.S"));
+global_asm!(include_str!("port.S"), options(raw));
 
 /**导出中断服务函数，导出名称必须与port.S汇编代码中定义的一致**/
 

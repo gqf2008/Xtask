@@ -28,7 +28,8 @@ unsafe fn SVCall() {
         // 退出中断函数，使得sp=psp，进入用户模式（thumb）
         // 进入用户任务后，其他寄存器自动出栈，恢复pc值等
         bx r14
-    "
+    ",
+        options(raw)
     )
 }
 #[exception]
@@ -72,7 +73,7 @@ unsafe fn PendSV() {
         ldr r0, [r0] //根据向量表实际存储地址，取出向量表中的第一项,向量表第一项存储主堆栈指针MSP的初始值
         msr msp, r0 //将堆栈地址写入主堆栈指针
         bx r14
-        "
+        ", options( raw)
     );
 }
 

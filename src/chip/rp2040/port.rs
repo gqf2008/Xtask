@@ -7,7 +7,7 @@ use crate::{isr_sprintln, task::scheduler};
 use cortex_m_rt::exception;
 pub(crate) static mut SYSTICKS: u64 = 0;
 
-global_asm!(include_str!("port.S"));
+global_asm!(include_str!("port.S"), options(raw));
 
 /// 系统节拍器中断
 #[exception]

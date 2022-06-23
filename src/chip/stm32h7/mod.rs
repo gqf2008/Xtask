@@ -140,7 +140,7 @@ impl Portable for STM32H7Porting {
             isb //指令同步，将流水线中的指令全部执行完毕
             svc 0xff  //调用SVCall异常服务，在SVCall里恢复第一个任务
             nop
-            "
+            ", options( raw)
             )
         };
         panic!("~!@#$%^&*()_")
