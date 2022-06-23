@@ -146,7 +146,7 @@ impl Portable for STM32F1Porting {
             svc 0xff  //调用SVCall异常服务，在SVCall里恢复第一个任务
             nop
             "
-            )
+            , options(noreturn, raw))
         };
         panic!("~!@#$%^&*()_")
     }

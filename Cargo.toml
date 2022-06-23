@@ -106,6 +106,6 @@ opt-level = "z"
 
 [profile.release]
 codegen-units = 1
-debug = true
 lto = true
+strip = true
 opt-level = "z"
