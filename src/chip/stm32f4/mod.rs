@@ -141,9 +141,8 @@ impl Portable for STM32F4Porting {
             svc 0xff  //调用SVCall异常服务，在SVCall里恢复第一个任务
             nop
             "
-            )
+            , options(noreturn, raw))
         };
-        panic!("~!@#$%^&*()_")
     }
     /// 软中断
     fn irq() {
