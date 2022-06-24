@@ -143,7 +143,6 @@ impl Portable for STM32F4Porting {
             "
             , options(noreturn, raw))
         };
-        panic!("~!@#$%^&*()_")
     }
     /// 软中断
     fn irq() {

@@ -130,7 +130,6 @@ impl Portable for RP2040Porting {
             log::info!("Start scheduler");
             asm!(include_str!("startup.S"), options(noreturn, raw))
         };
-        panic!("~!@#$%^&*()_")
     }
     /// 软中断
     fn irq() {
