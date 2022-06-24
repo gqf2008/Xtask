@@ -12,11 +12,15 @@ pub use crate::chip::stm32f1::STM32F1Porting as Porting;
 #[cfg(feature = "rp2040")]
 pub use crate::chip::rp2040::RP2040Porting as Porting;
 
+#[cfg(feature = "stm32h7")]
+pub use crate::chip::stm32h7::STM32H7Porting as Porting;
+
 #[cfg(not(any(
     feature = "gd32vf103",
     feature = "stm32f4",
     feature = "stm32f1",
-    feature = "rp2040"
+    feature = "rp2040",
+    feature = "stm32h7"
 )))]
 pub use DefaultPorting as Porting;
 

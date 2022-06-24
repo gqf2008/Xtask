@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["xtask_executor", "xtask_scheduler", "rtt_log", "fs","timer","net"]
+default = ["xtask_executor", "xtask_scheduler", "rtt_log"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务
@@ -75,13 +75,14 @@ rp2040-hal = {version = "0.4.0", optional = true}
 st7735-lcd = {version = "0.8", optional = true}
 stm32f1xx-hal = {version = "0.9.0", optional = true, features = ["rt", "stm32f103"]}
 stm32f4xx-hal = {version = "0.13.2", optional = true, features = ["rt", "stm32f427"]}
-stm32h7xx-hal = {version = "0.12.2", optional = true, features = ["rt", "stm32h7b0"]}
+stm32h7xx-hal = {version = "0.12.2", optional = true, features = ["rt", "stm32h7b0","log-rtt"]}
 smoltcp = { version = "0.8.0", optional = true, default-features = false, features = ["alloc","proto-ipv4","socket-raw","socket-udp","socket-tcp","socket-icmp","socket-dhcpv4"] }
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7.4"
 cortex-m-rt = "0.7.1"
 rtt-target = {version = "0.3.1", features = ["cortex-m"]}
+panic-rtt-target = { version = "0.1.0", features = ["cortex-m"] }
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 cortex-a = "7.2.0"
@@ -90,6 +91,7 @@ cortex-a = "7.2.0"
 riscv = "0.8.0"
 riscv-rt = "0.8.1"
 rtt-target = {version = "0.3.1", features = ["riscv"]}
+
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 x86_64 = "0.14.9"
@@ -108,4 +110,5 @@ opt-level = "z"
 codegen-units = 1
 debug = true
 lto = true
+# strip = true
 opt-level = "z"

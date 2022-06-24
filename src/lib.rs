@@ -31,9 +31,18 @@ pub mod timer;
 use panic_probe as _;
 pub use prelude::*;
 
-pub fn init(start_addr: usize, size: usize) {
-    allocator::init(start_addr, size);
+pub fn init_logger() {
     logger::init().ok();
+}
+
+pub fn init_heap(start_addr: usize, size: usize) {
+    allocator::init(start_addr, size);
+}
+
+#[deprecated]
+pub fn init(start_addr: usize, size: usize) {
+    logger::init().ok();
+    init_heap(start_addr, size);
 }
 
 // 内存不足执行此处代码(调试用)
