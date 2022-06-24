@@ -8,30 +8,6 @@ use crate::{isr_sprint, isr_sprintln, sprintln};
 use cortex_m_rt::exception;
 pub(crate) static mut SYSTICKS: u64 = 0;
 
-// #[inline]
-// pub fn lr() -> u32 {
-//     let r;
-//     unsafe { asm!("mov {}, lr", out(reg) r, options(nomem, nostack, preserves_flags)) };
-//     r
-// }
-// #[inline]
-// pub fn pc() -> u32 {
-//     let r;
-//     unsafe { asm!("mov {}, pc", out(reg) r, options(nomem, nostack, preserves_flags)) };
-//     r
-// }
-// #[inline]
-// pub fn is_enable() -> bool {
-//     cortex_m::register::primask::read().is_active()
-// }
-
-// #[inline]
-// pub fn msp() -> u32 {
-//     let r;
-//     unsafe { asm!("mrs {}, MSP", out(reg) r, options(nomem, nostack, preserves_flags)) };
-//     r
-// }
-
 #[exception]
 unsafe fn SVCall() {
     asm!(
@@ -39,7 +15,7 @@ unsafe fn SVCall() {
         ldr r3, =CURRENT_TASK_PTR
         ldr r1, [r3]
         ldr r0, [r1]
-        ldmia r0!, {{r4-r11}}
+        ldmia r0!, {r4-r11}
         msr psp, r0
         isb
         mov r14, #0xfffffffd
@@ -60,18 +36,18 @@ unsafe fn PendSV() {
             isb
             ldr r3, =CURRENT_TASK_PTR
             ldr r2, [r3]
-            stmdb r0!, {{r4-r11}}
+            stmdb r0!, {r4-r11}
             str r0, [r2]
-            stmdb sp!, {{r3, r14}}
+            stmdb sp!, {r3, r14}
             cpsid i
             cpsid f
             bl switch_context
             cpsie f
             cpsie i
-            ldmia sp!, {{r3, r14}}
+            ldmia sp!, {r3, r14}
             ldr r1, [r3]
             ldr r0, [r1]
-            ldmia r0!, {{r4-r11}}
+            ldmia r0!, {r4-r11}
             msr psp, r0
             isb
             //恢复msp

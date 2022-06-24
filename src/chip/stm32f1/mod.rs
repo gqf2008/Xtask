@@ -148,7 +148,6 @@ impl Portable for STM32F1Porting {
             "
             , options(noreturn, raw))
         };
-        panic!("~!@#$%^&*()_")
     }
     /// 软中断
     fn irq() {

@@ -23,7 +23,7 @@ pub const CPU_CLOCK_HZ: usize = 74000000;
 pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 
 #[cfg(feature = "stm32h7")]
-pub const CPU_CLOCK_HZ: usize = 280_000_000; //stm32f401: 84000000;
+pub const CPU_CLOCK_HZ: usize = 280_000_000;
 #[cfg(feature = "stm32h7")]
 pub const SYSTICK_CLOCK_HZ: usize = 24_000_000;
 
