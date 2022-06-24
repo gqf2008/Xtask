@@ -40,7 +40,7 @@ fn init() {
         let start_addr = 0x24000000;
         log::info!("Start Address 0x{:02x}", start_addr);
         //4k留给主栈
-        xtask::init_heap(start_addr, 512 * 1024);
+        xtask::init_heap(start_addr, 1184 * 1024);
         log::info!("Blackpill initialize ok");
         example_led(led);
     }
