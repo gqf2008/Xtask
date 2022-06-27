@@ -26,7 +26,7 @@ impl<'a, E> Bus<'a, E> {
 
 pub type Token<'a> = (&'a str, usize);
 
-impl<'a, E: Copy> Bus<'a, E> {
+impl<'a, E: Clone> Bus<'a, E> {
     /// 订阅事件
     /// 不能在中断服务中调用
     pub fn subscribe<F: Fn(&'a str, E) + Send + 'static>(&self, topic: &'a str, f: F) -> Token<'a> {
@@ -72,7 +72,7 @@ impl<'a, E: Copy> Bus<'a, E> {
     pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
         let mut subscribers = self.subscribers.borrow_mut();
         if let Some(list) = subscribers.get_mut(topic) {
-            list.iter().for_each(|f| f(topic, event));
+            list.iter().for_each(|f| f(topic, event.clone()));
         }
         self
     }
