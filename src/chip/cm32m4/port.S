@@ -136,7 +136,7 @@ _irq_handler:
   // 同时mie从mpie恢复到中断前的状态，也就是要恢复到进入中断函数前的中断状态
   mret
 
-  
+
 .section .text.vectors, "ax"
 .option push
 .option norelax
@@ -161,76 +161,96 @@ vectors:
     .word     0
     .word     0
     .word     0
-    .word     INT_BWEI
-    .word     INT_PMOVI
-    .word     WWDGT
-    .word     EXTI_LVD
-    .word     TAMPER
-    .word     RTC
-    .word     FMC
-    .word     RCU
-    .word     EXTI_LINE0
-    .word     EXTI_LINE1
-    .word     EXTI_LINE2
-    .word     EXTI_LINE3
-    .word     EXTI_LINE4
-    .word     DMA0_CHANNEL0
-    .word     DMA0_CHANNEL1
-    .word     DMA0_CHANNEL2
-    .word     DMA0_CHANNEL3
-    .word     DMA0_CHANNEL4
-    .word     DMA0_CHANNEL5
-    .word     DMA0_CHANNEL6
-    .word     ADC0_1
-    .word     CAN0_TX
-    .word     CAN0_RX0
-    .word     CAN0_RX1
-    .word     CAN0_EWMC
-    .word     EXTI_LINE9_5
-    .word     TIMER0_BRK
-    .word     TIMER0_UP
-    .word     TIMER0_TRG_CMT
-    .word     TIMER0_CHANNEL
-    .word     TIMER1
-    .word     TIMER2
-    .word     TIMER3
-    .word     I2C0_EV
-    .word     I2C0_ER
-    .word     I2C1_EV
-    .word     I2C1_ER
-    .word     SPI0
-    .word     SPI1
-    .word     USART0
-    .word     USART1
-    .word     USART2
-    .word     EXTI_LINE15_10
-    .word     RTC_ALARM
-    .word     USBFS_WKUP
     .word     0
     .word     0
-    .word     0
-    .word     0
-    .word     0
-    .word     EXMC // not present in Reference Manual but present in vendor HAL
-    .word     0
-    .word     TIMER4
-    .word     SPI2
-    .word     UART3
-    .word     UART4
-    .word     TIMER5
-    .word     TIMER6
-    .word     DMA1_CHANNEL0
-    .word     DMA1_CHANNEL1
-    .word     DMA1_CHANNEL2
-    .word     DMA1_CHANNEL3
-    .word     DMA1_CHANNEL4
-    .word     0
-    .word     0
-    .word     CAN1_TX
-    .word     CAN1_RX0
-    .word     CAN1_RX1
-    .word     CAN1_EWMC
-    .word     USBFS
+    /* CM32M4xxR External Interrupts */
+    .word		WWDG_IRQHandler					/* 19: Window WatchDog Interrupt */
+    .word		PVD_IRQHandler					/* 20: PVD through EXTI Line detection Interrupt */
+    .word		TAMPER_IRQHandler				/* 21: Tamper Interrupt */
+    .word		RTC_IRQHandler					/* 22: RTC global Interrupt */
+    .word		FLASH_IRQHandler				/* 23: FLASH global Interrupt */
+    .word		RCC_IRQHandler					/* 24: RCC global Interrupt */
+    .word		EXTI0_IRQHandler				/* 25: EXTI Line0 Interrupt */
+    .word		EXTI1_IRQHandler				/* 26: EXTI Line1 Interrupt */
+    .word		EXTI2_IRQHandler				/* 27: EXTI Line2 Interrupt */
+    .word		EXTI3_IRQHandler				/* 28: EXTI Line3 Interrupt */
+    .word		EXTI4_IRQHandler				/* 29: EXTI Line4 Interrupt */
+    .word		DMA1_Channel1_IRQHandler		/* 30: DMA1 Channel 1 global Interrupt */
+    .word		DMA1_Channel2_IRQHandler		/* 31: DMA1 Channel 2 global Interrupt */
+    .word		DMA1_Channel3_IRQHandler		/* 32: DMA1 Channel 3 global Interrupt */
+    .word		DMA1_Channel4_IRQHandler		/* 33: DMA1 Channel 4 global Interrupt */
+    .word		DMA1_Channel5_IRQHandler		/* 34: DMA1 Channel 5 global Interrupt */
+    .word		DMA1_Channel6_IRQHandler		/* 35: DMA1 Channel 6 global Interrupt */
+    .word		DMA1_Channel7_IRQHandler		/* 36: DMA1 Channel 7 global Interrupt */
+    .word		ADC1_2_IRQHandler				/* 37: ADC1 and ADC2 global Interrupt */
+    .word		USB_HP_CAN1_TX_IRQHandler		/* 38: USB Device High Priority or CAN1 TX Interrupts */
+    .word		USB_LP_CAN1_RX0_IRQHandler		/* 39: USB Device Low Priority or CAN1 RX0 Interrupts */
+    .word		CAN1_RX1_IRQHandler				/* 40: CAN1 RX1 Interrupt */
+    .word		CAN1_SCE_IRQHandler				/* 41: CAN1 SCE Interrupt */
+    .word		EXTI9_5_IRQHandler				/* 42: External Line[9:5] Interrupts */
+    .word		TIM1_BRK_IRQHandler				/* 43: TIM1 Break Interrupt */
+    .word		TIM1_UP_IRQHandler				/* 44: TIM1 Update Interrupt */
+    .word		TIM1_TRG_COM_IRQHandler			/* 45: TIM1 Trigger and Commutation Interrupt */
+    .word		TIM1_CC_IRQHandler				/* 46: TIM1 Capture Compare Interrupt */
+    .word		TIM2_IRQHandler					/* 47: TIM2 global Interrupt */
+    .word		TIM3_IRQHandler					/* 48: TIM3 global Interrupt */
+    .word		TIM4_IRQHandler					/* 49: TIM4 global Interrupt */
+    .word		I2C1_EV_IRQHandler				/* 50: I2C1 Event Interrupt */
+	  .word		I2C1_ER_IRQHandler				/* 51: I2C1 Error Interrupt */
+    .word		I2C2_EV_IRQHandler				/* 52: I2C2 Event Interrupt */
+	  .word		I2C2_ER_IRQHandler				/* 53: I2C2 Error Interrupt */
+    .word		SPI1_IRQHandler					/* 54: SPI1 global Interrupt */
+	  .word		SPI2_I2S2_IRQHandler			/* 55: SPI2/I2S2 global Interrupt */
+    .word		USART1_IRQHandler				/* 56: USART1 global Interrupt */
+	  .word		USART2_IRQHandler				/* 57: USART2 global Interrupt */
+    .word		USART3_IRQHandler				/* 58: USART3 global Interrupt */
+	  .word		EXTI15_10_IRQHandler			/* 59: External Line[15:10] Interrupts */
+    .word		RTCAlarm_IRQHandler				/* 60: RTC Alarm through EXTI Line Interrupt */
+	  .word     0			/* 61: Reserved */
+	  .word		TIM8_BRK_IRQHandler				/* 62: TIM8 Break Interrupt */
+    .word		TIM8_UP_IRQHandler				/* 63: TIM8 Update Interrupt */
+	  .word		TIM8_TRG_COM_IRQHandler			/* 64: TIM8 Trigger and Commutation Interrupt */
+    .word		TIM8_CC_IRQHandler				/* 65: TIM8 Capture Compare Interrupt */
+	  .word		ADC3_4_IRQHandler				/* 66: ADC3 and ADC4 global Interrupt */
+	  .word		  0			/* 67: Reserved */
+	  .word     0			/* 68: Reserved */
+	  .word		TIM5_IRQHandler					/* 69: TIM5 global Interrupt */
+    .word		SPI3_I2S3_IRQHandler			/* 70: SPI3/I2S3 global Interrupt */
+	  .word		UART4_IRQHandler				/* 71: UART4 global Interrupt */
+    .word		UART5_IRQHandler				/* 72: UART5 global Interrupt */
+	  .word		TIM6_IRQHandler					/* 73: TIM6 global Interrupt */
+    .word		TIM7_IRQHandler					/* 74: TIM7 global Interrupt */
+	  .word		DMA2_Channel1_IRQHandler		/* 75: DMA2 Channel 1 global Interrupt */
+    .word		DMA2_Channel2_IRQHandler		/* 76: DMA2 Channel 2 global Interrupt */
+	  .word		DMA2_Channel3_IRQHandler		/* 77: DMA2 Channel 3 global Interrupt */
+    .word		DMA2_Channel4_IRQHandler		/* 78: DMA2 Channel 4 global Interrupt */
+	  .word		DMA2_Channel5_IRQHandler		/* 79: DMA2 Channel 5 global Interrupt */
+	  .word     0			/* 80: Reserved */
+	  .word     0			/* 81: Reserved */
+    .word		CAN2_TX_IRQHandler				/* 82: CAN2 TX Interrupt */
+	  .word		CAN2_RX0_IRQHandler				/* 83: CAN2 RX0 Interrupt */
+    .word		CAN2_RX1_IRQHandler				/* 84: CAN2 RX1 Interrupt */
+	  .word		CAN2_SCE_IRQHandler				/* 85: CAN2 SCE Interrupt */
+    .word		QSPI_IRQHandler					/* 86: QSPI global Interrupt */
+	  .word		DMA2_Channel6_IRQHandler		/* 87: DMA2 Channel 6 global Interrupt */
+    .word		DMA2_Channel7_IRQHandler		/* 88: DMA2 Channel 7 global Interrupt */
+	  .word		I2C3_EV_IRQHandler				/* 89: I2C3 Event Interrupt */
+    .word		I2C3_ER_IRQHandler				/* 90: I2C3 Error Interrupt */
+	  .word		I2C4_EV_IRQHandler				/* 91: I2C4 Event Interrupt */
+    .word		I2C4_ER_IRQHandler				/* 92: I2C4 Error Interrupt */
+	  .word		UART6_IRQHandler				/* 93: UART6 global Interrupt */
+    .word		UART7_IRQHandler				/* 94: UART7 global Interrupt */
+	  .word		DMA1_Channel8_IRQHandler		/* 95: DMA1 Channel 8 global Interrupt */
+    .word		DMA2_Channel8_IRQHandler		/* 96: DMA2 Channel 8 global Interrupt */
+	  .word     0			/* 97: Reserved */
+	  .word		SAC_IRQHandler					/* 98: SAC global Interrupt */
+	  .word   MMU_IRQHandler					/* 99: MMU global Interrupt */
+    .word		TSC_IRQHandler					/* 100: TSC global Interrupt */
+	  .word		COMP_1_2_3_IRQHandler			/* 101: COMP1 & COMP2 & COMP3 global Interrupt */
+    .word		COMP_4_5_6_IRQHandler			/* 102: COMP4 & COMP5 & COMP6 global Interrupt */
+	  .word		COMP7_IRQHandler				/* 103: COMP7 global Interrupt */
+	  .word		R_SRAM_IRQHandler				/* 104: R-SRAM Error Interrupt */
+
 /*
     Trap entry point (_start_trap)
 */
@@ -294,7 +314,8 @@ _start_trap:
 _setup_interrupts:
     // Set the the NMI base to share with mtvec by setting 0x7D0
     // 0x7D0是Bumblebee内核自定义寄存器，0x200是NMI（不可屏蔽中断）基地址，与mtvec共享
-    li t0, 0x200
+    //1<<9=1 0000 0000
+    li t0, 0x100
     csrs 0x7D0, t0
 
     // Set the mtvt，
@@ -317,67 +338,85 @@ _setup_interrupts:
 
     ret
 
-// GD32外设预定义中断符号，与中断向量表里的一致，应用层实现后由连接器绑定
+// CM32外设预定义中断符号，与中断向量表里的一致，应用层实现后由连接器绑定
 // .weak 表示使符号对链接器全局可见，该符号具有较弱的绑定语义
-.weak INT_BWEI
-.weak INT_PMOVI
-.weak WWDGT
-.weak EXTI_LVD
-.weak TAMPER
-.weak RTC
-.weak FMC
-.weak RCU
-.weak EXTI_LINE0
-.weak EXTI_LINE1
-.weak EXTI_LINE2
-.weak EXTI_LINE3
-.weak EXTI_LINE4
-.weak DMA0_CHANNEL0
-.weak DMA0_CHANNEL1
-.weak DMA0_CHANNEL2
-.weak DMA0_CHANNEL3
-.weak DMA0_CHANNEL4
-.weak DMA0_CHANNEL5
-.weak DMA0_CHANNEL6
-.weak ADC0_1
-.weak CAN0_TX
-.weak CAN0_RX0
-.weak CAN0_RX1
-.weak CAN0_EWMC
-.weak EXTI_LINE9_5
-.weak TIMER0_BRK
-.weak TIMER0_UP
-.weak TIMER0_TRG_CMT
-.weak TIMER0_CHANNEL
-.weak TIMER1
-.weak TIMER2
-.weak TIMER3
-.weak I2C0_EV
-.weak I2C0_ER
-.weak I2C1_EV
-.weak I2C1_ER
-.weak SPI0
-.weak SPI1
-.weak USART0
-.weak USART1
-.weak USART2
-.weak EXTI_LINE15_10
-.weak RTC_ALARM
-.weak USBFS_WKUP
-.weak EXMC
-.weak TIMER4
-.weak SPI2
-.weak UART3
-.weak UART4
-.weak TIMER5
-.weak TIMER6
-.weak DMA1_CHANNEL0
-.weak DMA1_CHANNEL1
-.weak DMA1_CHANNEL2
-.weak DMA1_CHANNEL3
-.weak DMA1_CHANNEL4
-.weak CAN1_TX
-.weak CAN1_RX0
-.weak CAN1_RX1
-.weak CAN1_EWMC
-.weak USBFS
+  .weak  WWDG_IRQHandler
+  .weak  PVD_IRQHandler
+  .weak  TAMPER_IRQHandler
+  .weak  RTC_IRQHandler
+  .weak  FLASH_IRQHandler
+  .weak  RCC_IRQHandler
+  .weak  EXTI0_IRQHandler
+  .weak  EXTI1_IRQHandler
+  .weak  EXTI2_IRQHandler
+  .weak  EXTI3_IRQHandler
+  .weak  EXTI4_IRQHandler
+  .weak  DMA1_Channel1_IRQHandler
+  .weak  DMA1_Channel2_IRQHandler
+  .weak  DMA1_Channel3_IRQHandler
+  .weak  DMA1_Channel4_IRQHandler
+  .weak  DMA1_Channel5_IRQHandler
+  .weak  DMA1_Channel6_IRQHandler
+  .weak  DMA1_Channel7_IRQHandler
+  .weak  ADC1_2_IRQHandler
+  .weak  USB_HP_CAN1_TX_IRQHandler
+  .weak  USB_LP_CAN1_RX0_IRQHandler
+  .weak  CAN1_RX1_IRQHandler
+  .weak  CAN1_SCE_IRQHandler
+  .weak  EXTI9_5_IRQHandler
+  .weak  TIM1_BRK_IRQHandler
+  .weak  TIM1_UP_IRQHandler
+  .weak  TIM1_TRG_COM_IRQHandler
+  .weak  TIM1_CC_IRQHandler
+  .weak  TIM2_IRQHandler
+  .weak  TIM3_IRQHandler
+  .weak  TIM4_IRQHandler
+  .weak  I2C1_EV_IRQHandler
+	.weak  I2C1_ER_IRQHandler
+  .weak  I2C2_EV_IRQHandler
+	.weak  I2C2_ER_IRQHandler
+  .weak  SPI1_IRQHandler
+	.weak  SPI2_I2S2_IRQHandler
+  .weak  USART1_IRQHandler
+	.weak  USART2_IRQHandler
+  .weak  USART3_IRQHandler
+	.weak  EXTI15_10_IRQHandler
+  .weak  RTCAlarm_IRQHandler
+	.weak  TIM8_BRK_IRQHandler
+  .weak  TIM8_UP_IRQHandler
+	.weak  TIM8_TRG_COM_IRQHandler
+  .weak  TIM8_CC_IRQHandler
+	.weak  ADC3_4_IRQHandler
+	.weak  TIM5_IRQHandler
+  .weak  SPI3_I2S3_IRQHandler
+	.weak  UART4_IRQHandler
+  .weak  UART5_IRQHandler
+	.weak  TIM6_IRQHandler
+  .weak  TIM7_IRQHandler
+	.weak  DMA2_Channel1_IRQHandler
+  .weak  DMA2_Channel2_IRQHandler
+	.weak  DMA2_Channel3_IRQHandler
+  .weak  DMA2_Channel4_IRQHandler
+	.weak  DMA2_Channel5_IRQHandler
+  .weak  CAN2_TX_IRQHandler
+	.weak  CAN2_RX0_IRQHandler
+  .weak  CAN2_RX1_IRQHandler
+	.weak  CAN2_SCE_IRQHandler
+  .weak  QSPI_IRQHandler
+	.weak  DMA2_Channel6_IRQHandler
+  .weak  DMA2_Channel7_IRQHandler
+	.weak  I2C3_EV_IRQHandler
+  .weak  I2C3_ER_IRQHandler
+	.weak  I2C4_EV_IRQHandler
+  .weak  I2C4_ER_IRQHandler
+	.weak  UART6_IRQHandler
+  .weak  UART7_IRQHandler
+	.weak  DMA1_Channel8_IRQHandler
+  .weak  DMA2_Channel8_IRQHandler
+	.weak  SAC_IRQHandler
+	.weak  MMU_IRQHandler
+  .weak  TSC_IRQHandler
+	.weak  COMP_1_2_3_IRQHandler
+  .weak  COMP_4_5_6_IRQHandler
+	.weak  COMP7_IRQHandler
+	.weak  R_SRAM_IRQHandler
