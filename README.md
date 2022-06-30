@@ -30,7 +30,6 @@
 - [x] CM3(STM32F103C8T6)
 - [x] CM7F(STM32H7B0VBT6)
 - [ ] RISCV(CM32M4xxR)
-- [ ] CM0(rp2040)
 - [ ] ESP32C3
 - [ ] CH32V3
 - [ ] CH32V2

@@ -136,9 +136,6 @@ impl Portable for Gd32vf103Porting {
         }
     }
 
-    /// 重新设置mtimecmp寄存器
-    /// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
-
     /// 硬件延时，单位us
     #[inline]
     fn delay_us(us: u64) {
@@ -189,6 +186,8 @@ impl Portable for Gd32vf103Porting {
     }
 }
 
+/// 重新设置mtimecmp寄存器
+/// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
 #[inline]
 pub(crate) fn reset_systick() {
     /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
