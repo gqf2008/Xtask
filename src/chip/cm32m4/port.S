@@ -1,5 +1,5 @@
 /*
-  部分代码来自N200 hal库，Firmware\RISCV\env_Eclipse\start.S
+  部分代码参考N308标准库，NMSIS/Device/Source/GCC/{intexc_cm32m4xxr.S,startup_cm32m4xxr.S}
   重写了保存上下文、中断入口函数_irq_handler代码，对大部分指令做了说明
 */
 
