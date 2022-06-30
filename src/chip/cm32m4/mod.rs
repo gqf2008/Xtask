@@ -4,7 +4,7 @@
 
 mod port;
 
-use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
+use super::{CPU_CLOCK_HZ, ECLIC_CTRL_ADDR, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
 use crate::task::Task;
@@ -31,6 +31,15 @@ const TIMER_MSIP: usize = 0xFFC;
 
 #[inline]
 pub(crate) fn setup_intrrupt() {
+    // 1. /* Configure the ECLIC level and priority Bits */
+    // 2. ECLIC_SetCfgNlbits(1); /* 1 bits for level, 3 bits for priority */
+    // 3.
+    // 4. /* Enable the Key Interrupt */
+    // 5. ECLIC_SetLevelIRQ(EXTI0_IRQn, 1); //interrupt level 1
+    // 6. ECLIC_SetPriorityIRQ(EXTI0_IRQn, 1); //interrupt priority 0
+    // 7. ECLIC_SetTrigIRQ(EXTI0_IRQn, ECLIC_LEVEL_TRIGGER); //level interrupt
+    // 8. ECLIC_EnableIRQ(EXTI0_IRQn); //Enable interrupt
+
     unsafe {
         //设置定时器中断
         ECLIC::setup(
@@ -145,9 +154,6 @@ impl Portable for CM32M4Porting {
         }
     }
 
-    /// 重新设置mtimecmp寄存器
-    /// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
-
     /// 硬件延时，单位us
     #[inline]
     fn delay_us(us: u64) {
@@ -198,6 +204,8 @@ impl Portable for CM32M4Porting {
     }
 }
 
+/// 重新设置mtimecmp寄存器
+/// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
 #[inline]
 pub(crate) fn reset_systick() {
     /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
@@ -215,7 +223,7 @@ pub(crate) fn reset_systick() {
             mtimecmp_lo.write_volatile(lo);
         }
     }
-    let mtime = Gd32vf103Porting::systick();
+    let mtime = CM32M4Porting::systick();
     let mtimecmp = TICKS as u64 + mtime;
     set_mtimecmp(mtimecmp);
 }
