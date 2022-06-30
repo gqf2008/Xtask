@@ -6,3 +6,14 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+cast = {version = "0.3.0", default-features = false}
+embedded-dma = "0.2.0"
+cm32m4xxr-pac = {path = "../cm32m4xxr-pac"}
+nb = "1.0.0"
+riscv = "0.8.0"
+vcell = "0.1.2"
+void = {version = "1.0.2", default-features = false}
+
+[dependencies.embedded-hal]
+features = ["unproven"]
+version = "0.2.3"
