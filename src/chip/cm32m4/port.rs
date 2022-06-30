@@ -38,11 +38,10 @@ global_asm!(include_str!("port.S"), options(raw));
 /// 有1.5k，所以函数不要嵌套太深，特别要防止递归调用
 #[export_name = "INT_TMR"]
 unsafe extern "C" fn mtimer_irq_isr() {
-    //isr_sprintln!("mtimer_irq_isr");
     //设置下一次中断时间
     super::reset_systick();
     if scheduler::systick() {
-        super::Gd32vf103Porting::irq();
+        super::CM32M4Porting::irq();
     }
 }
 
@@ -58,7 +57,7 @@ unsafe extern "C" fn mtimer_irq_isr() {
 #[export_name = "INT_SFT"]
 unsafe extern "C" fn soft_irq_isr() {
     //关闭软中断
-    super::Gd32vf103Porting::disable_irq();
+    super::CM32M4Porting::disable_irq();
     scheduler::schedule();
 }
 

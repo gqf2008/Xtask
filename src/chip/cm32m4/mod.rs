@@ -21,6 +21,14 @@ const TIMER_MSIP: usize = 0xFFC;
 
 /// 配置定时器、软中断、使能定时器中断和软中断
 /// ECLIC Base: 0xE001_0000
+// #define __NUCLEI_N_REV            0x0100                /*!< Core Revision rXpY, version X.Y, change N# to N for Nuclei N class cores, change N# to NX for Nuclei NX cores */
+// #define __ECLIC_PRESENT           1                     /*!< ECLIC present */
+// #define __ECLIC_BASEADDR          0xE0010000UL          /*!< ECLIC base address */
+// #define __ECLIC_INTCTLBITS        4                     /*!< CM32M4xxR uses 4 bits in the clicintctl registers. */
+// #define __ECLIC_INTNUM            105                   /*!< 105 interrupt number of ECLIC Unit */
+// #define __SYSTIMER_PRESENT        1                     /*!< System Timer present */
+// #define __SYSTIMER_BASEADDR       0xE0020000UL          /*!< SysTimer base address */
+
 #[inline]
 pub(crate) fn setup_intrrupt() {
     unsafe {
