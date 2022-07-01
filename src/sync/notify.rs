@@ -4,31 +4,22 @@ use crate::sync::Error;
 use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::{sync, yield_now};
-use alloc::rc::Rc;
-// use alloc::sync::Arc;
+use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering;
-// use crossbeam::atomic::AtomicCell;
+use crossbeam::atomic::AtomicCell;
 
+#[derive(Clone)]
 pub struct Notifier {
-    blocker: Rc<usize>,     //当前挂起者任务指针
-    signal: Rc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
-}
-
-impl Clone for Notifier {
-    fn clone(&self) -> Self {
-        sync::free(|_| Self {
-            blocker: self.blocker.clone(),
-            signal: self.signal.clone(),
-        })
-    }
+    blocker: Arc<AtomicCell<usize>>, //当前挂起者任务指针
+    signal: Arc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
 }
 
 impl Notifier {
     pub fn new() -> Self {
         Self {
-            blocker: Rc::new(0),
-            signal: Rc::new(AtomicBool::new(false)),
+            blocker: Arc::new(AtomicCell::new(0)),
+            signal: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -40,17 +31,18 @@ impl Notifier {
     unsafe fn block(&self) {
         let task = xworker.current();
         let addr = (task as *mut Task).addr();
-        core::ptr::write_volatile(self.blocker.as_ref() as *const _ as *mut usize, addr);
+        self.blocker.store(addr);
         task.block();
     }
 
     #[inline]
     unsafe fn wakeup(&self) {
-        let blocker = core::ptr::read_volatile(self.blocker.as_ref());
-        if blocker != 0 {
-            let blocker = &mut *(blocker as *mut Task);
-            core::ptr::write_volatile(self.blocker.as_ref() as *const _ as *mut usize, 0);
-            blocker.wakeup();
+        if let Ok(ptr) = self.blocker.fetch_update(|_ptr| Some(0)) {
+            if ptr > 0 {
+                let blocker = &mut *(ptr as *mut Task);
+
+                blocker.wakeup();
+            }
         }
     }
 

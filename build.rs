@@ -20,5 +20,8 @@ fn main() {
     #[cfg(feature = "stm32h7")]
     fs::copy("src/chip/stm32h7/memory.x", out_dir.join("memory.x")).unwrap();
 
+    #[cfg(feature = "cm32m4")]
+    fs::copy("src/chip/cm32m4/memory.x", out_dir.join("memory.x")).unwrap();
+
     println!("cargo:rerun-if-changed=memory.x");
 }

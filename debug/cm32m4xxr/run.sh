@@ -1,0 +1,1 @@
+cargo run --example gd32vf103 --release --all-features
