@@ -11,3 +11,6 @@ INFO: 2022/07/01 14:00:18 log.go:91: cm32-gdb-proxy (0.0.0-src) proxing from :33
 INFO: 2022/07/01 14:00:19 log.go:91: echo "Started by GNU MCU Eclipse"
 INFO: 2022/07/01 14:00:19 log.go:91: Connection #001 Opened :3333 >>> Serial Port
 INFO: 2022/07/01 14:02:07 log.go:91: Connection #001 Closed (38618 bytes sent, 11817 bytes recieved)
+INFO: 2022/07/01 14:02:12 log.go:91: cm32-gdb-proxy (0.0.0-src) proxing from :3333 to COM11 
+INFO: 2022/07/01 14:02:12 log.go:91: echo "Started by GNU MCU Eclipse"
+INFO: 2022/07/01 14:02:19 log.go:91: Connection #001 Opened :3333 >>> Serial Port
