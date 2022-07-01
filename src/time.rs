@@ -6,24 +6,26 @@ use crate::port::{Portable, Porting};
 use crate::timer;
 use cast::u64;
 use embedded_hal::blocking::delay::{DelayMs, DelayUs};
+use vcell::VolatileCell;
+
 /// 启动到现在总的systick数
-static mut TICKS: u64 = 0;
+static mut TICKS: VolatileCell<u64> = VolatileCell::new(0);
 
 /// 每TICK多少微秒
 const TICK_PREIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 
 #[inline]
 pub(crate) unsafe fn increase_tick() {
-    let tick = core::ptr::read_volatile(&TICKS);
-    core::ptr::write_volatile(&mut TICKS, tick + 1);
+    let tick = TICKS.get() + 1;
+    TICKS.set(tick);
     #[cfg(feature = "timer")]
-    timer::do_tick(tick + 1);
+    timer::do_tick(tick);
 }
 
 /// 返回任务Tick
 #[inline]
 pub fn tick() -> u64 {
-    unsafe { core::ptr::read_volatile(&TICKS) }
+    unsafe { TICKS.get() }
 }
 
 /// 毫秒转tick

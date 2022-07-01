@@ -2,24 +2,16 @@
 //! 不能在中断服务中使用
 
 use alloc::collections::VecDeque;
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 
 use super::semaphore::*;
 use crate::sync;
 use core::cell::RefCell;
 
+#[derive(Clone)]
 pub struct Queue<T> {
-    list: Rc<RefCell<VecDeque<T>>>,
+    list: Arc<RefCell<VecDeque<T>>>,
     sem: Semaphore,
-}
-
-impl<T> Clone for Queue<T> {
-    fn clone(&self) -> Self {
-        sync::free(|_| Self {
-            list: self.list.clone(),
-            sem: self.sem.clone(),
-        })
-    }
 }
 
 unsafe impl<T> Send for Queue<T> {}
@@ -27,13 +19,13 @@ unsafe impl<T> Send for Queue<T> {}
 impl<T> Queue<T> {
     pub fn new() -> Self {
         Self {
-            list: Rc::new(RefCell::new(VecDeque::new())),
+            list: Arc::new(RefCell::new(VecDeque::new())),
             sem: Semaphore::new(),
         }
     }
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            list: Rc::new(RefCell::new(VecDeque::new())),
+            list: Arc::new(RefCell::new(VecDeque::new())),
             sem: Semaphore::with_max_value(capacity),
         }
     }
