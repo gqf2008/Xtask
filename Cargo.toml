@@ -13,7 +13,7 @@ version = "0.1.0"
 
 [features]
 # 默认特征
-default = ["cm32m4","xtask_executor", "xtask_scheduler","timer", "rtt_log"]
+default = ["xtask_executor", "xtask_scheduler","timer", "rtt_log"]
 # 默认单硬件线程执行器
 xtask_executor = []
 # 打印任务清单任务

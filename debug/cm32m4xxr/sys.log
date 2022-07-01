@@ -16,3 +16,7 @@ INFO: 2022/07/01 14:02:12 log.go:91: echo "Started by GNU MCU Eclipse"
 INFO: 2022/07/01 14:02:19 log.go:91: Connection #001 Opened :3333 >>> Serial Port
 INFO: 2022/07/01 15:02:46 log.go:91: Connection #001 Closed (38669 bytes sent, 12097 bytes recieved)
 INFO: 2022/07/01 15:02:49 log.go:91: Multiple connections are not supported. Please disable other debugging ports
+INFO: 2022/07/01 15:02:53 log.go:91: cm32-gdb-proxy (0.0.0-src) proxing from :3333 to COM11 
+INFO: 2022/07/01 15:02:53 log.go:91: echo "Started by GNU MCU Eclipse"
+INFO: 2022/07/01 15:02:57 log.go:91: Connection #001 Opened :3333 >>> Serial Port
+INFO: 2022/07/01 15:03:17 log.go:91: Connection #001 Closed (38728 bytes sent, 11949 bytes recieved)
