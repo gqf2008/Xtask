@@ -7,6 +7,7 @@
 #![feature(ptr_internals)]
 #![feature(const_btree_new)]
 #![feature(binary_heap_retain)]
+#![feature(ptr_const_cast)]
 
 extern crate alloc;
 
@@ -28,6 +29,9 @@ pub mod time;
 #[cfg(feature = "timer")]
 pub mod timer;
 
+#[cfg(not(target_arch = "arm"))]
+use panic_halt as _;
+#[cfg(target_arch = "arm")]
 use panic_probe as _;
 pub use prelude::*;
 

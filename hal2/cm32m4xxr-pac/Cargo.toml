@@ -1,0 +1,18 @@
+[package]
+name = "cm32m4xxr-pac"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bare-metal = "1.0.0"
+vcell = "0.1.3"
+riscv = "0.8.0"
+
+[dependencies.riscv-rt]
+optional = true
+version = "0.8.1"
+
+[features]
+rt = ["riscv-rt"]
