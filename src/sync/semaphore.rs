@@ -5,7 +5,7 @@ use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::TaskQueue;
 use crate::{sync, yield_now};
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 use core::cell::RefCell;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
@@ -14,22 +14,12 @@ use core::sync::atomic::Ordering;
 /// 设计思想是维护两个任务挂起队列
 /// 当信号量为零时挂起当前任务到挂起队列
 /// 当信号量大于零时从挂起队列弹出任务交给调度器
+#[derive(Clone)]
 pub struct Semaphore {
-    waiters: Rc<RefCell<TaskQueue>>,
-    notifiers: Rc<RefCell<TaskQueue>>,
-    signal: Rc<AtomicUsize>, //信号量
+    waiters: Arc<RefCell<TaskQueue>>,
+    notifiers: Arc<RefCell<TaskQueue>>,
+    signal: Arc<AtomicUsize>, //信号量
     max_value: usize,
-}
-
-impl Clone for Semaphore {
-    fn clone(&self) -> Self {
-        sync::free(|_| Self {
-            waiters: self.waiters.clone(),
-            notifiers: self.notifiers.clone(),
-            signal: self.signal.clone(),
-            max_value: self.max_value,
-        })
-    }
 }
 
 unsafe impl Send for Semaphore {}
@@ -49,9 +39,9 @@ impl Semaphore {
 
     pub fn with_signal_max_value(signal: usize, max_value: usize) -> Self {
         Self {
-            waiters: Rc::new(RefCell::new(TaskQueue::new())),
-            notifiers: Rc::new(RefCell::new(TaskQueue::new())),
-            signal: Rc::new(AtomicUsize::new(signal)),
+            waiters: Arc::new(RefCell::new(TaskQueue::new())),
+            notifiers: Arc::new(RefCell::new(TaskQueue::new())),
+            signal: Arc::new(AtomicUsize::new(signal)),
             max_value: max_value,
         }
     }

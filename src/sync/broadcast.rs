@@ -4,19 +4,12 @@
 use crate::task::executor::{xworker, Executor};
 use crate::TaskQueue;
 use crate::{sync, yield_now};
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 use core::cell::RefCell;
 
+#[derive(Clone)]
 pub struct Broadcast {
-    waiters: Rc<RefCell<TaskQueue>>,
-}
-
-impl Clone for Broadcast {
-    fn clone(&self) -> Self {
-        sync::free(|_| Self {
-            waiters: self.waiters.clone(),
-        })
-    }
+    waiters: Arc<RefCell<TaskQueue>>,
 }
 
 unsafe impl Send for Broadcast {}
@@ -24,7 +17,7 @@ unsafe impl Send for Broadcast {}
 impl Broadcast {
     pub fn new() -> Self {
         Self {
-            waiters: Rc::new(RefCell::new(TaskQueue::new())),
+            waiters: Arc::new(RefCell::new(TaskQueue::new())),
         }
     }
 }
