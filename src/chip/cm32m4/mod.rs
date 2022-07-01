@@ -1,7 +1,6 @@
-//! GD32VF103移植模块实现
-//! 使用了gd32vf103xx_hal硬件抽象层的配置中断模块
-//! 一部分由rust实现，一部分由汇编实现，请参考hal库汇编代码
-
+//! CM32M4xxR移植模块实现
+//!
+mod eclic;
 mod port;
 
 use super::{CPU_CLOCK_HZ, ECLIC_CTRL_ADDR, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
@@ -9,8 +8,6 @@ use crate::port::Portable;
 use crate::prelude::CriticalSection;
 use crate::task::Task;
 use core::arch::asm;
-use gd32vf103xx_hal::eclic::*;
-use gd32vf103xx_hal::pac::{Interrupt, ECLIC};
 
 /// mtime计数器寄存器偏移量
 const TIMER_MTIME: usize = 0x0;
@@ -20,15 +17,6 @@ const TIMER_MTIMECMP: usize = 0x8;
 const TIMER_MSIP: usize = 0xFFC;
 
 /// 配置定时器、软中断、使能定时器中断和软中断
-/// ECLIC Base: 0xE001_0000
-// #define __NUCLEI_N_REV            0x0100                /*!< Core Revision rXpY, version X.Y, change N# to N for Nuclei N class cores, change N# to NX for Nuclei NX cores */
-// #define __ECLIC_PRESENT           1                     /*!< ECLIC present */
-// #define __ECLIC_BASEADDR          0xE0010000UL          /*!< ECLIC base address */
-// #define __ECLIC_INTCTLBITS        4                     /*!< CM32M4xxR uses 4 bits in the clicintctl registers. */
-// #define __ECLIC_INTNUM            105                   /*!< 105 interrupt number of ECLIC Unit */
-// #define __SYSTIMER_PRESENT        1                     /*!< System Timer present */
-// #define __SYSTIMER_BASEADDR       0xE0020000UL          /*!< SysTimer base address */
-
 #[inline]
 pub(crate) fn setup_intrrupt() {
     // 1. /* Configure the ECLIC level and priority Bits */
@@ -40,37 +28,19 @@ pub(crate) fn setup_intrrupt() {
     // 7. ECLIC_SetTrigIRQ(EXTI0_IRQn, ECLIC_LEVEL_TRIGGER); //level interrupt
     // 8. ECLIC_EnableIRQ(EXTI0_IRQn); //Enable interrupt
 
-    unsafe {
-        //设置定时器中断
-        ECLIC::setup(
-            //定时器中断号
-            Interrupt::INT_TMR,
-            //上升沿触发
-            TriggerType::RisingEdge,
-            //中断等级
-            Level::L0,
-            //中断优先级
-            Priority::P0,
-        );
-        //设置软中断
-        ECLIC::setup(
-            //软中断号
-            Interrupt::INT_SFT,
-            //上升沿触发
-            TriggerType::RisingEdge,
-            //中断等级
-            Level::L0,
-            //中断优先级
-            Priority::P0,
-        );
-        //定时器中断使能
-        ECLIC::unmask(Interrupt::INT_TMR);
-        //软中断使能
-        ECLIC::unmask(Interrupt::INT_SFT);
-    }
+    eclic::ECLIC::set_level(3, 0);
+    eclic::ECLIC::set_priority(3, 0);
+    eclic::ECLIC::set_trigger(3, 0);
+
+    eclic::ECLIC::set_level(7, 0);
+    eclic::ECLIC::set_priority(7, 0);
+    eclic::ECLIC::set_trigger(7, 0);
+
+    eclic::ECLIC::unmask(3);
+    eclic::ECLIC::unmask(7);
 }
 
-/// gd32芯片移植层实现
+/// CM32M4芯片移植层实现
 pub struct CM32M4Porting;
 
 impl Portable for CM32M4Porting {
@@ -118,8 +88,6 @@ impl Portable for CM32M4Porting {
         unsafe { asm!(include_str!("restore_ctx.S"), options(noreturn, raw)) };
         //这个函数不会返回，因为在汇编中最后一条指令是mret，而不是ret
         //mret把mepc更新到PC，而ret把ra更新到PC
-
-        panic!("~!@#$%^&*()_");
     }
 
     /// 软中断

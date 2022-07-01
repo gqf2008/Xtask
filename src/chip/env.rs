@@ -6,7 +6,6 @@ pub const TIMER_CTRL_ADDR: usize = 0xD100_0000;
 /// 中断控制器基地址
 #[cfg(feature = "gd32vf103")]
 pub const ECLIC_CTRL_ADDR: usize = 0xD200_0000;
-
 /// CPU时钟频率
 #[cfg(feature = "gd32vf103")]
 pub const CPU_CLOCK_HZ: usize = 108_000_000;
@@ -20,7 +19,6 @@ pub const TIMER_CTRL_ADDR: usize = 0xE002_0000;
 /// 中断控制器基地址
 #[cfg(feature = "cm32m4")]
 pub const ECLIC_CTRL_ADDR: usize = 0xE001_0000;
-
 /// CPU时钟频率
 #[cfg(feature = "cm32m4")]
 pub const CPU_CLOCK_HZ: usize = 144000000;
