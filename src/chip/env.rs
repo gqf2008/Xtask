@@ -51,4 +51,4 @@ pub const SYSTICK_CLOCK_HZ: usize = 1_000_000;
 pub const TICK_CLOCK_HZ: usize = 1000;
 
 /// 软件定时器任务栈大小（单位：字长），默认1k字节栈空间
-pub const TIMER_STACK_SIZE_WORD: usize = 256;
+pub const TIMER_STACK_SIZE_WORD: usize = 1024;
