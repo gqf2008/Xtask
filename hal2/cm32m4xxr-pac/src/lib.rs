@@ -22,7 +22,7 @@ use core::marker::PhantomData;
 use core::ops::Deref;
 #[allow(unused_imports)]
 use generic::*;
-#[doc = "Common register and bit access and modify traits"]
+#[doc = r"Common register and bit access and modify traits"]
 pub mod generic;
 #[cfg(feature = "rt")]
 extern "C" {
@@ -242,6 +242,34 @@ pub static __EXTERNAL_INTERRUPTS: [Vector; 85] = [
 #[doc(hidden)]
 pub mod interrupt;
 pub use self::interrupt::Interrupt;
+#[doc = "Enhanced Core Local Interrupt Controller"]
+pub struct ECLIC {
+    _marker: PhantomData<*const ()>,
+}
+unsafe impl Send for ECLIC {}
+impl ECLIC {
+    #[doc = r"Pointer to the register block"]
+    pub const PTR: *const eclic::RegisterBlock = 0xe001_0000 as *const _;
+    #[doc = r"Return the pointer to the register block"]
+    #[inline(always)]
+    pub const fn ptr() -> *const eclic::RegisterBlock {
+        Self::PTR
+    }
+}
+impl Deref for ECLIC {
+    type Target = eclic::RegisterBlock;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*Self::PTR }
+    }
+}
+impl core::fmt::Debug for ECLIC {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.debug_struct("ECLIC").finish()
+    }
+}
+#[doc = "Enhanced Core Local Interrupt Controller"]
+pub mod eclic;
 #[doc = "analog to digital converter"]
 pub struct ADC1 {
     _marker: PhantomData<*const ()>,
@@ -1759,6 +1787,8 @@ static mut DEVICE_PERIPHERALS: bool = false;
 #[doc = r"All the peripherals"]
 #[allow(non_snake_case)]
 pub struct Peripherals {
+    #[doc = "ECLIC"]
+    pub ECLIC: ECLIC,
     #[doc = "ADC1"]
     pub ADC1: ADC1,
     #[doc = "ADC2"]
@@ -1885,6 +1915,9 @@ impl Peripherals {
     pub unsafe fn steal() -> Self {
         DEVICE_PERIPHERALS = true;
         Peripherals {
+            ECLIC: ECLIC {
+                _marker: PhantomData,
+            },
             ADC1: ADC1 {
                 _marker: PhantomData,
             },

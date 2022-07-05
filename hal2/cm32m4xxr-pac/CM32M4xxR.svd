@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<?xml version="1.1" encoding="utf-8" standalone="no"?>
 <device schemaVersion="1.3" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
  <vendor>CMIOT XinSheng Tech Ltd.</vendor>
  <vendorID>CM32</vendorID>
@@ -12,6 +12,743 @@
  <resetValue>0</resetValue>
  <resetMask>0xffffffff</resetMask>
  <peripherals>
+  <peripheral>
+   <name>ECLIC</name>
+   <description>Enhanced Core Local Interrupt Controller</description>
+   <groupName>ECLIC</groupName>
+   <baseAddress>0xE0010000</baseAddress>
+   <addressBlock>
+    <offset>0x0</offset>
+    <size>0xFFFF</size>
+    <usage>registers</usage>
+   </addressBlock>
+   <registers>
+    <register>
+     <name>cliccfg</name>
+     <displayName>cliccfg</displayName>
+     <description> Eclic global configuration register</description>
+     <addressOffset>0x0</addressOffset>
+     <size>0x20</size>
+     <access>read-write</access>
+     <resetValue>0x00</resetValue>
+     <resetMask>0x1E</resetMask>
+     <fields>
+      <field>
+       <name>nlbits</name>
+       <description>Used to specified the bit-width of level and priority in the register clicintctl[i]</description>
+       <bitOffset>1</bitOffset>
+       <bitWidth>4</bitWidth>
+      </field>
+     </fields>
+    </register>
+    <register>
+     <name>clicinfo</name>
+     <displayName>clicinfo</displayName>
+     <description>global info register</description>
+     <addressOffset>0x4</addressOffset>
+     <size>0x20</size>
+     <access>read-only</access>
+     <resetValue>0x00000000</resetValue>
+     <resetMask>0x01ffffff</resetMask>
+     <fields>
+      <field>
+       <name>NUM_INTERRUPT</name>
+       <description>Number of interrupt sources supported by the hardware</description>
+       <bitOffset>0</bitOffset>
+       <bitWidth>13</bitWidth>
+      </field>
+      <field>
+       <name>VERSION</name>
+       <description>Hardware implementation version number</description>
+       <bitOffset>13</bitOffset>
+       <bitWidth>8</bitWidth>
+      </field>
+      <field>
+       <name>CLICINTCTLBITS</name>
+       <description>Used to specify the effective bit-width the register clicintctl[i]</description>
+       <bitOffset>21</bitOffset>
+       <bitWidth>4</bitWidth>
+      </field>
+     </fields>
+    </register>
+    <register>
+     <name>mth</name>
+     <displayName>mth</displayName>
+     <description> set the target interrupt threshold level</description>
+     <addressOffset>0xb</addressOffset>
+     <size>0x20</size>
+     <access>read-write</access>
+     <resetValue>0x00</resetValue>
+     <resetMask>0xFF</resetMask>
+     <fields>
+      <field>
+       <name>mth</name>
+       <description>Target threshold level register</description>
+       <bitOffset>0</bitOffset>
+       <bitWidth>8</bitWidth>
+      </field>
+     </fields>
+    </register>
+    <register>
+     <name>clicint1</name>
+     <displayName>clicint1(reserved)</displayName>
+     <description>Interrupt control and state</description>
+     <addressOffset>0x1004</addressOffset>
+     <size>0x20</size>
+     <access>read-write</access>
+     <resetValue>0x00000000</resetValue>
+     <resetMask>0xFF030101</resetMask>
+     <fields>
+      <field>
+       <name>IP</name>
+       <description>Interrupt source pending flag</description>
+       <bitOffset>0</bitOffset>
+       <bitWidth>1</bitWidth>
+      </field>
+      <field>
+       <name>IE</name>
+       <description>Interrupt enable bit</description>
+       <bitOffset>8</bitOffset>
+       <bitWidth>1</bitWidth>
+      </field>
+      <field>
+       <name>TRIG</name>
+       <description>set the level or edge triggered attribute of the interrupt source</description>
+       <bitOffset>17</bitOffset>
+       <bitWidth>3</bitWidth>
+      </field>
+      <field>
+       <name>SHV</name>
+       <description>set whether the interrupt is vectored or non-vectored</description>
+       <bitOffset>16</bitOffset>
+       <bitWidth>1</bitWidth>
+      </field>
+      <field>
+       <name>LEVEL/PRIORITY</name>
+       <description>set interrupt level and priority</description>
+       <bitOffset>24</bitOffset>
+       <bitWidth>8</bitWidth>
+      </field>
+     </fields>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint2</name>
+     <displayName>clicint2(reserved)</displayName>
+     <addressOffset>0x1008</addressOffset>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint3</name>
+     <displayName>clicint3(SWINT)</displayName>
+     <addressOffset>0x100C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint4</name>
+     <displayName>clicint4(reserved)</displayName>
+     <addressOffset>0x1010</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint5</name>
+     <displayName>clicint5(reserved)</displayName>
+     <addressOffset>0x1014</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint6</name>
+     <displayName>clicint6(reserved)</displayName>
+     <addressOffset>0x1018</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint7</name>
+     <displayName>clicint7(SYSTimer)</displayName>
+     <addressOffset>0x101C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint8</name>
+     <displayName>clicint8(reserved)</displayName>
+     <addressOffset>0x1020</addressOffset>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint9</name>
+     <displayName>clicint9(reserved)</displayName>
+     <addressOffset>0x1024</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint10</name>
+     <displayName>clicint10(reserved)</displayName>
+     <addressOffset>0x1028</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint11</name>
+     <displayName>clicint11(reserved)</displayName>
+     <addressOffset>0x102C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint12</name>
+     <displayName>clicint12(reserved)</displayName>
+     <addressOffset>0x1030</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint13</name>
+     <displayName>clicint13(reserved)</displayName>
+     <addressOffset>0x1034</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint14</name>
+     <displayName>clicint14(reserved)</displayName>
+     <addressOffset>0x1038</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint15</name>
+     <displayName>clicint15(reserved)</displayName>
+     <addressOffset>0x103C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint16</name>
+     <displayName>clicint16(reserved)</displayName>
+     <addressOffset>0x1040</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint17</name>
+     <displayName>clicint17(reserved)</displayName>
+     <addressOffset>0x1044</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint18</name>
+     <displayName>clicint18(reserved)</displayName>
+     <addressOffset>0x1048</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint19</name>
+     <displayName>clicint19(WWDG)</displayName>
+     <addressOffset>0x104C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint20</name>
+     <displayName>clicint20(PVD)</displayName>
+     <addressOffset>0x1050</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint21</name>
+     <displayName>clicint21(TAMPER)</displayName>
+     <addressOffset>0x1054</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint22</name>
+     <displayName>clicint22(RTCWKUP)</displayName>
+     <addressOffset>0x1058</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint23</name>
+     <displayName>clicint23(FLASH)</displayName>
+     <addressOffset>0x105C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint24</name>
+     <displayName>clicint24(RCC)</displayName>
+     <addressOffset>0x1060</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint25</name>
+     <displayName>clicint25(EXTI0)</displayName>
+     <addressOffset>0x1064</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint26</name>
+     <displayName>clicint26(EXTI1)</displayName>
+     <addressOffset>0x1068</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint27</name>
+     <displayName>clicint27(EXTI2)</displayName>
+     <addressOffset>0x106C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint28</name>
+     <displayName>clicint28(EXTI3)</displayName>
+     <addressOffset>0x1070</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint29</name>
+     <displayName>clicint29(EXTI4)</displayName>
+     <addressOffset>0x1074</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint30</name>
+     <displayName>clicint30(DMA1CH1)</displayName>
+     <addressOffset>0x1078</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint31</name>
+     <displayName>clicint31(DMA1CH2)</displayName>
+     <addressOffset>0x107C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint32</name>
+     <displayName>clicint32(DMA1CH3)</displayName>
+     <addressOffset>0x1080</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint33</name>
+     <displayName>clicint33(DMA1CH4)</displayName>
+     <addressOffset>0x1084</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint34</name>
+     <displayName>clicint34(DMA1CH5)</displayName>
+     <addressOffset>0x1088</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint35</name>
+     <displayName>clicint35(DMA1CH6)</displayName>
+     <addressOffset>0x108C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint36</name>
+     <displayName>clicint36(DMA1CH7)</displayName>
+     <addressOffset>0x1090</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint37</name>
+     <displayName>clicint37(ADC1/2)</displayName>
+     <addressOffset>0x1094</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint38</name>
+     <displayName>clicint38(CAN1TX)</displayName>
+     <addressOffset>0x1098</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint39</name>
+     <displayName>clicint39(CAN1RX0)</displayName>
+     <addressOffset>0x109C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint40</name>
+     <displayName>clicint40(CAN1RX1)</displayName>
+     <addressOffset>0x10A0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint41</name>
+     <displayName>clicint41(CAN1SCE)</displayName>
+     <addressOffset>0x10A4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint42</name>
+     <displayName>clicint42(EXTI5-9)</displayName>
+     <addressOffset>0x10A8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint43</name>
+     <displayName>clicint43(TIM1BRK)</displayName>
+     <addressOffset>0x10AC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint44</name>
+     <displayName>clicint44(TIM1UP)</displayName>
+     <addressOffset>0x10B0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint45</name>
+     <displayName>clicint45(TIM1TRGCOM)</displayName>
+     <addressOffset>0x10B4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint46</name>
+     <displayName>clicint46(TIM1CC)</displayName>
+     <addressOffset>0x10B8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint47</name>
+     <displayName>clicint47(TIM2)</displayName>
+     <addressOffset>0x10BC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint48</name>
+     <displayName>clicint48(TIM3)</displayName>
+     <addressOffset>0x10C0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint49</name>
+     <displayName>clicint49(TIM4)</displayName>
+     <addressOffset>0x10C4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint50</name>
+     <displayName>clicint50(I2C1EV)</displayName>
+     <addressOffset>0x10C8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint51</name>
+     <displayName>clicint51(I2C1ER)</displayName>
+     <addressOffset>0x10CC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint52</name>
+     <displayName>clicint52(I2C2EV)</displayName>
+     <addressOffset>0x10D0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint53</name>
+     <displayName>clicint53(I2C2ER)</displayName>
+     <addressOffset>0x10D4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint54</name>
+     <displayName>clicint54(SPI1)</displayName>
+     <addressOffset>0x10D8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint55</name>
+     <displayName>clicint55(SPI2/I2S2)</displayName>
+     <addressOffset>0x10DC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint56</name>
+     <displayName>clicint56(USART1)</displayName>
+     <addressOffset>0x10E0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint57</name>
+     <displayName>clicint57(USART2)</displayName>
+     <addressOffset>0x10E4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint58</name>
+     <displayName>clicint58(USART3)</displayName>
+     <addressOffset>0x10E8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint59</name>
+     <displayName>clicint59(EXTI10-15)</displayName>
+     <addressOffset>0x10EC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint60</name>
+     <displayName>clicint60(RTCALARM)</displayName>
+     <addressOffset>0x10F0</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint61</name>
+     <displayName>clicint61(reserved)</displayName>
+     <addressOffset>0x10F4</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint62</name>
+     <displayName>clicint62(TIM8BRK)</displayName>
+     <addressOffset>0x10F8</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint63</name>
+     <displayName>clicint63(TIM8UP)</displayName>
+     <addressOffset>0x10FC</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint64</name>
+     <displayName>clicint64(TIM8TRGCOM)</displayName>
+     <addressOffset>0x1100</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint65</name>
+     <displayName>clicint65(TIM8CC)</displayName>
+     <addressOffset>0x1104</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint66</name>
+     <displayName>clicint66(ADC3/4)</displayName>
+     <addressOffset>0x1108</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint67</name>
+     <displayName>clicint67(reserved)</displayName>
+     <addressOffset>0x110C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint68</name>
+     <displayName>clicint68(reserved)</displayName>
+     <addressOffset>0x1110</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint69</name>
+     <displayName>clicint69(TIM5)</displayName>
+     <addressOffset>0x1114</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint70</name>
+     <displayName>clicint70(SPI3/I2S3)</displayName>
+     <addressOffset>0x1118</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint71</name>
+     <displayName>clicint71(UART4)</displayName>
+     <addressOffset>0x111C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint72</name>
+     <displayName>clicint72(UART5)</displayName>
+     <addressOffset>0x1120</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint73</name>
+     <displayName>clicint73(TIM6)</displayName>
+     <addressOffset>0x1124</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint74</name>
+     <displayName>clicint74(TIM7)</displayName>
+     <addressOffset>0x1128</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint75</name>
+     <displayName>clicint75(DMA2CH1)</displayName>
+     <addressOffset>0x112C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint76</name>
+     <displayName>clicint76(DMA2CH2)</displayName>
+     <addressOffset>0x1130</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint77</name>
+     <displayName>clicint77(DMA2CH3)</displayName>
+     <addressOffset>0x1134</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint78</name>
+     <displayName>clicint78(DMA2CH4)</displayName>
+     <addressOffset>0x1138</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint79</name>
+     <displayName>clicint79(DMA2CH5)</displayName>
+     <addressOffset>0x113C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint80</name>
+     <displayName>clicint80(reserved)</displayName>
+     <addressOffset>0x1140</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint81</name>
+     <displayName>clicint81(reserved)</displayName>
+     <addressOffset>0x1144</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint82</name>
+     <displayName>clicint82(CAN2TX)</displayName>
+     <addressOffset>0x1148</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint83</name>
+     <displayName>clicint83(CAN2RX0)</displayName>
+     <addressOffset>0x114C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint84</name>
+     <displayName>clicint84(CAN2RX1)</displayName>
+     <addressOffset>0x1150</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint85</name>
+     <displayName>clicint85(CAN2SCE)</displayName>
+     <addressOffset>0x1154</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint86</name>
+     <displayName>clicint86(QSPI)</displayName>
+     <addressOffset>0x1158</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint87</name>
+     <displayName>clicint87(DMA2CH6)</displayName>
+     <addressOffset>0x115C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint88</name>
+     <displayName>clicint88(DMA2CH7)</displayName>
+     <addressOffset>0x1160</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint89</name>
+     <displayName>clicint89(I2C3EV)</displayName>
+     <addressOffset>0x1164</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint90</name>
+     <displayName>clicint90(I2C3ER)</displayName>
+     <addressOffset>0x1168</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint91</name>
+     <displayName>clicint91(I2C4EV)</displayName>
+     <addressOffset>0x116C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint92</name>
+     <displayName>clicint92(I2C4ER)</displayName>
+     <addressOffset>0x1170</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint93</name>
+     <displayName>clicint93(UART6)</displayName>
+     <addressOffset>0x1174</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint94</name>
+     <displayName>clicint94(UART7)</displayName>
+     <addressOffset>0x1178</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint95</name>
+     <displayName>clicint95(DMA1CH8)</displayName>
+     <addressOffset>0x117C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint96</name>
+     <displayName>clicint96(DMA2CH8)</displayName>
+     <addressOffset>0x1180</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint97</name>
+     <displayName>clicint97(reserved)</displayName>
+     <addressOffset>0x1184</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint98</name>
+     <displayName>clicint98(SAC)</displayName>
+     <addressOffset>0x1188</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint99</name>
+     <displayName>clicint99(reserved)</displayName>
+     <addressOffset>0x118C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint100</name>
+     <displayName>clicint100(TSC)</displayName>
+     <addressOffset>0x1190</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint101</name>
+     <displayName>clicin101(COMP1/2/3)</displayName>
+     <addressOffset>0x1194</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint102</name>
+     <displayName>clicint102(COMP4/5/6)</displayName>
+     <addressOffset>0x1198</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint103</name>
+     <displayName>clicint103(COMP7)</displayName>
+     <addressOffset>0x119C</addressOffset>
+     <size>0x20</size>
+    </register>
+    <register derivedFrom="clicint1">
+     <name>clicint104</name>
+     <displayName>clicint104(R-SRAM)</displayName>
+     <addressOffset>0x11A0</addressOffset>
+     <size>0x20</size>
+    </register>
+   </registers>
+  </peripheral>
   <peripheral>
    <name>ADC1</name>
    <description>analog to digital converter</description>
