@@ -72,14 +72,20 @@ impl<T> Queue<T> {
         self.list.borrow_mut().push_front(item);
         match self.sem.post_isr() {
             Ok(_) => Ok(()),
-            Err(_) => Err(nb::Error::Other(sync::Error::QueueFull)),
+            Err(_) => {
+                self.list.borrow_mut().pop_front();
+                Err(nb::Error::Other(sync::Error::QueueFull))
+            }
         }
     }
     pub fn push_back_isr(&self, item: T) -> nb::Result<(), sync::Error> {
         self.list.borrow_mut().push_back(item);
         match self.sem.post_isr() {
             Ok(_) => Ok(()),
-            Err(_) => Err(nb::Error::Other(sync::Error::QueueFull)),
+            Err(_) => {
+                self.list.borrow_mut().pop_back();
+                Err(nb::Error::Other(sync::Error::QueueFull))
+            }
         }
     }
 }
