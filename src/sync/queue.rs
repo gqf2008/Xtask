@@ -32,6 +32,19 @@ impl<T> Queue<T> {
 }
 
 impl<T> Queue<T> {
+    pub fn len(&self) -> usize {
+        sync::free(|_| self.list.borrow().len())
+    }
+    pub fn capacity(&self) -> usize {
+        sync::free(|_| self.list.borrow().capacity())
+    }
+    pub fn trancate(&self, len: usize) {
+        sync::free(|_| self.list.borrow_mut().truncate(len))
+    }
+    pub fn clear(&self) {
+        sync::free(|_| self.list.borrow_mut().clear())
+    }
+
     pub fn pop_front(&self) -> Option<T> {
         self.sem.wait();
         sync::free(|_| self.list.borrow_mut().pop_front())
