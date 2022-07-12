@@ -2,7 +2,6 @@
 #![feature(strict_provenance)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![feature(const_mut_refs)]
-#![feature(const_intrinsic_copy)]
 #![feature(alloc_error_handler)]
 #![feature(ptr_internals)]
 #![feature(const_btree_new)]
