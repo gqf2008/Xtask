@@ -30,7 +30,7 @@ pub const SYSTICK_CLOCK_HZ: usize = 144000000 / 4;
 #[cfg(feature = "stm32f4")]
 pub const CPU_CLOCK_HZ: usize = 100_000_000; //stm32f401: 84_000_000;stm32f427: 180_000_000;
 #[cfg(feature = "stm32f4")]
-pub const SYSTICK_CLOCK_HZ: usize = 16_000_000;
+pub const SYSTICK_CLOCK_HZ: usize = 24_000_000;
 
 #[cfg(feature = "stm32f1")]
 pub const CPU_CLOCK_HZ: usize = 74000000;
