@@ -4,21 +4,36 @@ extern crate alloc;
 
 //use panic_halt as _;
 
+use stm32f4xx_hal::prelude::*;
 use xtask::arch::cortex_m::rt;
 use xtask::bsp::greenpill;
 use xtask::bsp::greenpill::hal::prelude::*;
 use xtask::bsp::greenpill::led::Led;
 use xtask::bsp::greenpill::stdout;
+use xtask::chip::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ};
 use xtask::prelude::*;
 
+#[inline]
+pub fn stack_start() -> *mut u32 {
+    extern "C" {
+        static mut _stack_start: u32;
+    }
+    unsafe { &mut _stack_start }
+}
+
 fn init() {
+    xtask::init_logger();
     let start_addr = rt::heap_start() as usize;
-    //4k留给主栈
-    xtask::init(start_addr, 256 * 1024);
+    let stack_addr = stack_start() as usize;
+    xtask::init_heap(start_addr, stack_addr - 4 * 1024 - start_addr);
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
-        let clocks = rcc.cfgr.freeze();
+        let clocks = rcc
+            .cfgr
+            .sysclk((CPU_CLOCK_HZ as u32).Hz())
+            .hclk((SYSTICK_CLOCK_HZ as u32).Hz())
+            .freeze();
 
         let gpioa = dp.GPIOA.split();
         let gpioc = dp.GPIOC.split();
@@ -30,6 +45,7 @@ fn init() {
         stdout::use_tx1(tx);
         log::info!("clocks {}", clocks.sysclk());
         log::info!("STM32F411CEU6 initialize ok");
+
         example_led(led);
     }
 }
