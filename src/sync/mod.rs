@@ -1,8 +1,10 @@
 pub mod broadcast;
+pub mod free_queue;
 pub mod mutex;
 pub mod notify;
 pub mod queue;
 pub mod semaphore;
+
 pub use mutex::free;
 
 #[derive(Debug)]
