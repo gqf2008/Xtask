@@ -17,6 +17,7 @@ pub mod bus;
 pub mod chip;
 #[cfg(feature = "fs")]
 pub mod fs;
+pub mod fsm;
 pub mod logger;
 #[cfg(feature = "net")]
 pub mod net;
