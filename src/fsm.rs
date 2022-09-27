@@ -1,8 +1,8 @@
 //! 通用状态机
 use core::fmt::Debug;
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::rc::Rc;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -11,15 +11,14 @@ pub enum Error {
     IllegalTransition,
 }
 
-#[derive(Clone)]
 pub struct Transition<S, E> {
     from: S,
     event: Option<E>,
     to: Option<S>,
-    guard: Option<Rc<dyn Fn(&S, &E) -> Result<()>>>,
-    exit: Option<Rc<dyn Fn(&S, &E) -> Result<()>>>,
-    enter: Option<Rc<dyn Fn(&E, &S) -> Result<()>>>,
-    action: Option<Rc<dyn Fn(&S, &E) -> Result<()>>>,
+    guard: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
+    exit: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
+    enter: Option<Box<dyn Fn(&E, &S) -> Result<()>>>,
+    action: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
 }
 
 impl<S: PartialEq, E: PartialEq> PartialEq for Transition<S, E> {
@@ -123,11 +122,20 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
             transition.to.replace(state);
             let from = transition.from;
             let event = transition.event.unwrap();
+            let tran = Transition {
+                from,
+                event: Some(event),
+                to: Some(state),
+                guard: transition.guard.take(),
+                exit: transition.exit.take(),
+                enter: transition.enter.take(),
+                action: transition.action.take(),
+            };
             if let Some(trans) = self.transitions.get_mut(&from) {
-                trans.insert(event, transition.clone());
+                trans.insert(event, tran);
             } else {
                 let mut trans = BTreeMap::new();
-                trans.insert(event, transition.clone());
+                trans.insert(event, tran);
                 self.transitions.insert(from, trans);
             }
         }
@@ -139,7 +147,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         F: Fn(&S, &E) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
-            tran.guard = Some(Rc::new(f));
+            tran.guard = Some(Box::new(f));
         }
         self
     }
@@ -148,7 +156,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         F: Fn(&S, &E) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
-            tran.action = Some(Rc::new(f));
+            tran.action = Some(Box::new(f));
         }
         self
     }
@@ -158,7 +166,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         F: Fn(&S, &E) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
-            tran.exit = Some(Rc::new(f));
+            tran.exit = Some(Box::new(f));
         }
         self
     }
@@ -168,7 +176,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         F: Fn(&E, &S) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
-            tran.enter = Some(Rc::new(f));
+            tran.enter = Some(Box::new(f));
         }
         self
     }

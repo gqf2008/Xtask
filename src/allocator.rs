@@ -7,9 +7,10 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
 use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
+use linked_list_allocator::LockedHeap;
 
 #[global_allocator]
-static ALLOCATOR: XTaskAllocer = XTaskAllocer::empty();
+static ALLOCATOR: XTaskSpinAlloc = XTaskSpinAlloc::empty();
 
 pub fn init(start_addr: usize, size: usize) {
     unsafe {
@@ -37,7 +38,12 @@ impl XTaskAllocer {
     }
 
     pub unsafe fn init(&self, start_addr: usize, size: usize) {
-        Porting::free(|cs| self.heap.borrow(*cs).borrow_mut().init(start_addr, size));
+        Porting::free(|cs| {
+            self.heap
+                .borrow(*cs)
+                .borrow_mut()
+                .init(start_addr as *mut u8, size)
+        });
     }
 
     pub fn used(&self) -> usize {
@@ -68,5 +74,39 @@ unsafe impl GlobalAlloc for XTaskAllocer {
                 .borrow_mut()
                 .deallocate(NonNull::new_unchecked(ptr), layout)
         });
+    }
+}
+
+pub struct XTaskSpinAlloc {
+    heap: LockedHeap,
+}
+
+impl XTaskSpinAlloc {
+    pub const fn empty() -> Self {
+        Self {
+            heap: LockedHeap::empty(),
+        }
+    }
+
+    pub unsafe fn init(&self, start_addr: usize, size: usize) {
+        self.heap.lock().init(start_addr as *mut u8, size);
+    }
+
+    pub fn used(&self) -> usize {
+        self.heap.lock().used()
+    }
+
+    pub fn free(&self) -> usize {
+        self.heap.lock().free()
+    }
+}
+
+unsafe impl GlobalAlloc for XTaskSpinAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        self.heap.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        self.heap.dealloc(ptr, layout)
     }
 }

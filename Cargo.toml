@@ -61,7 +61,7 @@ crossbeam = {version = "0.8.1", default-features = false, features = ["alloc"]}
 embedded-hal = "0.2.3"
 heapless = "0.7"
 # lazy_static = {version = "1.4.0", default-features = false, features = ["spin_no_std"]}
-linked_list_allocator = {version = "0.9.0", default-features = false, features = ["const_mut_refs"]}
+linked_list_allocator = "0.10.3"
 nb = "1.0.0"
 profont = "0.4.0"
 # spin = "0.9.3"
