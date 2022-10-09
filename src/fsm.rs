@@ -51,11 +51,11 @@ where
                     if let Some(f) = tran.exit.as_ref() {
                         f(self.state, ev, ctx)?;
                     }
-                    let state = tran.to.unwrap();
+                    let from = self.state;
+                    self.state = tran.to.unwrap();
                     if let Some(f) = tran.enter.as_ref() {
-                        f(self.state, ev, state, ctx)?;
+                        f(from, ev, self.state, ctx)?;
                     }
-                    self.state = state;
                 }
                 if let Some(f) = tran.action.as_ref() {
                     f(ev, self.state, ctx)?;
