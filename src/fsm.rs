@@ -11,28 +11,28 @@ pub enum Error {
     IllegalTransition,
 }
 
-pub struct Transition<S, E> {
+pub struct Transition<S, E, C> {
     from: S,
     event: Option<E>,
     to: Option<S>,
-    guard: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
-    exit: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
-    enter: Option<Box<dyn Fn(&E, &S) -> Result<()>>>,
-    action: Option<Box<dyn Fn(&S, &E) -> Result<()>>>,
+    guard: Option<Box<dyn Fn(S, E, &mut C) -> Result<()>>>,
+    exit: Option<Box<dyn Fn(S, E, &mut C) -> Result<()>>>,
+    enter: Option<Box<dyn Fn(S, E, S, &mut C) -> Result<()>>>,
+    action: Option<Box<dyn Fn(E, S, &mut C) -> Result<()>>>,
 }
 
-impl<S: PartialEq, E: PartialEq> PartialEq for Transition<S, E> {
+impl<S: PartialEq, E: PartialEq, C> PartialEq for Transition<S, E, C> {
     fn eq(&self, other: &Self) -> bool {
         self.from == other.from && self.event == other.event && self.to == other.to
     }
 }
 
-pub struct Machine<S, E> {
+pub struct Machine<S, E, C> {
     state: S,
-    transitions: BTreeMap<S, BTreeMap<E, Transition<S, E>>>,
+    transitions: BTreeMap<S, BTreeMap<E, Transition<S, E, C>>>,
 }
 
-impl<S, E> Machine<S, E>
+impl<S, E, C> Machine<S, E, C>
 where
     S: PartialEq + Eq + Ord + Copy,
     E: PartialEq + Eq + Ord + Copy,
@@ -41,23 +41,24 @@ where
         self.state
     }
 
-    pub fn event(&mut self, ev: E) -> Result<()> {
+    pub fn event(&mut self, ev: E, ctx: &mut C) -> Result<()> {
         if let Some(tran) = self.transitions.get_mut(&self.state) {
             if let Some(tran) = tran.get_mut(&ev) {
                 if let Some(f) = tran.guard.as_ref() {
-                    f(&self.state, &ev)?;
+                    f(self.state, ev, ctx)?;
                 }
                 if self.state != tran.to.unwrap() {
                     if let Some(f) = tran.exit.as_ref() {
-                        f(&self.state, &ev)?;
+                        f(self.state, ev, ctx)?;
                     }
-                    self.state = tran.to.unwrap();
+                    let state = tran.to.unwrap();
                     if let Some(f) = tran.enter.as_ref() {
-                        f(&ev, &self.state)?;
+                        f(self.state, ev, state, ctx)?;
                     }
+                    self.state = state;
                 }
                 if let Some(f) = tran.action.as_ref() {
-                    f(&self.state, &ev)?;
+                    f(ev, self.state, ctx)?;
                 }
                 return Ok(());
             }
@@ -78,12 +79,12 @@ impl<S> Action<S> {
     }
 }
 
-pub struct Builder<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> {
-    transitions: BTreeMap<S, BTreeMap<E, Transition<S, E>>>,
-    transition: Option<Transition<S, E>>,
+pub struct Builder<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> {
+    transitions: BTreeMap<S, BTreeMap<E, Transition<S, E, C>>>,
+    transition: Option<Transition<S, E, C>>,
 }
 
-impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, E> {
+impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<S, E, C> {
     pub fn new() -> Self {
         Self {
             transitions: BTreeMap::new(),
@@ -91,7 +92,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         }
     }
 
-    pub fn build(self, state: S) -> Machine<S, E> {
+    pub fn build(self, state: S) -> Machine<S, E, C> {
         Machine {
             state,
             transitions: self.transitions,
@@ -121,49 +122,45 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         if let Some(transition) = self.transition.as_mut() {
             transition.to.replace(state);
             let from = transition.from;
-            let event = transition.event.unwrap();
+            let event = transition.event;
             let tran = Transition {
                 from,
-                event: Some(event),
+                event,
                 to: Some(state),
-                guard: transition.guard.take(),
-                exit: transition.exit.take(),
-                enter: transition.enter.take(),
-                action: transition.action.take(),
+                guard: None,
+                exit: None,
+                enter: None,
+                action: None,
             };
             if let Some(trans) = self.transitions.get_mut(&from) {
-                trans.insert(event, tran);
+                trans.insert(event.unwrap(), tran);
             } else {
                 let mut trans = BTreeMap::new();
-                trans.insert(event, tran);
+                trans.insert(event.unwrap(), tran);
                 self.transitions.insert(from, trans);
             }
         }
 
         self
     }
+
+    pub fn transit(self, on: E, to: S) -> Self {
+        self.on(on).to(to)
+    }
+
     pub fn guard<F>(mut self, f: F) -> Self
     where
-        F: Fn(&S, &E) -> Result<()> + Send + 'static,
+        F: Fn(S, E, &mut C) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.guard = Some(Box::new(f));
         }
         self
     }
-    pub fn action<F>(mut self, f: F) -> Self
-    where
-        F: Fn(&S, &E) -> Result<()> + Send + 'static,
-    {
-        if let Some(tran) = self.find() {
-            tran.action = Some(Box::new(f));
-        }
-        self
-    }
 
     pub fn exit<F>(mut self, f: F) -> Self
     where
-        F: Fn(&S, &E) -> Result<()> + Send + 'static,
+        F: Fn(S, E, &mut C) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.exit = Some(Box::new(f));
@@ -173,7 +170,7 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
 
     pub fn enter<F>(mut self, f: F) -> Self
     where
-        F: Fn(&E, &S) -> Result<()> + Send + 'static,
+        F: Fn(S, E, S, &mut C) -> Result<()> + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.enter = Some(Box::new(f));
@@ -181,8 +178,18 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy> Builder<S, 
         self
     }
 
+    pub fn action<F>(mut self, f: F) -> Self
+    where
+        F: Fn(E, S, &mut C) -> Result<()> + Send + 'static,
+    {
+        if let Some(tran) = self.find() {
+            tran.action = Some(Box::new(f));
+        }
+        self
+    }
+
     #[inline]
-    fn find<'a>(&'a mut self) -> Option<&'a mut Transition<S, E>> {
+    fn find<'a>(&'a mut self) -> Option<&'a mut Transition<S, E, C>> {
         if let Some(transition) = self.transition.as_ref() {
             let from = &transition.from;
             if let Some(event) = transition.event.as_ref() {
