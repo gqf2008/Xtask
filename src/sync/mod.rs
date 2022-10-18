@@ -1,3 +1,4 @@
+pub mod arc;
 pub mod broadcast;
 pub mod free_queue;
 pub mod mutex;
