@@ -1,24 +1,38 @@
 //! 通用状态机
-use core::fmt::Debug;
-
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use core::fmt;
+use core::fmt::Debug;
 
-pub type Result<T> = core::result::Result<T, Error>;
+pub type Result<S, E> = core::result::Result<(), Error<S, E>>;
 
 #[derive(Debug)]
-pub enum Error {
-    IllegalTransition,
+pub enum Error<S, E> {
+    IllegalTransition(S, E),
+    Other(anyhow::Error),
+}
+
+impl<S: Debug, E: Debug> fmt::Display for Error<E, S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::IllegalTransition(s, e) => {
+                write!(f, "IllegalTransition S({:?})->E({:?})", s, e)
+            }
+            Error::Other(err) => {
+                write!(f, "{}", err)
+            }
+        }
+    }
 }
 
 pub struct Transition<S, E, C> {
     from: S,
     event: Option<E>,
     to: Option<S>,
-    guard: Option<Box<dyn Fn(S, E, &mut C) -> Result<()>>>,
-    exit: Option<Box<dyn Fn(S, E, &mut C) -> Result<()>>>,
-    enter: Option<Box<dyn Fn(S, E, S, &mut C) -> Result<()>>>,
-    action: Option<Box<dyn Fn(E, S, &mut C) -> Result<()>>>,
+    guard: Option<Box<dyn Fn(S, E, &mut C) -> Result<S, E>>>,
+    exit: Option<Box<dyn Fn(S, E, &mut C)>>,
+    enter: Option<Box<dyn Fn(S, E, S, &mut C)>>,
+    action: Option<Box<dyn Fn(S, E, &mut C) -> Result<S, E>>>,
 }
 
 impl<S: PartialEq, E: PartialEq, C> PartialEq for Transition<S, E, C> {
@@ -41,7 +55,7 @@ where
         self.state
     }
 
-    pub fn event(&mut self, ev: E, ctx: &mut C) -> Result<()> {
+    pub fn event(&mut self, ev: E, ctx: &mut C) -> Result<S, E> {
         if let Some(tran) = self.transitions.get_mut(&self.state) {
             if let Some(tran) = tran.get_mut(&ev) {
                 if let Some(f) = tran.guard.as_ref() {
@@ -49,33 +63,21 @@ where
                 }
                 if self.state != tran.to.unwrap() {
                     if let Some(f) = tran.exit.as_ref() {
-                        f(self.state, ev, ctx)?;
+                        f(self.state, ev, ctx);
                     }
                     let from = self.state;
                     self.state = tran.to.unwrap();
                     if let Some(f) = tran.enter.as_ref() {
-                        f(from, ev, self.state, ctx)?;
+                        f(from, ev, self.state, ctx);
                     }
                 }
                 if let Some(f) = tran.action.as_ref() {
-                    f(ev, self.state, ctx)?;
+                    f(self.state, ev, ctx)?;
                 }
                 return Ok(());
             }
         }
-
-        Err(Error::IllegalTransition)
-    }
-}
-
-pub struct Action<S>(S);
-
-impl<S> Action<S> {
-    pub fn enforce<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(&S) -> Result<T> + Send + 'static,
-    {
-        f(&self.0)
+        Err(Error::IllegalTransition(self.state, ev))
     }
 }
 
@@ -114,6 +116,10 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
     pub fn on(mut self, event: E) -> Self {
         if let Some(trans) = self.transition.as_mut() {
             trans.event.replace(event);
+            trans.guard = None;
+            trans.exit = None;
+            trans.enter = None;
+            trans.action = None;
         }
         self
     }
@@ -127,10 +133,10 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
                 from,
                 event,
                 to: Some(state),
-                guard: None,
-                exit: None,
-                enter: None,
-                action: None,
+                guard: transition.guard.take(),
+                exit: transition.exit.take(),
+                enter: transition.enter.take(),
+                action: transition.action.take(),
             };
             if let Some(trans) = self.transitions.get_mut(&from) {
                 trans.insert(event.unwrap(), tran);
@@ -148,9 +154,9 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
         self.on(on).to(to)
     }
 
-    pub fn guard<F>(mut self, f: F) -> Self
+    pub fn do_guard<F>(mut self, f: F) -> Self
     where
-        F: Fn(S, E, &mut C) -> Result<()> + Send + 'static,
+        F: Fn(S, E, &mut C) -> Result<S, E> + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.guard = Some(Box::new(f));
@@ -158,9 +164,9 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
         self
     }
 
-    pub fn exit<F>(mut self, f: F) -> Self
+    pub fn on_exit<F>(mut self, f: F) -> Self
     where
-        F: Fn(S, E, &mut C) -> Result<()> + Send + 'static,
+        F: Fn(S, E, &mut C) + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.exit = Some(Box::new(f));
@@ -168,9 +174,9 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
         self
     }
 
-    pub fn enter<F>(mut self, f: F) -> Self
+    pub fn on_enter<F>(mut self, f: F) -> Self
     where
-        F: Fn(S, E, S, &mut C) -> Result<()> + Send + 'static,
+        F: Fn(S, E, S, &mut C) + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.enter = Some(Box::new(f));
@@ -178,9 +184,9 @@ impl<S: PartialEq + Eq + Ord + Copy, E: PartialEq + Eq + Ord + Copy, C> Builder<
         self
     }
 
-    pub fn action<F>(mut self, f: F) -> Self
+    pub fn do_action<F>(mut self, f: F) -> Self
     where
-        F: Fn(E, S, &mut C) -> Result<()> + Send + 'static,
+        F: Fn(S, E, &mut C) -> Result<S, E> + Send + 'static,
     {
         if let Some(tran) = self.find() {
             tran.action = Some(Box::new(f));
