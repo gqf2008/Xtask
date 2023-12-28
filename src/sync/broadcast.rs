@@ -4,7 +4,8 @@
 use crate::task::executor::{xworker, Executor};
 use crate::TaskQueue;
 use crate::{sync, yield_now};
-use alloc::sync::Arc;
+// use alloc::sync::Arc;
+use super::arc::Arc;
 use core::cell::RefCell;
 
 #[derive(Clone)]

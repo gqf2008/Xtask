@@ -5,11 +5,14 @@ use crate::task::executor::{xworker, Executor};
 use crate::task::Task;
 use crate::TaskQueue;
 use crate::{sync, yield_now};
-use alloc::sync::Arc;
+// use alloc::sync::Arc;
+use super::arc::Arc;
 use core::cell::RefCell;
-use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::Ordering;
+// use core::sync::atomic::AtomicUsize;
+// use core::sync::atomic::Ordering;
+use atomic_polyfill::{AtomicUsize, Ordering};
 // use crossbeam::atomic::AtomicCell;
+
 /// 信号量
 /// 设计思想是维护两个任务挂起队列
 /// 当信号量为零时挂起当前任务到挂起队列
@@ -52,85 +55,39 @@ impl Semaphore {
     /// 可以在中断服务中使用
     ///
     pub fn post_isr(&self) -> nb::Result<(), Error> {
-        #[cfg(not(target_has_atomic = "8"))]
-        {
-            let val = self.signal.load(Ordering::SeqCst);
-            if val <= self.max_value {
-                self.signal.store(val + 1, Ordering::SeqCst);
-                unsafe {
-                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                        if let Some(waiter) = waiter.as_mut() {
-                            waiter.wakeup();
-                        }
+        if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
+            unsafe {
+                if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                    if let Some(waiter) = waiter.as_mut() {
+                        waiter.wakeup();
                     }
-                };
-                Ok(())
-            } else {
-                Err(nb::Error::Other(Error::SemaphoreFull))
-            }
-        }
-        #[cfg(target_has_atomic = "8")]
-        {
-            if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
-                unsafe {
-                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                        if let Some(waiter) = waiter.as_mut() {
-                            waiter.wakeup();
-                        }
-                    }
-                };
-                Ok(())
-            } else {
-                Err(nb::Error::Other(Error::SemaphoreFull))
-            }
+                }
+            };
+            Ok(())
+        } else {
+            Err(nb::Error::Other(Error::SemaphoreFull))
         }
     }
     /// 发送信号
     /// 不能在中断服务中使用
     pub fn post(&self) {
         loop {
-            #[cfg(not(target_has_atomic = "8"))]
-            {
-                match sync::free(|_| unsafe {
-                    let val = self.signal.load(Ordering::SeqCst);
-                    if val <= self.max_value {
-                        self.signal.store(val + 1, Ordering::SeqCst);
-                        if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                            if let Some(waiter) = waiter.as_mut() {
-                                waiter.wakeup();
-                            }
+            if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
+                sync::free(|_| unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                        if let Some(waiter) = waiter.as_mut() {
+                            waiter.wakeup();
                         }
-                        true
-                    } else {
-                        let task = xworker.current();
-                        self.notifiers.borrow_mut().push_back(task as *mut Task);
-                        task.block();
-                        false
                     }
-                }) {
-                    true => break,
-                    false => yield_now(),
-                }
-            }
-            #[cfg(target_has_atomic = "8")]
-            {
-                if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
-                    sync::free(|_| unsafe {
-                        if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                            if let Some(waiter) = waiter.as_mut() {
-                                waiter.wakeup();
-                            }
-                        }
-                    });
-                    break;
-                } else {
-                    sync::free(|_| {
-                        let task = xworker.current();
-                        self.notifiers.borrow_mut().push_back(task as *mut Task);
-                        task.block();
-                    });
-                    yield_now();
-                }
+                });
+                break;
+            } else {
+                sync::free(|_| {
+                    let task = xworker.current();
+                    self.notifiers.borrow_mut().push_back(task as *mut Task);
+                    task.block();
+                });
+                yield_now();
             }
         }
     }
@@ -140,61 +97,33 @@ impl Semaphore {
     /// 注意：不要同时使用post_isr和post，不然可能会错误的唤醒poster
     pub fn wait(&self) {
         loop {
-            #[cfg(not(target_has_atomic = "8"))]
-            {
-                match sync::free(|_| unsafe {
-                    let val = self.signal.load(Ordering::SeqCst);
-                    if val == 0 {
-                        let task = xworker.current();
-                        self.waiters.borrow_mut().push_back(task);
-
-                        task.block();
-                        false
+            match self
+                .signal
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                    if signal == 0 {
+                        None
                     } else {
-                        self.signal.store(val + 1, Ordering::SeqCst);
+                        Some(signal - 1)
+                    }
+                }) {
+                Ok(_) => {
+                    sync::free(|_| unsafe {
                         if let Some(poster) = self.notifiers.borrow_mut().pop_front() {
                             if let Some(poster) = poster.as_mut() {
                                 poster.wakeup();
                             }
                         }
-                        true
-                    }
-                }) {
-                    true => break,
-                    false => yield_now(),
+                    });
+                    break;
                 }
-            }
+                Err(_) => {
+                    sync::free(|_| {
+                        let task = xworker.current();
+                        self.waiters.borrow_mut().push_back(task);
 
-            #[cfg(target_has_atomic = "8")]
-            {
-                match self
-                    .signal
-                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
-                        if signal == 0 {
-                            None
-                        } else {
-                            Some(signal - 1)
-                        }
-                    }) {
-                    Ok(_) => {
-                        sync::free(|_| unsafe {
-                            if let Some(poster) = self.notifiers.borrow_mut().pop_front() {
-                                if let Some(poster) = poster.as_mut() {
-                                    poster.wakeup();
-                                }
-                            }
-                        });
-                        break;
-                    }
-                    Err(_) => {
-                        sync::free(|_| {
-                            let task = xworker.current();
-                            self.waiters.borrow_mut().push_back(task);
-
-                            task.block();
-                        });
-                        yield_now();
-                    }
+                        task.block();
+                    });
+                    yield_now();
                 }
             }
         }
