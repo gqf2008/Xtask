@@ -2,8 +2,8 @@
 //! 不能在中断服务中使用
 
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
-
+// use alloc::sync::Arc;
+use super::arc::Arc;
 use super::semaphore::*;
 use crate::sync;
 use core::cell::RefCell;

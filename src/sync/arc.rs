@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use atomic::{Atomic, Ordering};
+use atomic_polyfill::{AtomicUsize, Ordering};
 use core::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
 pub struct Arc<T> {
@@ -8,14 +8,14 @@ pub struct Arc<T> {
 }
 
 pub struct ArcInner<T> {
-    rc: Atomic<usize>,
+    rc: AtomicUsize,
     data: T,
 }
 
 impl<T> Arc<T> {
     pub fn new(data: T) -> Arc<T> {
         let boxed = Box::new(ArcInner {
-            rc: Atomic::new(1),
+            rc: AtomicUsize::new(1),
             data,
         });
         Arc {
@@ -60,7 +60,7 @@ impl<T> Drop for Arc<T> {
         if inner.rc.fetch_sub(1, Ordering::Release) != 1 {
             return;
         }
-        atomic::fence(Ordering::Acquire);
+        atomic_polyfill::fence(Ordering::Acquire);
         unsafe {
             let _ = Box::from_raw(self.ptr.as_ptr());
         }
