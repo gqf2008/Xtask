@@ -3,12 +3,12 @@ use crate::sync;
 
 use alloc::vec::Vec;
 use alloc::{boxed::Box, collections::BTreeMap};
-use core::cell::RefCell;
-use core::ffi::c_void;
+use core::cell::{Cell, RefCell};
 
 pub struct Bus<'a, E> {
-    subscribers: RefCell<BTreeMap<&'a str, Vec<Box<dyn Fn(&'a str, E)>>>>,
+    subscribers: RefCell<BTreeMap<&'a str, Vec<(usize, Box<dyn Fn(&'a str, E)>)>>>,
     callee: RefCell<BTreeMap<&'a str, Box<dyn Fn(&'a str, E)>>>,
+    next_token: Cell<usize>,
 }
 
 unsafe impl<'a, E> Send for Bus<'a, E> {}
@@ -20,6 +20,7 @@ impl<'a, E> Bus<'a, E> {
         Self {
             subscribers: RefCell::new(BTreeMap::new()),
             callee: RefCell::new(BTreeMap::new()),
+            next_token: Cell::new(0),
         }
     }
 }
@@ -32,13 +33,14 @@ impl<'a, E: Clone> Bus<'a, E> {
     pub fn subscribe<F: Fn(&'a str, E) + Send + 'static>(&self, topic: &'a str, f: F) -> Token<'a> {
         sync::free(|_| {
             let mut subscribers = self.subscribers.borrow_mut();
-            //只箱一次，token 取存入列表的那个 trait 对象指针，
-            //保证 unsubscribe 用同一口径能匹配到
-            let f: Box<dyn Fn(&'a str, E)> = Box::new(f);
-            let ptr = (f.as_ref() as *const _ as *const c_void).addr();
+            //token 用单调递增的唯一 id，不能用闭包地址：
+            //零大小（不捕获环境）闭包的 Box 指针是 dangling 对齐地址，彼此相同会互相误删；
+            //地址在退订释放后还可能被新订阅复用（ABA），过期 token 会误删无辜订阅。
+            let id = self.next_token.get();
+            self.next_token.set(id + 1);
             let list = subscribers.entry(topic).or_default();
-            list.push(f);
-            (topic, ptr)
+            list.push((id, Box::new(f)));
+            (topic, id)
         })
     }
     /// 取消订阅
@@ -47,10 +49,7 @@ impl<'a, E: Clone> Bus<'a, E> {
         sync::free(|_| {
             let mut subscribers = self.subscribers.borrow_mut();
             if let Some(list) = subscribers.get_mut(token.0) {
-                list.retain(|item| {
-                    let optr = (item.as_ref() as *const _ as *const c_void).addr();
-                    optr != token.1
-                });
+                list.retain(|(id, _)| *id != token.1);
             }
         });
     }
@@ -66,7 +65,7 @@ impl<'a, E: Clone> Bus<'a, E> {
     pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
         let mut subscribers = self.subscribers.borrow_mut();
         if let Some(list) = subscribers.get_mut(topic) {
-            list.iter().for_each(|f| f(topic, event.clone()));
+            list.iter().for_each(|(_, f)| f(topic, event.clone()));
         }
         self
     }
