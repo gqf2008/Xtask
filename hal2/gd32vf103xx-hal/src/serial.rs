@@ -416,10 +416,14 @@ impl<USART: UsartX> crate::hal::serial::Write<u8> for Tx<USART> {
         let sr = unsafe { (*USART::ptr()).stat.read() };
 
         if sr.tbe().bit_is_set() {
-            // NOTE(unsafe) atomic write to stateless register
             // NOTE(write_volatile) 8-bit write that's not possible through the svd2rust API
+            // SAFETY: `USART::ptr()` 指向有效的 USART 寄存器块，`data` 是其中的可写
+            // 发送数据寄存器。用 `addr_of_mut!` 只取地址不创建中间引用，规避"经共享引用
+            // 写寄存器字段"的 UB；对单字节外设寄存器的 volatile 写是原子且无数据竞争。
             unsafe {
-                ptr::write_volatile(&(*USART::ptr()).data as *const _ as *mut _, byte)
+                let rb = USART::ptr() as *mut gd32vf103_pac::usart0::RegisterBlock;
+                let data = ptr::addr_of_mut!((*rb).data) as *mut u8;
+                ptr::write_volatile(data, byte)
             }
             Ok(())
         } else {
