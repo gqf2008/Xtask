@@ -3,6 +3,7 @@
 //! 一部分由rust实现，一部分由汇编实现，请参考hal库汇编代码
 
 mod port;
+pub mod stdout;
 
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;

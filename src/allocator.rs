@@ -9,7 +9,13 @@ use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
 use linked_list_allocator::LockedHeap;
 
+// 测试构建链到 std，由 std 提供全局分配器，不能再定义 global_allocator
+#[cfg(not(test))]
 #[global_allocator]
+static ALLOCATOR: XTaskSpinAlloc = XTaskSpinAlloc::empty();
+
+// 测试构建下的占位：global_allocator 由 std 提供，这里仅保留符号供 used()/free() 调用
+#[cfg(test)]
 static ALLOCATOR: XTaskSpinAlloc = XTaskSpinAlloc::empty();
 
 pub fn init(start_addr: usize, size: usize) {

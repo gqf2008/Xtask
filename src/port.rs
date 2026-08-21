@@ -18,15 +18,23 @@ pub use crate::chip::stm32h7::STM32H7Porting as Porting;
 #[cfg(feature = "cm32m4")]
 pub use crate::chip::cm32m4::CM32M4Porting as Porting;
 
-#[cfg(not(any(
-    feature = "gd32vf103",
-    feature = "stm32f4",
-    feature = "stm32f1",
-    feature = "rp2040",
-    feature = "stm32h7",
-    feature = "cm32m4"
-)))]
+#[cfg(all(
+    not(test),
+    not(any(
+        feature = "gd32vf103",
+        feature = "stm32f4",
+        feature = "stm32f1",
+        feature = "rp2040",
+        feature = "stm32h7",
+        feature = "cm32m4"
+    ))
+))]
 pub use DefaultPorting as Porting;
+
+// host 测试环境：提供一个可运行的 Porting mock，让纯逻辑（信号量、队列、总线、延时队列）
+// 能在 `cargo test` 下被驱动。单线程语义下临界区只是一个标记，无需真实关中断。
+#[cfg(test)]
+pub use HostPorting as Porting;
 
 use crate::task::Task;
 use bare_metal::CriticalSection;
@@ -56,6 +64,39 @@ pub trait Portable {
     fn delay_us(us: u64);
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task);
+}
+
+/// host 测试用移植层 mock。
+/// 仅在 `cfg(test)` 下编译。单线程测试语义下：
+/// - 临界区 `free` 直接执行闭包（测试逻辑不并发访问全局队列）；
+/// - `irq`/`save_context` 等为空调用，因为 host 不做真实任务切换；
+/// - `systick`/`delay_us` 给确定值，避免测试依赖真实时钟。
+#[cfg(test)]
+pub struct HostPorting;
+
+#[cfg(test)]
+impl Portable for HostPorting {
+    fn barrier() {}
+    fn free<F, R>(f: F) -> R
+    where
+        F: FnOnce(&CriticalSection) -> R,
+    {
+        // SAFETY: host 测试单线程语义，构造一个临界区标记仅供 API 形状匹配，
+        // 不做真实中断屏蔽；被测逻辑在此闭包内不并发访问全局状态。
+        f(unsafe { &CriticalSection::new() })
+    }
+    fn enable_interrupt() {}
+    fn disable_interrupt() {}
+    fn start_scheduler() -> ! {
+        unimplemented!("host 测试不启动调度器")
+    }
+    fn irq() {}
+    fn disable_irq() {}
+    fn systick() -> u64 {
+        0
+    }
+    fn delay_us(_us: u64) {}
+    fn save_context(_task: &mut Task) {}
 }
 
 /// 移植层默认实现

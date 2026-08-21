@@ -4,14 +4,19 @@ use log::{LevelFilter, Metadata, Record, SetLoggerError};
 use crate::sprintln;
 use crate::time;
 
-#[cfg(feature = "stdout_log")]
-static LOGGER: StdoutLogger = StdoutLogger::new(LevelFilter::Debug);
-
-#[cfg(feature = "rtt_log")]
+// logger 选择：rtt 优先，其次 stdout，都没有（或 host 测试）时用空 logger。
+// 注意 host 上 rtt_target 不可用（按 arm/riscv target 门控），测试构建强制空 logger。
+#[cfg(all(feature = "rtt_log", not(test)))]
 static LOGGER: RTTLogger = RTTLogger::new(LevelFilter::Debug);
 
+#[cfg(all(not(feature = "rtt_log"), feature = "stdout_log", not(test)))]
+static LOGGER: StdoutLogger = StdoutLogger::new(LevelFilter::Debug);
+
+#[cfg(any(test, not(any(feature = "rtt_log", feature = "stdout_log"))))]
+static LOGGER: NoopLogger = NoopLogger;
+
 pub fn init() -> Result<(), SetLoggerError> {
-    #[cfg(feature = "rtt_log")]
+    #[cfg(all(feature = "rtt_log", not(test)))]
     rtt_target::rtt_init_print!();
 
     #[cfg(not(atomic_cas))]
@@ -20,6 +25,19 @@ pub fn init() -> Result<(), SetLoggerError> {
     }
     #[cfg(atomic_cas)]
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Debug))
+}
+
+/// 空 logger，丢弃所有日志。用于 host 测试，或未启用任何日志后端的配置。
+#[cfg(any(test, not(any(feature = "rtt_log", feature = "stdout_log"))))]
+pub struct NoopLogger;
+
+#[cfg(any(test, not(any(feature = "rtt_log", feature = "stdout_log"))))]
+impl log::Log for NoopLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        false
+    }
+    fn log(&self, _record: &Record) {}
+    fn flush(&self) {}
 }
 
 pub struct StdoutLogger {
@@ -68,16 +86,19 @@ impl log::Log for StdoutLogger {
     fn flush(&self) {}
 }
 
+#[cfg(all(feature = "rtt_log", not(test)))]
 pub struct RTTLogger {
     level_filter: LevelFilter,
 }
 
+#[cfg(all(feature = "rtt_log", not(test)))]
 impl RTTLogger {
     pub const fn new(level_filter: LevelFilter) -> RTTLogger {
         RTTLogger { level_filter }
     }
 }
 
+#[cfg(all(feature = "rtt_log", not(test)))]
 impl log::Log for RTTLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         self.level_filter.ge(&metadata.level())
