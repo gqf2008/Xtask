@@ -1,90 +1,10 @@
 //! Stdout based on the UART hooked up to the debug connector
-
-use core::fmt::{self, Write};
-use gd32vf103xx_hal::serial::{Config, Parity, StopBits};
-use gd32vf103xx_hal::{
-    afio::Afio,
-    gpio::{
-        gpioa::{PA10, PA9},
-        Active,
-    },
-    pac::USART0,
-    prelude::*,
-    rcu::Rcu,
-    serial::{Serial, Tx},
-    time::Bps,
-};
-use nb::block;
-use riscv::interrupt;
-
-static mut STDOUT: Option<SerialWrapper> = None;
-
-struct SerialWrapper(Tx<USART0>);
-
-impl fmt::Write for SerialWrapper {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for byte in s.as_bytes() {
-            if *byte == '\n' as u8 {
-                let res = block!(self.0.write('\r' as u8));
-
-                if res.is_err() {
-                    return Err(::core::fmt::Error);
-                }
-            }
-
-            let res = block!(self.0.write(*byte));
-
-            if res.is_err() {
-                return Err(::core::fmt::Error);
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Configures stdout
-pub fn configure<X, Y>(
-    uart: USART0,
-    tx: PA9<X>,
-    rx: PA10<Y>,
-    baud_rate: Bps,
-    afio: &mut Afio,
-    rcu: &mut Rcu,
-) where
-    X: Active,
-    Y: Active,
-{
-    let tx = tx.into_alternate_push_pull();
-    let rx = rx.into_floating_input();
-    let config = Config {
-        baudrate: baud_rate,
-        parity: Parity::ParityNone,
-        stopbits: StopBits::STOP1,
-    };
-    let serial = Serial::new(uart, (tx, rx), config, afio, rcu);
-    let (tx, _) = serial.split();
-    interrupt::free(|_| unsafe {
-        STDOUT.replace(SerialWrapper(tx));
-    })
-}
-
-#[inline]
-pub fn write_str(s: &str) {
-    unsafe {
-        if let Some(stdout) = STDOUT.as_mut() {
-            let _ = stdout.write_str(s);
-        }
-    }
-}
-
-#[inline]
-pub fn write_fmt(args: fmt::Arguments) {
-    unsafe {
-        if let Some(stdout) = STDOUT.as_mut() {
-            let _ = stdout.write_fmt(args);
-        }
-    }
-}
+//!
+//! 实现已下沉到芯片层 `chip::gd32vf103::stdout`（全 crate 唯一持有 USART0 的 STDOUT
+//! 静态），这里只做 re-export，保持 `bsp::longan_nano::stdout::*` 路径和下面四个宏
+//! 的展开不变。此前本文件与芯片层各持有一份相同的 STDOUT 静态：示例配置其中一个、
+//! 宏却写另一个，另一条路径上的日志会被静默丢弃。
+pub use crate::chip::gd32vf103::stdout::{configure, write_fmt, write_str};
 
 /// 加了中断保护，禁止在中断服务程序中调用
 #[macro_export]
