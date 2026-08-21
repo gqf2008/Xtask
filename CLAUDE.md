@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `xtask` is a `#![no_std]` preemptive multitasking RTOS-style kernel for embedded targets, modeled on FreeRTOS. It compiles together with the application. Single physical hardware thread: priority + time-slice scheduling, high-priority preemption, fair round-robin among equal priorities. The design/rationale (including the assembly context-switch code) is documented in `Xtask.md` — read it before touching scheduling or porting code.
 
-Rust **nightly** is required (`rust-toolchain` pins `nightly`; `lib.rs` uses many `#![feature(...)]` gates). There is no `cargo test` — verification is done by building and flashing examples to real boards.
+Rust **nightly** is required (`rust-toolchain` pins `nightly`; `lib.rs` uses many `#![feature(...)]` gates). Pure-logic unit tests (semaphore, bus, delay queue, software timers) run on the host via a `cfg(test)` `HostPorting` mock: `cargo test --lib --target x86_64-pc-windows-msvc` (any host triple works; do not omit `--lib`, examples only build for embedded targets). Everything else is verified by building and flashing examples to real boards.
 
 ## Build & run
 
@@ -22,15 +22,17 @@ cargo run --example led --features gd32vf103 --target riscv32imac-unknown-none-e
 cargo run --example multitask --features stm32f4 --target thumbv7em-none-eabihf --release
 # stm32f1
 cargo run --example multitask --features stm32f1 --target thumbv7m-none-eabi --release
-# rp2040
-cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-eabi --release
+# rp2040 — TEMPORARILY DISABLED: rp2040-hal 0.5.0 depends on a yanked critical-section 0.2.x
+# which breaks dependency resolution for the whole workspace. The `rp2040` feature is kept as
+# an empty placeholder; re-enable by upgrading rp2040-hal and restoring the deps in Cargo.toml.
+# cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-eabi --release
 ```
 
 `--release` is normal for flashing (both profiles use `opt-level = "z"`, `lto = true`). Some examples need extra features, e.g. the software-timer example: `--features gd32vf103,timer`.
 
 A default target (`thumbv7em-none-eabihf`) and per-target `runner` (probe-run / gdb+openocd / elf2uf2-rs) are set in `.cargo/config.toml`; `cargo run` uses the runner to flash. OpenOCD configs and GDB scripts live in `debug/<chip>/`. Chip HALs are mostly crates, but `gd32vf103xx-hal` is a local path dep at `hal2/gd32vf103xx-hal`.
 
-Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `rp2040`, `cm32m4`. Non-chip features: `timer` (software timers), `debug_task`, `fs` (fatfs), `net` (smoltcp), `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp-pico`).
+Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4` (`rp2040` exists but is an empty placeholder — temporarily disabled, see Build & run above). Non-chip features: `timer` (software timers), `debug_task`, `fs` (fatfs), `net` (smoltcp), `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp-pico`).
 
 ## Architecture
 
