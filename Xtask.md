@@ -397,8 +397,11 @@ pub struct Task {
     //任务入口，真正执行任务逻辑的地方，任务首次运行PC值就是这个符号的地址，这个地址在任务初始化时被保存在上面的stack里       
     pub(crate) entry: Func,    
     
+    //任务运行节拍计数器，任务每次获得CPU时累加，用于统计任务运行时长
+    pub(crate) ticks: usize,
+
     //任务延时tick计数器，每tick一次减1，直到为0时表示延时结束，重新进入就绪队列等待下一次tick到来时调度
-    pub(crate) remaining_ticks: usize,
+    pub(crate) delay_ticks: usize,
 
     //任务ID，任务唯一的标识
     pub(crate) id: u16,
@@ -474,7 +477,7 @@ pub struct Task {
 /// 这个函数如果返回true，就说明有就绪任务，需要把当前任务切换掉，其实就是一条指令产生一个软中断，然后CPU会进入软中断服务程序里完成真正的切换，往下看下面一个函数就是
 fn do_systick(&self) -> bool {
         unsafe {
-            //从延时任务队列里扫描所有任务，并更新延时的remaining_ticks-=1，同时收集remaining_ticks==0的任务索引号
+            //从延时任务队列里扫描所有任务，并更新延时的delay_ticks-=1，同时收集delay_ticks==0的任务索引号
             if let Some(delay) = &mut DELAY {
                 let readys: Vec<usize> = delay
                     .iter()
@@ -491,7 +494,7 @@ fn do_systick(&self) -> bool {
                         }
                     })
                     .collect();
-                    //这段代码就是把remaining_ticks==0（延时时间到了）的任务从延时队列里删除，并重新放到就绪队列里，submit_task这个函数会根据任务的状态值分发到不同的队列里
+                    //这段代码就是把delay_ticks==0（延时时间到了）的任务从延时队列里删除，并重新放到就绪队列里，submit_task这个函数会根据任务的状态值分发到不同的队列里
                 readys.iter().for_each(|i| {
                     if let Some(task) = delay.remove(*i) {
                         submit_task(task);
@@ -509,6 +512,30 @@ fn do_systick(&self) -> bool {
 
 ```
 
+> ⚠️ **踩坑记录（这段代码曾经有个 bug）**：上面把到期任务从延时队列里删除时，用的是**升序**下标 `readys.iter().for_each(|i| delay.remove(*i))`。`VecDeque::remove(i)` 删掉一个元素后，它后面的所有元素都会前移一位，于是下一个要删的下标就错位了。比如 3 个任务同一个 tick 到期（下标 0、1、2)，升序删除会变成：删 0 → 队列前移 → 删 1（实际删的是原来的 2)→ 删 2（已越界，删不到）。结果只删了 2 个、漏 1 个，被漏掉的任务永远不会被唤醒。
+>
+> **修复后**：先收集到期下标，**按降序排序再删**（删大的下标不影响小的下标），并把这段逻辑抽成纯函数 `take_expired`，方便写单元测试：
+>
+> ```rust
+> /// 从延时队列取出所有到期任务。关键：必须降序删除，避免下标前移错位
+> pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
+>     let mut readys: Vec<usize> = delay
+>         .iter()
+>         .enumerate()
+>         .filter_map(|(i, &task)| {
+>             // SAFETY: 仅在临界区或单线程测试下调用，无二度可变别名
+>             unsafe { task.as_mut() }.and_then(|t| if t.tick() { Some(i) } else { None })
+>         })
+>         .collect();
+>     readys.sort_unstable_by(|a, b| b.cmp(a)); // 降序！
+>     readys.iter().filter_map(|i| delay.remove(*i)).collect()
+> }
+> ```
+>
+> 对应的回归测试（host 单测）：3 个到期任务必须全部被取出、队列清空。这个 bug 就是靠这个测试抓住的——把修复改回升序，测试立刻变红。
+
+
+
 - 软中断服务程序
 
 这里实现了任务的真正切换，为什么要单独设计一个这样的服务函数呢？难道在节拍器中断服务程序里切不可以吗？答案是可以的，这样实现的目的是为了职责上的区别，节拍器就干节拍器的活，任务切换就干任务切换的活，大家分工明确。
@@ -516,7 +543,7 @@ fn do_systick(&self) -> bool {
 什么时候触发任务切换呢？有一下几种情况:
 
 - 节拍器周期到了且有就绪任务，就是上面节拍器中断服务程序里做的事情
-- 任务函数里主动延时，例如调用了sleep函数，sleep函数里把当前任务状态置为Blocked，remaining_ticks=延时tick数
+- 任务函数里主动延时，例如调用了sleep函数，sleep函数里把当前任务状态置为Blocked，delay_ticks=延时tick数
 - 任务被挂起，例如：两个任务互斥（二值信号量/互斥锁），那么其中一个任务会被挂起
 
 任务切换需要直接操作CPU寄存器，以RISC-V为例，汇编代码如下
@@ -807,6 +834,8 @@ mret
 
 光有多任务调度是很难满足真实业务需求的，特别是任务间的通信机制，共享数据的竞争等
 
+> 📌 **阅读提示**：本节示例里的共享指针写作 `Arc`。早期实现用的是 `Rc<RefCell<..>>`，但 `Rc` 不是 `Send`/`Sync`，而这些同步原语恰恰要跨任务、甚至在中断服务里共享，所以后来换成了自带原子引用计数的自定义 `Arc`（见 `src/sync/arc.rs`，用 `AtomicUsize` 计数，并 `unsafe impl Send/Sync`）。阅读时把 `Arc` 理解成"可跨任务共享的智能指针"即可，语义和 `Rc` 相同，只是计数是原子的。
+
 
 ## 二值信号量&互斥量
 
@@ -817,16 +846,16 @@ mret
 ```rust
 
 pub struct Notifier {
-    blocker: Rc<usize>,     //当前挂起者任务指针
-    signal: Rc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
+    blocker: Arc<AtomicCell<usize>>, //当前挂起者任务指针
+    signal: Arc<AtomicBool>, //信号标记，智能指针包下，防止move过程中地址里的值被转移到其他任务栈
 }
 
 
 impl Notifier {
     pub fn new() -> Self {
         Self {
-            blocker: Rc::new(0),
-            signal: Rc::new(AtomicBool::new(false)),
+            blocker: Arc::new(AtomicCell::new(0)),
+            signal: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -838,17 +867,18 @@ impl Notifier {
     unsafe fn block(&self) {
         let task = xworker.current();
         let addr = (task as *mut Task).addr();
-        core::ptr::write_volatile(self.blocker.as_ref() as *const _ as *mut usize, addr);
+        self.blocker.store(addr);
         task.block();
     }
 
     #[inline]
     unsafe fn wakeup(&self) {
-        let blocker = core::ptr::read_volatile(self.blocker.as_ref());
-        if blocker != 0 {
-            let blocker = &mut *(blocker as *mut Task);
-            core::ptr::write_volatile(self.blocker.as_ref() as *const _ as *mut usize, 0);
-            blocker.wakeup();
+        //原子地把挂起者指针取出并清零，取出成功且非空才唤醒
+        if let Ok(ptr) = self.blocker.fetch_update(|_ptr| Some(0)) {
+            if ptr > 0 {
+                let blocker = &mut *(ptr as *mut Task);
+                blocker.wakeup();
+            }
         }
     }
 
@@ -933,9 +963,9 @@ impl Notifier {
 /// 当信号量为零时挂起当前任务到挂起队列
 /// 当信号量大于零时从挂起队列弹出任务交给调度器
 pub struct Semaphore {
-    waiters: Rc<RefCell<TaskQueue>>,
-    notifiers: Rc<RefCell<TaskQueue>>,
-    signal: Rc<AtomicUsize>, //信号量
+    waiters: Arc<RefCell<TaskQueue>>,
+    notifiers: Arc<RefCell<TaskQueue>>,
+    signal: Arc<AtomicUsize>, //信号量
     max_value: usize,
 }
 
@@ -954,9 +984,9 @@ impl Semaphore {
 
     pub fn with_signal_max_value(signal: usize, max_value: usize) -> Self {
         Self {
-            waiters: Rc::new(RefCell::new(TaskQueue::new())),
-            notifiers: Rc::new(RefCell::new(TaskQueue::new())),
-            signal: Rc::new(AtomicUsize::new(signal)),
+            waiters: Arc::new(RefCell::new(TaskQueue::new())),
+            notifiers: Arc::new(RefCell::new(TaskQueue::new())),
+            signal: Arc::new(AtomicUsize::new(signal)),
             max_value: max_value,
         }
     }
@@ -1050,6 +1080,35 @@ impl Semaphore {
 
 ```
 
+> ⚠️ **踩坑记录（上面 `post`/`post_isr` 曾经有个 bug）**：注意上面这段代码里 `wait` 用的是 `fetch_update`（带判断的原子更新），而 `post`/`post_isr` 却用了 `fetch_add(1) <= self.max_value`——两者口径不一致，这里藏着两个叠加的 bug:
+>
+> 1. **越界（差一）**:`fetch_add` 返回的是**旧值**。当 `signal == max_value` 时，旧值判断 `<= max_value` 成立，但信号量其实已经被加到了 `max_value + 1`，超出了上限。
+> 2. **失败不回滚、计数泄漏**：判断失败的分支里，`fetch_add` 已经把计数 +1 了却没有减回去；`post()` 阻塞被唤醒后 `loop` 又会再 `fetch_add` 一次。于是计数只增不减，信号量被"加满"后永久泄漏。
+>
+> **修复后**:`post`/`post_isr` 也改用与 `wait` 一致的带边界 `fetch_update`，只有未达上限才真正 +1，失败则什么都不改：
+>
+> ```rust
+> pub fn post_isr(&self) -> nb::Result<(), Error> {
+>     match self
+>         .signal
+>         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+>             if signal >= self.max_value {
+>                 None // 已达上限：不修改，fetch_update 返回 Err
+>             } else {
+>                 Some(signal + 1)
+>             }
+>         }) {
+>         Ok(_) => {
+>             // ...唤醒一个 waiter（同前）...
+>             Ok(())
+>         }
+>         Err(_) => Err(nb::Error::Other(Error::SemaphoreFull)),
+>     }
+> }
+> ```
+>
+> 回归测试（host 单测）：`max_value = 2` 的信号量连续 `post_isr`，第 3 次必须返回 `SemaphoreFull` 且计数保持为 2 不再增长。修复前的版本这个测试会失败（计数会涨到 3、4…)。
+
 ## 队列
 
 如果信号量只能用来产生信号，那么队列同时可以用来传递数据，多个任务间交换数据是很常见的业务场景。实现的思理就是多种信号量加上数组
@@ -1058,22 +1117,24 @@ impl Semaphore {
 
 //! 多生产者，多消费者队列
 //! 中断服务中使用请用xxx_isr方法
+//! 注意：普通的 push/pop 会在队满/队空时阻塞当前任务，只能在任务上下文用；
+//!      ISR 里只能用不带阻塞的 push_xxx_isr（队满时返回错误而不是阻塞）
 
 pub struct Queue<T> {
-    list: Rc<RefCell<VecDeque<T>>>,
+    list: Arc<RefCell<VecDeque<T>>>,
     sem: Semaphore,
 }
 
 impl<T> Queue<T> {
     pub fn new() -> Self {
         Self {
-            list: Rc::new(RefCell::new(VecDeque::new())),
+            list: Arc::new(RefCell::new(VecDeque::new())),
             sem: Semaphore::new(),
         }
     }
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            list: Rc::new(RefCell::new(VecDeque::new())),
+            list: Arc::new(RefCell::new(VecDeque::new())),
             sem: Semaphore::with_max_value(capacity),
         }
     }
@@ -1103,18 +1164,26 @@ impl<T> Queue<T> {
         self.sem.post();
     }
 
+    // ISR 版入队：post 失败（队列已满）时要把刚放进去的元素回滚弹出，
+    // 否则元素进队了但信号量没加上，消费者永远不知道有这条数据
     pub fn push_front_isr(&self, item: T) -> nb::Result<(), sync::Error> {
         self.list.borrow_mut().push_front(item);
         match self.sem.post_isr() {
             Ok(_) => Ok(()),
-            Err(_) => Err(nb::Error::Other(sync::Error::QueueFull)),
+            Err(_) => {
+                self.list.borrow_mut().pop_front(); // 回滚
+                Err(nb::Error::Other(sync::Error::QueueFull))
+            }
         }
     }
     pub fn push_back_isr(&self, item: T) -> nb::Result<(), sync::Error> {
         self.list.borrow_mut().push_back(item);
         match self.sem.post_isr() {
             Ok(_) => Ok(()),
-            Err(_) => Err(nb::Error::Other(sync::Error::QueueFull)),
+            Err(_) => {
+                self.list.borrow_mut().pop_back(); // 回滚
+                Err(nb::Error::Other(sync::Error::QueueFull))
+            }
         }
     }
 }
@@ -1173,6 +1242,7 @@ pub(crate) fn start_timer_task() {
                 }
                 let task = xworker.current();
                 task.block();
+                // ⚠️ 这里曾经漏了一句 yield_now()，见本节后方的踩坑记录
             });
         }
     }
@@ -1300,7 +1370,24 @@ impl Timer {
 
 ```
 
-
+> ⚠️ **踩坑记录（`timer_task` 曾经漏了 `yield_now()`，整个系统会被卡死）**：前面 `timer_task` 的循环体里，处理完就绪的定时任务后调用了 `task.block()`，然后 `loop` 继续。问题在于——**`block()` 只是把任务状态改成 `Suspended`，并不会真的切换任务**（对比一下：信号量 `wait`、通知 `notify` 等都是 `block()` 之后紧跟一句 `yield_now()`)。而 `timer_task` 是优先级 1（最高）的任务，一旦它进入这个循环又不让出 CPU，就会空转死循环，把所有低优先级任务饿死，第一个定时器触发后整个系统就卡死了。
+>
+> **修复后**：在临界区后面补一句 `yield_now()`，让 `block()` 之后真正触发一次任务切换：
+>
+> ```rust
+> fn timer_task(_args: *mut c_void) {
+>     loop {
+>         sync::free(|_cs| unsafe {
+>             // ...处理就绪的定时任务（同前）...
+>             let task = xworker.current();
+>             task.block();
+>         });
+>         yield_now(); // block() 只改状态不切换，必须显式让出 CPU
+>     }
+> }
+> ```
+>
+> 教训：`block()` 这类"只改状态、不切换"的原语，调用方必须自己保证随后 `yield_now()`。这是个约定，编译器检查不出来——也是一个值得在移植层文档里写明的隐含契约。
 
 # 芯片移植
 
