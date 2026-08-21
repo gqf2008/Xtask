@@ -55,24 +55,45 @@ impl Semaphore {
     /// 可以在中断服务中使用
     ///
     pub fn post_isr(&self) -> nb::Result<(), Error> {
-        if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
-            unsafe {
-                if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                    if let Some(waiter) = waiter.as_mut() {
-                        waiter.wakeup();
-                    }
+        //带边界的原子自增：仅当未达上限时才 +1，避免越界和失败泄漏计数
+        match self
+            .signal
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                if signal >= self.max_value {
+                    None
+                } else {
+                    Some(signal + 1)
                 }
-            };
-            Ok(())
-        } else {
-            Err(nb::Error::Other(Error::SemaphoreFull))
+            }) {
+            Ok(_) => {
+                unsafe {
+                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                        if let Some(waiter) = waiter.as_mut() {
+                            waiter.wakeup();
+                        }
+                    }
+                };
+                Ok(())
+            }
+            Err(_) => Err(nb::Error::Other(Error::SemaphoreFull)),
         }
     }
     /// 发送信号
     /// 不能在中断服务中使用
     pub fn post(&self) {
         loop {
-            if self.signal.fetch_add(1, Ordering::SeqCst) <= self.max_value {
+            //带边界的原子自增：仅当未达上限时才 +1，避免越界和失败泄漏计数
+            let posted = self
+                .signal
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                    if signal >= self.max_value {
+                        None
+                    } else {
+                        Some(signal + 1)
+                    }
+                })
+                .is_ok();
+            if posted {
                 sync::free(|_| unsafe {
                     if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
                         if let Some(waiter) = waiter.as_mut() {
@@ -127,5 +148,49 @@ impl Semaphore {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Semaphore;
+    use atomic_polyfill::Ordering;
+
+    /// 回归：post 越界（bug #3）。
+    /// 修复前用 `fetch_add(1) <= max`：旧值 == max 时仍 +1 越界，且失败分支不回滚导致计数泄漏。
+    /// 修复后用带边界的 fetch_update：达到上限后 post 必须失败且计数保持在上限。
+    #[test]
+    fn post_isr_never_exceeds_max_and_does_not_leak() {
+        let sem = Semaphore::with_signal_max_value(0, 2);
+        assert!(sem.post_isr().is_ok()); // 1
+        assert!(sem.post_isr().is_ok()); // 2
+                                         // 第三次越界：应返回 SemaphoreFull 且计数不增长
+        assert!(sem.post_isr().is_err());
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 2);
+        // 再发仍失败且不泄漏（修复前每次失败都已先 +1，计数会一路涨上去）
+        assert!(sem.post_isr().is_err());
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 2);
+    }
+
+    /// 回归：wait/post 配对后计数守恒。
+    /// 走信号充足路径（不触发阻塞，因此不依赖 host 上的任务切换）。
+    #[test]
+    fn wait_then_post_balances() {
+        let sem = Semaphore::with_signal_max_value(2, 3);
+        sem.wait(); // 2 -> 1
+        sem.wait(); // 1 -> 0
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 0);
+        assert!(sem.post_isr().is_ok()); // 0 -> 1
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 1);
+    }
+
+    /// 回归：计数信号量语义——初始为 0 时 post 一次才能 wait 一次。
+    #[test]
+    fn counting_semantics() {
+        let sem = Semaphore::with_signal(0);
+        assert!(sem.post_isr().is_ok());
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 1);
+        sem.wait();
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 0);
     }
 }
