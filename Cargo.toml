@@ -26,9 +26,12 @@ xtask_scheduler = []
 # rp2040
 # 暂时禁用：rp2040-hal 0.5.0 依赖的 critical-section 0.2.x 已被 crates.io 整体 yank，
 # 会导致整个 workspace 依赖解析失败、所有芯片都无法编译。
-# 恢复方法：升级 rp2040-hal 到不依赖 yanked critical-section 的版本后，取消下面两行
-# 及 [dependencies] 中对应两项的注释。
-#rp2040 = ["rp2040-hal", "rp2040-boot2", "rp-pico"]
+# 这里保留一个空的 rp2040 feature 占位：源码与 build.rs 中的 #[cfg(feature = "rp2040")]
+# 保持合法（否则会刷 unexpected cfg 警告），但不会拉入任何依赖，默认不启用。
+# 恢复方法：升级 rp2040-hal 到不依赖 yanked critical-section 的版本后，
+# 把下面这行改回 rp2040 = ["rp2040-hal", "rp2040-boot2", "rp-pico"]，
+# 并取消 [dependencies] 中对应两项的注释。
+rp2040 = []
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal", "longan_nano"]
 # stm32f1xx
