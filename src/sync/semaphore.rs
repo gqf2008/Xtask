@@ -82,34 +82,40 @@ impl Semaphore {
     /// 不能在中断服务中使用
     pub fn post(&self) {
         loop {
+            //"尝试计数 + 失败则入队挂起"必须在同一个临界区内完成，
+            //否则两者之间存在窗口：对方在此时完成 wait 弹出 notifiers 时队列还是空的，
+            //本任务随后入队挂起，信号量已有空余容量却无人唤醒（丢失唤醒）。
             //带边界的原子自增：仅当未达上限时才 +1，避免越界和失败泄漏计数
-            let posted = self
-                .signal
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
-                    if signal >= self.max_value {
-                        None
-                    } else {
-                        Some(signal + 1)
-                    }
-                })
-                .is_ok();
-            if posted {
-                sync::free(|_| unsafe {
-                    if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
-                        if let Some(waiter) = waiter.as_mut() {
-                            waiter.wakeup();
+            let posted = sync::free(|_| {
+                let posted = self
+                    .signal
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                        if signal >= self.max_value {
+                            None
+                        } else {
+                            Some(signal + 1)
+                        }
+                    })
+                    .is_ok();
+                if posted {
+                    unsafe {
+                        if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
+                            if let Some(waiter) = waiter.as_mut() {
+                                waiter.wakeup();
+                            }
                         }
                     }
-                });
-                break;
-            } else {
-                sync::free(|_| {
+                } else {
                     let task = xworker.current();
                     self.notifiers.borrow_mut().push_back(task as *mut Task);
                     task.block();
-                });
-                yield_now();
+                }
+                posted
+            });
+            if posted {
+                break;
             }
+            yield_now();
         }
     }
 
@@ -118,35 +124,38 @@ impl Semaphore {
     /// 注意：不要同时使用post_isr和post，不然可能会错误的唤醒poster
     pub fn wait(&self) {
         loop {
-            match self
-                .signal
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
-                    if signal == 0 {
-                        None
-                    } else {
-                        Some(signal - 1)
-                    }
-                }) {
-                Ok(_) => {
-                    sync::free(|_| unsafe {
+            //与 post 同理："尝试取信号 + 失败则入队挂起"必须在同一个临界区内完成，
+            //否则对方在此窗口内 post 会发现 waiters 为空，本任务挂起后无人唤醒（丢失唤醒）。
+            let acquired = sync::free(|_| {
+                let acquired = self
+                    .signal
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                        if signal == 0 {
+                            None
+                        } else {
+                            Some(signal - 1)
+                        }
+                    })
+                    .is_ok();
+                if acquired {
+                    unsafe {
                         if let Some(poster) = self.notifiers.borrow_mut().pop_front() {
                             if let Some(poster) = poster.as_mut() {
                                 poster.wakeup();
                             }
                         }
-                    });
-                    break;
+                    }
+                } else {
+                    let task = xworker.current();
+                    self.waiters.borrow_mut().push_back(task);
+                    task.block();
                 }
-                Err(_) => {
-                    sync::free(|_| {
-                        let task = xworker.current();
-                        self.waiters.borrow_mut().push_back(task);
-
-                        task.block();
-                    });
-                    yield_now();
-                }
+                acquired
+            });
+            if acquired {
+                break;
             }
+            yield_now();
         }
     }
 }
