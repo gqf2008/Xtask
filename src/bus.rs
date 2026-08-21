@@ -156,4 +156,34 @@ mod tests {
         bus.publish("t", 0);
         assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
+
+    /// 回归：零大小（不捕获环境）闭包的 token 也必须唯一。
+    /// 按地址取 token 时，ZST 闭包的 Box 不分配内存、指针是相同的 dangling 对齐地址，
+    /// 两个 ZST 订阅 token 相同，退订一个会把另一个也删掉。id token 下必须互不误删。
+    #[test]
+    fn unsubscribe_distinguishes_zero_sized_callbacks() {
+        static HITS_A: AtomicUsize = AtomicUsize::new(0);
+        static HITS_B: AtomicUsize = AtomicUsize::new(0);
+        let bus = Bus::<u32>::new();
+        let ta = bus.subscribe("t", |_, _| {
+            HITS_A.fetch_add(1, Ordering::SeqCst);
+        });
+        bus.subscribe("t", |_, _| {
+            HITS_B.fetch_add(1, Ordering::SeqCst);
+        });
+
+        bus.unsubscribe(ta);
+        bus.publish("t", 1);
+
+        assert_eq!(
+            HITS_A.load(Ordering::SeqCst),
+            0,
+            "已退订的 ZST 回调不应再触发"
+        );
+        assert_eq!(
+            HITS_B.load(Ordering::SeqCst),
+            1,
+            "未退订的 ZST 回调不应被误删"
+        );
+    }
 }
