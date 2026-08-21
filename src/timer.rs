@@ -62,6 +62,9 @@ pub(crate) fn start_timer_task() {
                 let task = xworker.current();
                 task.block();
             });
+            //block() 只改状态不切换任务，必须显式让出 CPU，
+            //否则高优先级的定时任务会空转饿死其他任务
+            yield_now();
         }
     }
 }
