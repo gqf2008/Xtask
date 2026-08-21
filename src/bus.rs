@@ -32,19 +32,13 @@ impl<'a, E: Clone> Bus<'a, E> {
     pub fn subscribe<F: Fn(&'a str, E) + Send + 'static>(&self, topic: &'a str, f: F) -> Token<'a> {
         sync::free(|_| {
             let mut subscribers = self.subscribers.borrow_mut();
-            if let Some(list) = subscribers.get_mut(topic) {
-                let f = Box::new(f);
-                let ptr = (f.as_ref() as *const _ as *mut c_void).addr();
-                list.push(Box::new(f));
-                (topic, ptr)
-            } else {
-                let f = Box::new(f);
-                let ptr = (f.as_ref() as *const _ as *mut c_void).addr();
-                let mut list: Vec<Box<dyn Fn(&'a str, E)>> = Vec::new();
-                list.push(f);
-                subscribers.insert(topic, list);
-                (topic, ptr)
-            }
+            //只箱一次，token 取存入列表的那个 trait 对象指针，
+            //保证 unsubscribe 用同一口径能匹配到
+            let f: Box<dyn Fn(&'a str, E)> = Box::new(f);
+            let ptr = (f.as_ref() as *const _ as *const c_void).addr();
+            let list = subscribers.entry(topic).or_default();
+            list.push(f);
+            (topic, ptr)
         })
     }
     /// 取消订阅
@@ -54,7 +48,7 @@ impl<'a, E: Clone> Bus<'a, E> {
             let mut subscribers = self.subscribers.borrow_mut();
             if let Some(list) = subscribers.get_mut(token.0) {
                 list.retain(|item| {
-                    let optr = (item.as_ref() as *const _ as *mut c_void).addr();
+                    let optr = (item.as_ref() as *const _ as *const c_void).addr();
                     optr != token.1
                 });
             }
@@ -107,5 +101,60 @@ impl<'a, E: Clone> Bus<'a, E> {
             f(name, event);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Bus;
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// 回归：unsubscribe 用 token 必须能精确移除目标订阅（bug #4）。
+    /// 修复前 subscribe 把闭包二次装箱，token 取的是内层地址、unsubscribe 比的是外层地址，
+    /// 两者永不相等 → 退订静默失效、回调泄漏。修复后同一口径，退订精确生效。
+    #[test]
+    fn unsubscribe_removes_only_the_target() {
+        let bus = Bus::<u32>::new();
+        let a = Arc::new(AtomicUsize::new(0));
+        let b = Arc::new(AtomicUsize::new(0));
+
+        // 第一个订阅走 or_default 新建分支，第二个走已有列表分支，
+        // 修复前两分支装箱口径还不一致，这里两条都要覆盖。
+        let ta = bus.subscribe("topic", {
+            let a = a.clone();
+            move |_, _| {
+                a.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        bus.subscribe("topic", {
+            let b = b.clone();
+            move |_, _| {
+                b.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+
+        bus.unsubscribe(ta);
+        bus.publish("topic", 1);
+
+        assert_eq!(a.load(Ordering::SeqCst), 0, "已退订的回调不应再触发");
+        assert_eq!(b.load(Ordering::SeqCst), 1, "未退订的回调应正常触发");
+    }
+
+    /// 回归：重复退订不 panic、不影响其他订阅。
+    #[test]
+    fn unsubscribe_is_idempotent() {
+        let bus = Bus::<u32>::new();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let token = bus.subscribe("t", {
+            let h = hits.clone();
+            move |_, _| {
+                h.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        bus.unsubscribe(token);
+        bus.unsubscribe(token); // 二次退订
+        bus.publish("t", 0);
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
 }
