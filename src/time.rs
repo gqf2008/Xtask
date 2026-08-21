@@ -23,9 +23,10 @@ pub(crate) unsafe fn increase_tick() {
 }
 
 /// 返回任务Tick
+/// 32 位目标上 u64 读非原子，进临界区防止与 ISR 里的 increase_tick 并发撕裂
 #[inline]
 pub fn tick() -> u64 {
-    unsafe { TICKS.get() }
+    Porting::free(|_| unsafe { TICKS.get() })
 }
 
 /// 毫秒转tick
