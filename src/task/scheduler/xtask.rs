@@ -33,29 +33,11 @@ impl Scheduler for XTaskScheduler {
 
     fn do_systick(&self) -> bool {
         unsafe {
-            //let mut ready = false;
-            //更新延时任务
+            //更新延时任务，把到期（tick 递减到 0）的任务重新提交调度
             if let Some(delay) = &mut DELAY {
-                let readys: Vec<usize> = delay
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, task)| {
-                        if let Some(task) = (*task).as_mut() {
-                            if task.tick() {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                readys.iter().for_each(|i| {
-                    if let Some(task) = delay.remove(*i) {
-                        submit_task(task);
-                    }
-                });
+                for task in take_expired(delay) {
+                    submit_task(task);
+                }
             }
 
             // 检查尾零数，是否有比当前任务相等或更高优先级的任务
@@ -81,6 +63,25 @@ impl Scheduler for XTaskScheduler {
             }
         }
     }
+}
+
+/// 从延时队列取出所有到期任务（tick 递减到 0、状态回到 Ready 的任务）。
+/// 抽成纯函数以便 host 单测直接驱动。
+/// 关键不变式：必须**降序**删除——`VecDeque::remove(i)` 会使其后元素前移，
+/// 升序删除多个任务时下标错位，会删错任务或漏唤醒。
+#[inline(always)]
+pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
+    let mut readys: Vec<usize> = delay
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &task)| {
+            // SAFETY: 延时队列中的任务指针入队时均为有效 Task；此函数只在临界区
+            // （ISR 关中断）或 host 单线程测试下被调用，无二度可变别名。
+            unsafe { task.as_mut() }.and_then(|t| if t.tick() { Some(i) } else { None })
+        })
+        .collect();
+    readys.sort_unstable_by(|a, b| b.cmp(a));
+    readys.iter().filter_map(|i| delay.remove(*i)).collect()
 }
 
 /// 任务入队列
@@ -315,3 +316,73 @@ pub(crate) static mut Q13: Option<TaskQueue> = None;
 pub(crate) static mut Q14: Option<TaskQueue> = None;
 pub(crate) static mut Q15: Option<TaskQueue> = None;
 pub(crate) static mut Q16: Option<TaskQueue> = None;
+
+#[cfg(test)]
+mod tests {
+    use super::take_expired;
+    use crate::task::{State, Task, TaskQueue};
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use core::ffi::c_void;
+
+    fn dummy_entry(_args: *mut c_void) {}
+
+    /// 构造一个阻塞态、delay_ticks 到期的任务（模拟 sleep 到点）。
+    fn blocked_task(ticks: usize) -> *mut Task {
+        let t = Task::new("t", 128, 8, dummy_entry, core::ptr::null_mut());
+        // SAFETY: 刚创建的独占任务，直接设置字段模拟"延时中"状态
+        unsafe {
+            (*t).delay_ticks = ticks;
+            (*t).state = State::Blocked;
+        }
+        t
+    }
+
+    /// 回收任务，避免测试泄漏（Task 的 Drop 会一并释放任务栈）
+    unsafe fn reclaim(ptrs: &[*mut Task]) {
+        for &p in ptrs {
+            drop(Box::from_raw(p));
+        }
+    }
+
+    /// 回归：多个任务同一 tick 到期时必须全部取出（bug #1）。
+    /// 修复前升序 `remove(i)` 会因元素前移导致下标错位：3 个到期任务只删掉前 2 个、漏 1 个。
+    #[test]
+    fn take_expired_removes_all_without_index_slippage() {
+        let mut q = TaskQueue::new();
+        let ptrs: Vec<*mut Task> = (0..3).map(|_| blocked_task(1)).collect();
+        for &p in &ptrs {
+            q.push_back(p);
+        }
+
+        let expired = take_expired(&mut q);
+
+        assert_eq!(expired.len(), 3, "3 个到期任务都应被取出");
+        assert!(q.is_empty(), "延时队列应被清空");
+        unsafe { reclaim(&ptrs) };
+    }
+
+    /// 回归：未到期的任务必须留在队列里。
+    #[test]
+    fn take_expired_keeps_unexpired() {
+        let mut q = TaskQueue::new();
+        let expired_one = blocked_task(1); // 本次 tick 到期
+        let pending = blocked_task(5); // 还剩 4 tick，未到期
+        q.push_back(expired_one);
+        q.push_back(pending);
+
+        let expired = take_expired(&mut q);
+
+        assert_eq!(expired.len(), 1);
+        assert_eq!(q.len(), 1, "未到期任务必须保留");
+        assert!(core::ptr::eq(q[0], pending));
+        unsafe { reclaim(&[expired_one, pending]) };
+    }
+
+    /// 回归：空队列安全。
+    #[test]
+    fn take_expired_empty_queue() {
+        let mut q = TaskQueue::new();
+        assert!(take_expired(&mut q).is_empty());
+    }
+}
