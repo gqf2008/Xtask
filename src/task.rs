@@ -226,9 +226,10 @@ impl Task {
     pub(crate) fn bind(&mut self, target: &'static mut TaskQueue) {
         let ptr = self as *mut Task;
         if let Some(from) = &mut self.queue {
-            if *from != target {
-                (*from).retain(|item| *item != ptr);
-            }
+            //无条件先去重：即使 from == target 也要先移除，
+            //否则任务仍在队列中时再次 bind 会同任务入队两次，
+            //导致重复调度甚至二次释放
+            (*from).retain(|item| *item != ptr);
         }
         target.push_back(self);
         self.queue = Some(target);
