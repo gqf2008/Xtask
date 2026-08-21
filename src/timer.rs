@@ -76,12 +76,13 @@ pub(crate) fn do_tick(ticks: u64) {
     unsafe {
         if let Some(heap) = &mut HEAP {
             let mut ready = false;
-            if let Some(timer) = heap.peek() {
-                if ticks >= timer.next_tick {
-                    ready = true;
+            //同一个 tick 可能到期多个定时器，必须全部挪进 READY，
+            //只弹堆顶一个会让其余到期定时器各多延迟一个 tick
+            while let Some(timer) = heap.peek() {
+                if ticks < timer.next_tick {
+                    break;
                 }
-            }
-            if ready {
+                ready = true;
                 if let Some(timer) = heap.pop() {
                     if let Some(q) = &mut READY {
                         q.push_back(timer);
@@ -91,6 +92,8 @@ pub(crate) fn do_tick(ticks: u64) {
                         READY = Some(q)
                     }
                 }
+            }
+            if ready {
                 if let Some(task) = TIMER_TASK.as_mut() {
                     task.wakeup();
                 }
@@ -195,6 +198,11 @@ impl Drop for Timer {
                 if let Some(heap) = &mut HEAP {
                     heap.retain(|item| item.args.addr() != self.0);
                 }
+                //到期定时器可能已被 do_tick 挪进 READY 队列，这里也必须清理，
+                //否则取消失效：周期定时器会继续触发并重新入堆，句柄 drop 后也永远关不掉
+                if let Some(q) = &mut READY {
+                    q.retain(|item| item.args.addr() != self.0);
+                }
             });
         }
     }
@@ -215,5 +223,73 @@ impl PartialOrd for TimerInner {
 impl Ord for TimerInner {
     fn cmp(&self, other: &Self) -> Ordering {
         self.next_tick.cmp(&other.next_tick)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{do_tick, Timer, TimerInner, HEAP, READY};
+    use alloc::boxed::Box;
+    use alloc::collections::{BinaryHeap, VecDeque};
+    use core::ffi::c_void;
+
+    fn dummy(_args: *mut c_void) {}
+
+    /// 一次性定时器（period=0，Drop 不会回收 args，null 指针安全）
+    fn one_shot(next_tick: u64) -> Box<TimerInner> {
+        Box::new(TimerInner {
+            entry: dummy,
+            args: core::ptr::null_mut(),
+            period: 0,
+            next_tick,
+        })
+    }
+
+    /// 回归：同一 tick 到期的多个定时器必须全部挪进 READY（修复前每个 tick 只弹堆顶一个，
+    /// 其余到期定时器各多延迟一个 tick）；且句柄 drop 必须能取消已在 READY 队列里的
+    /// 定时器（修复前只清理堆，READY 里的周期定时器会继续触发并重新入堆，永远关不掉）。
+    /// 注：这是唯一触碰 HEAP/READY 全局的测试，与其他测试无共享状态，可并行运行。
+    #[test]
+    fn do_tick_drains_all_expired_and_timer_drop_cancels_ready() {
+        unsafe {
+            HEAP = Some(BinaryHeap::new());
+            READY = Some(VecDeque::new());
+
+            let heap = HEAP.as_mut().unwrap();
+            heap.push(one_shot(50));
+            heap.push(one_shot(60));
+            heap.push(one_shot(200));
+
+            do_tick(100);
+            assert_eq!(
+                READY.as_ref().unwrap().len(),
+                2,
+                "同一 tick 到期的定时器都应进入 READY"
+            );
+            assert_eq!(HEAP.as_ref().unwrap().len(), 1, "未到期的必须留在堆里");
+
+            // READY 队列里的周期定时器也能被句柄 drop 取消
+            let f: Box<Box<dyn Fn() + Send + 'static>> = Box::new(Box::new(|| {}));
+            let args = &*f as *const _ as *mut c_void;
+            core::mem::forget(f);
+            let timer = Box::new(TimerInner {
+                entry: dummy,
+                args,
+                period: 5,
+                next_tick: 10,
+            });
+            let handle = Timer(timer.args.addr());
+            READY.as_mut().unwrap().push_back(timer);
+            drop(handle);
+            assert_eq!(
+                READY.as_ref().unwrap().len(),
+                2,
+                "READY 里的定时器应被句柄 drop 取消"
+            );
+
+            //清理现场，避免污染其他测试
+            HEAP = None;
+            READY = None;
+        }
     }
 }
