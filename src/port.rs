@@ -1,21 +1,21 @@
 //! 移植层定义&配置
 
-#[cfg(feature = "gd32vf103")]
+#[cfg(all(feature = "gd32vf103", not(test)))]
 pub use crate::chip::gd32vf103::Gd32vf103Porting as Porting;
 
-#[cfg(feature = "stm32f4")]
+#[cfg(all(feature = "stm32f4", not(test)))]
 pub use crate::chip::stm32f4::STM32F4Porting as Porting;
 
-#[cfg(feature = "stm32f1")]
+#[cfg(all(feature = "stm32f1", not(test)))]
 pub use crate::chip::stm32f1::STM32F1Porting as Porting;
 
-#[cfg(feature = "rp2040")]
+#[cfg(all(feature = "rp2040", not(test)))]
 pub use crate::chip::rp2040::RP2040Porting as Porting;
 
-#[cfg(feature = "stm32h7")]
+#[cfg(all(feature = "stm32h7", not(test)))]
 pub use crate::chip::stm32h7::STM32H7Porting as Porting;
 
-#[cfg(feature = "cm32m4")]
+#[cfg(all(feature = "cm32m4", not(test)))]
 pub use crate::chip::cm32m4::CM32M4Porting as Porting;
 
 #[cfg(all(
@@ -68,11 +68,17 @@ pub trait Portable {
 
 /// host 测试用移植层 mock。
 /// 仅在 `cfg(test)` 下编译。单线程测试语义下：
-/// - 临界区 `free` 直接执行闭包（测试逻辑不并发访问全局队列）；
 /// - `irq`/`save_context` 等为空调用，因为 host 不做真实任务切换；
 /// - `systick`/`delay_us` 给确定值，避免测试依赖真实时钟。
 #[cfg(test)]
 pub struct HostPorting;
+
+/// host 测试临界区锁。`cargo test` 默认多线程并行跑测试，仅靠"测试不并发访问全局状态"
+/// 的口头约定太脆：一旦将来某个测试驱动了全局队列/TICKS，就会在测试线程间静默数据竞争。
+/// 用进程内互斥锁给临界区提供真实互斥。注意 std Mutex 不可重入——
+/// 测试代码不要嵌套调用 sync::free（free 里再 free 会死锁）。
+#[cfg(test)]
+static HOST_TEST_CS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 impl Portable for HostPorting {
@@ -81,8 +87,9 @@ impl Portable for HostPorting {
     where
         F: FnOnce(&CriticalSection) -> R,
     {
-        // SAFETY: host 测试单线程语义，构造一个临界区标记仅供 API 形状匹配，
-        // 不做真实中断屏蔽；被测逻辑在此闭包内不并发访问全局状态。
+        // SAFETY: host 上无真实中断可屏蔽，CriticalSection 仅为 API 形状匹配的标记；
+        // 互斥由上面的进程内锁提供。锁被 panic 毒化后继续取用，避免连锁 panic 掩盖首个失败。
+        let _guard = HOST_TEST_CS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         f(unsafe { &CriticalSection::new() })
     }
     fn enable_interrupt() {}
