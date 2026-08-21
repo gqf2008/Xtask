@@ -514,12 +514,12 @@ fn do_systick(&self) -> bool {
 
 > ⚠️ **踩坑记录（这段代码曾经有个 bug）**：上面把到期任务从延时队列里删除时，用的是**升序**下标 `readys.iter().for_each(|i| delay.remove(*i))`。`VecDeque::remove(i)` 删掉一个元素后，它后面的所有元素都会前移一位，于是下一个要删的下标就错位了。比如 3 个任务同一个 tick 到期（下标 0、1、2)，升序删除会变成：删 0 → 队列前移 → 删 1（实际删的是原来的 2)→ 删 2（已越界，删不到）。结果只删了 2 个、漏 1 个，被漏掉的任务永远不会被唤醒。
 >
-> **修复后**：先收集到期下标，**按降序排序再删**（删大的下标不影响小的下标），并把这段逻辑抽成纯函数 `take_expired`，方便写单元测试：
+> **修复后**：先收集到期下标，**按降序删除**（删大的下标不影响小的下标；下标本身是升序收集的，逆序遍历即降序，无需排序），并把这段逻辑抽成纯函数 `take_expired`，方便写单元测试：
 >
 > ```rust
 > /// 从延时队列取出所有到期任务。关键：必须降序删除，避免下标前移错位
 > pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
->     let mut readys: Vec<usize> = delay
+>     let readys: Vec<usize> = delay
 >         .iter()
 >         .enumerate()
 >         .filter_map(|(i, &task)| {
@@ -527,8 +527,20 @@ fn do_systick(&self) -> bool {
 >             unsafe { task.as_mut() }.and_then(|t| if t.tick() { Some(i) } else { None })
 >         })
 >         .collect();
->     readys.sort_unstable_by(|a, b| b.cmp(a)); // 降序！
->     readys.iter().filter_map(|i| delay.remove(*i)).collect()
+>     //逆序遍历升序下标 = 降序删除；出队后清掉 task.queue，避免 bind 时无谓的 O(n) 扫描
+>     let mut expired: Vec<*mut Task> = readys
+>         .iter()
+>         .rev()
+>         .filter_map(|i| {
+>             let task = delay.remove(*i);
+>             if let Some(&task) = task.as_ref() {
+>                 unsafe { (*task).queue = None };
+>             }
+>             task
+>         })
+>         .collect();
+>     expired.reverse(); //恢复先进先出的唤醒次序
+>     expired
 > }
 > ```
 >
