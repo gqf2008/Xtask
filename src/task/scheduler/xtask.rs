@@ -69,9 +69,10 @@ impl Scheduler for XTaskScheduler {
 /// 抽成纯函数以便 host 单测直接驱动。
 /// 关键不变式：必须**降序**删除——`VecDeque::remove(i)` 会使其后元素前移，
 /// 升序删除多个任务时下标错位，会删错任务或漏唤醒。
+/// 下标按升序收集，逆序遍历即降序，无需额外排序。
 #[inline(always)]
 pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
-    let mut readys: Vec<usize> = delay
+    let readys: Vec<usize> = delay
         .iter()
         .enumerate()
         .filter_map(|(i, &task)| {
@@ -80,8 +81,23 @@ pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
             unsafe { task.as_mut() }.and_then(|t| if t.tick() { Some(i) } else { None })
         })
         .collect();
-    readys.sort_unstable_by(|a, b| b.cmp(a));
-    readys.iter().filter_map(|i| delay.remove(*i)).collect()
+    let mut expired: Vec<*mut Task> = readys
+        .iter()
+        .rev()
+        .filter_map(|i| {
+            let task = delay.remove(*i);
+            if let Some(&task) = task.as_ref() {
+                // SAFETY: 刚从队列取出的有效任务指针。任务已出队，清掉 queue 字段，
+                // 避免随后 bind 入就绪队列时对延时队列做一次无用的 O(n) retain 扫描
+                // （n 个任务同 tick 到期时会退化成 O(n²)）。
+                unsafe { (*task).queue = None };
+            }
+            task
+        })
+        .collect();
+    //恢复升序（先进先出）返回，保持同 tick 到期任务原有的唤醒次序
+    expired.reverse();
+    expired
 }
 
 /// 任务入队列
