@@ -2,6 +2,14 @@ use log::{LevelFilter, Metadata, Record, SetLoggerError};
 
 #[cfg(any(feature = "gd32vf103", feature = "stm32f1", feature = "stm32f4",))]
 use crate::sprintln;
+// time 只被 StdoutLogger（芯片 feature 门控）和 RTTLogger（rtt_log 且非测试）使用，
+// host 测试构建两个都不编译，这里也要同步门控，否则产生 unused import 警告
+#[cfg(any(
+    feature = "gd32vf103",
+    feature = "stm32f1",
+    feature = "stm32f4",
+    all(feature = "rtt_log", not(test))
+))]
 use crate::time;
 
 // logger 选择：rtt 优先，其次 stdout，都没有（或 host 测试）时用空 logger。
@@ -59,11 +67,14 @@ impl log::Log for StdoutLogger {
         if self.enabled(record.metadata()) {
             #[cfg(any(feature = "gd32vf103", feature = "stm32f1", feature = "stm32f4",))]
             {
-                let ticks_sec = crate::tick_ms() / 1000 / 60;
+                //tick 只读一次：tick() 要进临界区，读两次既多一次开关中断，
+                //打印的 tick 与换算出的分钟数还可能差一个 tick 对不上
+                let ticks = time::tick();
+                let ticks_min = ticks / (crate::chip::TICK_CLOCK_HZ as u64 * 60);
                 sprintln!(
                     "{}/{}min used({}KiB) free({}KiB) {:?}: {:?} {} - {}",
-                    time::tick(),
-                    ticks_sec,
+                    ticks,
+                    ticks_min,
                     crate::used_memory() / 1024,
                     crate::free_memory() / 1024,
                     if let Some(file) = record.file() {
@@ -106,11 +117,13 @@ impl log::Log for RTTLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let ticks_sec = crate::tick_ms() / 1000 / 60;
+            //与 StdoutLogger 同理：tick 只读一次，少进一次临界区且两个字段自洽
+            let ticks = time::tick();
+            let ticks_min = ticks / (crate::chip::TICK_CLOCK_HZ as u64 * 60);
             rtt_target::rprintln!(
                 "{}/{}min used({}KiB) free({}KiB) {:?}: {:?} {} - {}",
-                time::tick(),
-                ticks_sec,
+                ticks,
+                ticks_min,
                 crate::used_memory() / 1024,
                 crate::free_memory() / 1024,
                 if let Some(file) = record.file() {
