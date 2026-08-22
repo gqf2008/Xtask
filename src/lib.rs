@@ -25,6 +25,8 @@ pub mod logger;
 pub mod net;
 #[cfg(feature = "usb")]
 pub mod usb;
+#[cfg(feature = "ble")]
+pub mod ble;
 pub mod port;
 pub mod prelude;
 pub mod sd_proto;

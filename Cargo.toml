@@ -61,6 +61,9 @@ fs=["fatfs"]
 #usb 协议栈(第 23 章):协议在第三方 crate("协议是别家的,我们的活是搬字节"),
 #芯片相关实现(Gd32UsbBus)在 chip/gd32vf103/usb.rs,经 #[cfg(all(usb, gd32vf103))] 合闸
 usb=["usb-device","usbd-serial"]
+#ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
+#AT 命令编解码 + GATT 服务建模,纯 Rust 零新依赖
+ble=[]
 #net
 net=["smoltcp"]
 
