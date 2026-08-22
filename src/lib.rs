@@ -14,6 +14,7 @@ mod allocator;
 pub mod arch;
 pub mod bsp;
 pub mod bus;
+pub mod drv;
 pub mod chip;
 #[cfg(feature = "fs")]
 pub mod fs;
