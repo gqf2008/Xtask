@@ -119,6 +119,22 @@ impl Semaphore {
         }
     }
 
+    /// 将信号量计数重置为指定值（仅在 sync::free 临界区内调用）。
+    /// 供"清空/截断"类语义使用：Queue 维护"sem 计数 == 元素数"不变量，
+    /// 清空后计数必须同步归零，否则残留计数会在空列表上放行 wait()，
+    /// 消费方拿到幽灵出队且计数从此漂移（修前遗留问题 #7）。
+    #[inline]
+    pub(crate) fn reset_signal(&self, count: usize) {
+        let count = count.min(self.max_value);
+        self.signal.store(count, Ordering::SeqCst);
+    }
+
+    /// 测试专用：读当前计数（host 回归需要观察 clear/trancate 后的不变量）
+    #[cfg(test)]
+    pub(crate) fn signal_count(&self) -> usize {
+        self.signal.load(Ordering::SeqCst)
+    }
+
     /// 等待一个信号量
     /// 禁止在中断服务中调用
     /// 注意：不要同时使用post_isr和post，不然可能会错误的唤醒poster

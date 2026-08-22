@@ -38,11 +38,24 @@ impl<T> Queue<T> {
     pub fn capacity(&self) -> usize {
         sync::free(|_| self.list.borrow().capacity())
     }
+    /// 截断到前 len 个元素。计数与"实际保留数量"对齐（不变量：sem 计数 == 元素数，
+    /// 理由同 clear）。不能在中断服务中使用。
     pub fn trancate(&self, len: usize) {
-        sync::free(|_| self.list.borrow_mut().truncate(len))
+        sync::free(|_| {
+            let mut list = self.list.borrow_mut();
+            let len = len.min(list.len());
+            list.truncate(len);
+            self.sem.reset_signal(len);
+        })
     }
+    /// 清空队列。清空后信号量计数同步归零——Queue 的"sem 计数 == 元素数"不变量
+    /// 必须保持，否则残留计数会在空列表上放行 sem.wait()，pop_front 返回幽灵 None
+    /// 且计数从此漂移（修前遗留问题 #7）。不能在中断服务中使用。
     pub fn clear(&self) {
-        sync::free(|_| self.list.borrow_mut().clear())
+        sync::free(|_| {
+            self.list.borrow_mut().clear();
+            self.sem.reset_signal(0);
+        })
     }
 
     pub fn pop_front(&self) -> Option<T> {
@@ -87,5 +100,39 @@ impl<T> Queue<T> {
                 Err(nb::Error::Other(sync::Error::QueueFull))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：#7 阳性对照——clear 后信号量计数必须归零。
+    /// 修前 clear 只清 VecDeque、sem 停在 2：空列表上 pop_front 的 sem.wait()
+    /// 被放行，返回幽灵 None 且计数与列表长度从此脱钩。
+    #[test]
+    fn clear_resets_semaphore_count() {
+        let q = Queue::with_capacity(4);
+        q.push_back(1);
+        q.push_back(2);
+        assert_eq!(q.sem.signal_count(), 2, "入队两个,计数应为 2");
+        q.clear();
+        assert_eq!(q.sem.signal_count(), 0, "清空后计数必须归零(修前恒为 2)");
+        assert_eq!(q.len(), 0);
+    }
+
+    /// 回归：#7 伴随用例——trancate 后计数与实际保留数量一致；
+    /// 截断长度超过元素数时按"保留 0"处理。
+    #[test]
+    fn trancate_resets_semaphore_count() {
+        let q = Queue::with_capacity(4);
+        q.push_back(1);
+        q.push_back(2);
+        q.push_back(3);
+        assert_eq!(q.sem.signal_count(), 3);
+        q.trancate(1);
+        assert_eq!(q.sem.signal_count(), 1, "保留 1 个,计数应同步为 1");
+        q.trancate(99);
+        assert_eq!(q.sem.signal_count(), 1, "超长截断=保留全部(1 个),计数不变");
     }
 }
