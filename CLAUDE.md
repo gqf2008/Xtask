@@ -18,10 +18,10 @@ cargo run --example <EXAMPLE> --features <CHIP> --target <TRIPLE> --release
 
 # gd32vf103 (longan-nano)
 cargo run --example led --features gd32vf103 --target riscv32imac-unknown-none-elf --release
-# stm32f4
-cargo run --example multitask --features stm32f4 --target thumbv7em-none-eabihf --release
-# stm32f1
-cargo run --example multitask --features stm32f1 --target thumbv7m-none-eabi --release
+# stm32f4 (greenpill; note multitask.rs itself is a gd32vf103-only example)
+cargo run --example multitask_greenpill --features stm32f4 --target thumbv7em-none-eabihf --release
+# stm32f1 (bluepill)
+cargo run --example multitask_bluepill --features stm32f1 --target thumbv7m-none-eabi --release
 # rp2040 — TEMPORARILY DISABLED: rp2040-hal 0.5.0 depends on a yanked critical-section 0.2.x
 # which breaks dependency resolution for the whole workspace. The `rp2040` feature is kept as
 # an empty placeholder; re-enable by upgrading rp2040-hal and restoring the deps in Cargo.toml.
