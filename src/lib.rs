@@ -23,6 +23,8 @@ pub mod fsm;
 pub mod logger;
 #[cfg(feature = "net")]
 pub mod net;
+#[cfg(feature = "usb")]
+pub mod usb;
 pub mod port;
 pub mod prelude;
 pub mod sd_proto;
