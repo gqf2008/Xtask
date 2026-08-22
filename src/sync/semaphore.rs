@@ -27,6 +27,13 @@ pub struct Semaphore {
 
 unsafe impl Send for Semaphore {}
 
+// SAFETY: 与 Send 同构——waiters/notifiers 两个队列的访问全部发生在 sync::free
+// 临界区内（单核关中断，任务侧与 ISR 侧不可能并发借用同一 RefCell），post_isr
+// 只碰原子计数与 wakeup（不动借用）；共享引用 &Semaphore 经"临界区串行化"后
+// 的可变访问是单核安全模型的既定纪律（与 bus.rs/REGISTRY 同构）。
+// 现状必要：Mutex<T> 要能进 static（OnceCell<Mutex<T>> 要求 T: Sync）。
+unsafe impl Sync for Semaphore {}
+
 impl Semaphore {
     pub fn new() -> Self {
         Self::with_signal(0)
@@ -135,6 +142,35 @@ impl Semaphore {
         self.signal.load(Ordering::SeqCst)
     }
 
+    /// 非阻塞取一个信号：拿到返回 true（计数 N→N-1），并照 wait 的规则
+    /// 唤醒一个因 post 满而排队的 poster；拿不到返回 false，**不挂起**。
+    /// 供"尝试型"原语（如 Mutex::try_lock）与宿主测试使用——host 无调度器，
+    /// wait 的空信号路径会挂死，只有这条路径可被测。
+    pub fn try_wait(&self) -> bool {
+        sync::free(|_| {
+            let acquired = self
+                .signal
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |signal| {
+                    if signal == 0 {
+                        None
+                    } else {
+                        Some(signal - 1)
+                    }
+                })
+                .is_ok();
+            if acquired {
+                unsafe {
+                    if let Some(poster) = self.notifiers.borrow_mut().pop_front() {
+                        if let Some(poster) = poster.as_mut() {
+                            poster.wakeup();
+                        }
+                    }
+                }
+            }
+            acquired
+        })
+    }
+
     /// 等待一个信号量
     /// 禁止在中断服务中调用
     /// 注意：不要同时使用post_isr和post，不然可能会错误的唤醒poster
@@ -217,5 +253,18 @@ mod tests {
         assert_eq!(sem.signal.load(Ordering::SeqCst), 1);
         sem.wait();
         assert_eq!(sem.signal.load(Ordering::SeqCst), 0);
+    }
+
+    /// 回归：try_wait 非阻塞路径——信号足则取走计数、不足则返回 false 且计数不变。
+    /// 全部可宿主测（不触发阻塞，因此不依赖 host 上的任务切换）。
+    #[test]
+    fn try_wait_balances() {
+        let sem = Semaphore::with_signal(1);
+        assert!(sem.try_wait(), "有 1 个信号应取到");
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 0);
+        assert!(!sem.try_wait(), "信号为 0 应取不到");
+        assert_eq!(sem.signal.load(Ordering::SeqCst), 0, "失败路径不得改计数");
+        assert!(sem.post_isr().is_ok());
+        assert!(sem.try_wait(), "post 后应能再取");
     }
 }
