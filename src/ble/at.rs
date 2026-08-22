@@ -12,7 +12,7 @@
 //! 宿主 golden 常量钉死;真机上只剩 UART 时序。
 
 use crate::drv::UartDevice;
-use core::fmt::{self, Write as _};
+use core::fmt::{self};
 
 /// 最长命令帧字节:"AT+UUIDSVR128="(14) + 32 个 hex + 15 个空格 = 61,取整 64
 pub const CMD_MAX: usize = 64;
