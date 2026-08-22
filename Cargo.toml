@@ -121,12 +121,17 @@ panic-halt = "0.2.0"
 codegen-units = 1
 debug = true
 incremental = false
-lto = true
+# thin 而非 fat：fat LTO 把全部 crate 合并成单一模块，其中 `.weak` 弱符号定义
+# 与 `#[no_mangle]` 强定义并存时 rust-lld 报 "changed binding to STB_GLOBAL"，
+# 应用层实现外设中断向量（port.S 的 `.weak USART0` + `#[no_mangle] fn USART0()`）
+# 就无法链接；thin 每模块独立、符号解析正常。cortex-m-rt 的弱符号在 cc 编译的
+# startup.o 里（不进 bitcode），所以它不受 fat LTO 影响——这是本项目特有的坑。
+lto = "thin"
 opt-level = "z"
 
 [profile.release]
 codegen-units = 1
 debug = true
-lto = true
+lto = "thin"
 # strip = true
 opt-level = "z"
