@@ -25,6 +25,7 @@ pub mod logger;
 pub mod net;
 pub mod port;
 pub mod prelude;
+pub mod sd_proto;
 pub mod sync;
 pub mod task;
 pub mod time;
