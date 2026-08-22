@@ -68,23 +68,27 @@ impl Notifier {
     /// 信号写入失败则挂起自己
     pub fn notify(&self) {
         loop {
-            match self
-                .signal
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => {
-                    sync::free(|_| unsafe {
-                        self.wakeup();
-                    });
-                    break;
+            // "尝试置位信号 + 失败则登记挂起"必须在同一临界区（与信号量同款纪律）：
+            // 修前 CAS 在临界区外，ISR 恰在 CAS 成功之后、本任务登记 blocker 之前
+            // 调用 notify_isr，会因 blocker 仍为 0 而无人可唤——信号被吞、读者永眠
+            //（遗留问题 #6，2026-08-22 修复）。临界区内 ISR 无法插进窗口。
+            let delivered = sync::free(|_| unsafe {
+                if self
+                    .signal
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    self.wakeup();
+                    true
+                } else {
+                    self.block();
+                    false
                 }
-                Err(_) => {
-                    sync::free(|_| unsafe {
-                        self.block();
-                    });
-                    yield_now();
-                }
+            });
+            if delivered {
+                break;
             }
+            yield_now();
         }
     }
 
@@ -92,23 +96,44 @@ impl Notifier {
     /// 如果有信号则唤醒通知者，否则挂起自己
     pub fn wait(&self) {
         loop {
-            match self
-                .signal
-                .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => {
-                    sync::free(|_cs| unsafe {
-                        self.wakeup();
-                    });
-                    break;
+            // 与 notify 同款："尝试取走信号 + 失败则登记挂起"在同一临界区，
+            // ISR 的 notify_isr 不可能插在两者之间——不会出现"信号发给了
+            // 还没登记的人"（比"信号已置位却无人消费"更隐蔽的另一半窗口）。
+            let got = sync::free(|_cs| unsafe {
+                if self
+                    .signal
+                    .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    self.wakeup();
+                    true
+                } else {
+                    self.block();
+                    false
                 }
-                Err(_) => {
-                    sync::free(|_cs| unsafe {
-                        self.block();
-                    });
-                    yield_now();
-                }
+            });
+            if got {
+                break;
             }
+            yield_now();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归：信号先到（notify_isr）、wait 后到——wait 走"取走信号"路径不挂起，
+    /// 并保证信号被消费（二次 notify_isr 回到可置位状态）。
+    /// 修复(#6)前后该路径行为一致，它锁死的是 CAS 取值/消费语义不被改坏；
+    /// 丢失唤醒窗口的消除是构造性的（检查+登记+挂起同一临界区，ISR 无法插入），
+    /// 单线程 host 复现不了 ISR 时序——真机压测项见第 20 章踩坑记录 2。
+    #[test]
+    fn wait_consumes_preposted_signal() {
+        let n = Notifier::new();
+        assert!(n.notify_isr().is_ok(), "预置信号应成功");
+        n.wait(); // 不挂起、直接取走
+        assert!(n.notify_isr().is_ok(), "消费后信号归零,可再次置位(修前若 wait 没消费则第二次返回 WouldBlock)");
     }
 }
