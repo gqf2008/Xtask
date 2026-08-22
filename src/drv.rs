@@ -1,12 +1,19 @@
-//! 驱动抽象层：按名注册表 + 设备能力 trait
+//! 驱动抽象层：类无关的按名设备表（仿 Zephyr 设备模型）
 //!
-//! 三层模型：**设备**(Device,物理单元与其状态) / **驱动**(Driver,操作设备的代码，
-//! 即 trait 实现) / **总线**(本模块的注册表:`名字 → 设备实例`的查找表)。
+//! 模型（对照 Zephyr）：`struct device` 只挂一个**不透明 api 指针** + 名字；类 API
+//! （`uart.h`/`gpio.h` 的函数）分层在设备之上，绑定/查找（`device_get_binding`）本身
+//! 是类无关的。本模块的对应物：
+//! - **设备对象** = `DeviceApi` 枚举——类型安全的 api 指针（枚举白名单，不做裸指针强转）；
+//! - **总线** = `DriverRegistry`：一张定长表 `名字 → DeviceApi`，`register/find/unregister`
+//!   三个通用操作，名字全局唯一（Zephyr binding 语义：跨类同名算 Duplicate）；
+//! - **类 API** = `LedDevice`/`UartDevice` trait + `register_led/find_led` 等薄封装。
+//!   新增设备类 = 新 trait + 新枚举变体，注册表本体一行不改。
 //!
 //! 与 embedded-hal 的分工：引脚/串口的寄存器级操作直接复用 embedded-hal 0.2
-//! （`OutputPin`/`serial::Write` 等），本层只补 embedded-hal 表达不了的两件事——
-//! **按名字找设备**（解耦"生产者和消费者互相不认识对方的结构"）与
-//! **阻塞 I/O 挂进任务状态机**（读没有字节时任务进入 `Blocked`，而不是空转轮询）。
+//! （`OutputPin`/`serial::Write` 等）——**片内外设的寄存器级驱动属于 HAL**；本层只补
+//! embedded-hal 表达不了的两件事——**按名字找设备**（解耦"生产者与消费者互相不认识
+//! 对方的结构"，这是 OS 驱动模型的事）与**阻塞 I/O 挂进任务状态机**（读没有字节时
+//! 任务进入 `Blocked`，而不是空转轮询）。
 //!
 //! 纪律（与 `bus.rs` 同构）：
 //! - 注册表内部状态全部包在 `RefCell` 里，所有访问都必须在 `sync::free` 临界区内，
@@ -42,7 +49,17 @@ pub trait UartDevice {
     fn read_byte(&self) -> u8;
 }
 
-/// 每类设备的注册容量（定长数组，注册表不依赖堆）
+/// 设备能力枚举——设备对象的"api 指针"（类型安全版）。
+/// 新增设备类 = 加一个变体；注册表本体（register/find/unregister）不感知类。
+#[derive(Clone, Copy)]
+pub enum DeviceApi {
+    /// LED 类设备
+    Led(&'static dyn LedDevice),
+    /// 串口类设备
+    Uart(&'static dyn UartDevice),
+}
+
+/// 注册表容量（定长数组，注册表不依赖堆；全部设备共用这一张表）
 pub const DEV_CAP: usize = 8;
 
 /// 注册错误
@@ -54,10 +71,9 @@ pub enum DrvError {
     Full,
 }
 
-/// 驱动注册表：按名登记/查找设备实例
+/// 驱动注册表：一张全局表，按名登记/查找设备能力
 pub struct DriverRegistry {
-    leds: RefCell<[Option<(&'static str, &'static dyn LedDevice)>; DEV_CAP]>,
-    uarts: RefCell<[Option<(&'static str, &'static dyn UartDevice)>; DEV_CAP]>,
+    devices: RefCell<[Option<(&'static str, DeviceApi)>; DEV_CAP]>,
 }
 
 // SAFETY: 所有状态在 RefCell 里且访问全部发生在 sync::free 临界区内（单核关中断），
@@ -70,28 +86,24 @@ impl DriverRegistry {
     /// 空注册表
     pub const fn new() -> Self {
         Self {
-            leds: RefCell::new([None; DEV_CAP]),
-            uarts: RefCell::new([None; DEV_CAP]),
+            devices: RefCell::new([None; DEV_CAP]),
         }
     }
 
-    /// 登记一个 LED 设备。重名返回 Err(Duplicate)，满返回 Err(Full)。
-    pub fn register_led(
-        &self,
-        name: &'static str,
-        dev: &'static dyn LedDevice,
-    ) -> Result<(), DrvError> {
+    /// 登记设备（通用）。重名返回 Err(Duplicate)，满返回 Err(Full)。
+    /// 名字全局唯一：跨设备类同名同样算 Duplicate（Zephyr binding 语义）。
+    pub fn register(&self, name: &'static str, api: DeviceApi) -> Result<(), DrvError> {
         sync::free(|_| {
-            let mut leds = self.leds.borrow_mut();
-            if leds
+            let mut devices = self.devices.borrow_mut();
+            if devices
                 .iter()
                 .any(|e| matches!(e, Some((n, _)) if *n == name))
             {
                 return Err(DrvError::Duplicate);
             }
-            for slot in leds.iter_mut() {
+            for slot in devices.iter_mut() {
                 if slot.is_none() {
-                    *slot = Some((name, dev));
+                    *slot = Some((name, api));
                     return Ok(());
                 }
             }
@@ -99,21 +111,22 @@ impl DriverRegistry {
         })
     }
 
-    /// 按名查找 LED 设备
-    pub fn find_led(&self, name: &str) -> Option<&'static dyn LedDevice> {
+    /// 按名查找设备能力（通用）。拿到后按类匹配（`DeviceApi` 枚举），
+    /// 也可用下面的 find_led/find_uart 直接取类句柄。
+    pub fn find(&self, name: &str) -> Option<DeviceApi> {
         sync::free(|_| {
-            self.leds.borrow().iter().find_map(|e| match e {
-                Some((n, d)) if *n == name => Some(*d),
+            self.devices.borrow().iter().find_map(|e| match e {
+                Some((n, api)) if *n == name => Some(*api),
                 _ => None,
             })
         })
     }
 
-    /// 注销 LED 设备（幂等）：名字不在时返回 false
-    pub fn unregister_led(&self, name: &str) -> bool {
+    /// 注销设备（通用，幂等）：名字不在时返回 false
+    pub fn unregister(&self, name: &str) -> bool {
         sync::free(|_| {
-            let mut leds = self.leds.borrow_mut();
-            for slot in leds.iter_mut() {
+            let mut devices = self.devices.borrow_mut();
+            for slot in devices.iter_mut() {
                 if let Some((n, _)) = slot {
                     if *n == name {
                         *slot = None;
@@ -125,46 +138,66 @@ impl DriverRegistry {
         })
     }
 
-    /// 登记一个串口设备。重名返回 Err(Duplicate)，满返回 Err(Full)。
+    // ---- 类级便捷 API（薄包装；仿 Zephyr：绑定通用，类 API 分层其上）----
+
+    /// 登记一个 LED 设备（等价 `register(name, DeviceApi::Led(dev))`）。
+    /// 重名返回 Err(Duplicate)，满返回 Err(Full)。
+    pub fn register_led(
+        &self,
+        name: &'static str,
+        dev: &'static dyn LedDevice,
+    ) -> Result<(), DrvError> {
+        self.register(name, DeviceApi::Led(dev))
+    }
+
+    /// 按名查找 LED 设备；名字存在但不是 LED 类时返回 None（用 `find` 可区分"没有"与"类不符"）
+    pub fn find_led(&self, name: &str) -> Option<&'static dyn LedDevice> {
+        match self.find(name) {
+            Some(DeviceApi::Led(dev)) => Some(dev),
+            _ => None,
+        }
+    }
+
+    /// 注销 LED 设备（幂等）：仅当该名字确实是 LED 类时删除
+    pub fn unregister_led(&self, name: &str) -> bool {
+        sync::free(|_| {
+            let mut devices = self.devices.borrow_mut();
+            for slot in devices.iter_mut() {
+                if let Some((n, DeviceApi::Led(_))) = slot {
+                    if *n == name {
+                        *slot = None;
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
+
+    /// 登记一个串口设备（等价 `register(name, DeviceApi::Uart(dev))`）。
+    /// 重名返回 Err(Duplicate)，满返回 Err(Full)。
     pub fn register_uart(
         &self,
         name: &'static str,
         dev: &'static dyn UartDevice,
     ) -> Result<(), DrvError> {
-        sync::free(|_| {
-            let mut uarts = self.uarts.borrow_mut();
-            if uarts
-                .iter()
-                .any(|e| matches!(e, Some((n, _)) if *n == name))
-            {
-                return Err(DrvError::Duplicate);
-            }
-            for slot in uarts.iter_mut() {
-                if slot.is_none() {
-                    *slot = Some((name, dev));
-                    return Ok(());
-                }
-            }
-            Err(DrvError::Full)
-        })
+        self.register(name, DeviceApi::Uart(dev))
     }
 
-    /// 按名查找串口设备
+    /// 按名查找串口设备；名字存在但不是 UART 类时返回 None（用 `find` 可区分"没有"与"类不符"）
     pub fn find_uart(&self, name: &str) -> Option<&'static dyn UartDevice> {
-        sync::free(|_| {
-            self.uarts.borrow().iter().find_map(|e| match e {
-                Some((n, d)) if *n == name => Some(*d),
-                _ => None,
-            })
-        })
+        match self.find(name) {
+            Some(DeviceApi::Uart(dev)) => Some(dev),
+            _ => None,
+        }
     }
 
-    /// 注销串口设备（幂等）：名字不在时返回 false
+    /// 注销串口设备（幂等）：仅当该名字确实是 UART 类时删除
     pub fn unregister_uart(&self, name: &str) -> bool {
         sync::free(|_| {
-            let mut uarts = self.uarts.borrow_mut();
-            for slot in uarts.iter_mut() {
-                if let Some((n, _)) = slot {
+            let mut devices = self.devices.borrow_mut();
+            for slot in devices.iter_mut() {
+                if let Some((n, DeviceApi::Uart(_))) = slot {
                     if *n == name {
                         *slot = None;
                         return true;
@@ -178,6 +211,21 @@ impl DriverRegistry {
 
 /// 系统全局注册表（应用初始化时向它登记设备）
 pub static REGISTRY: DriverRegistry = DriverRegistry::new();
+
+/// 向全局注册表登记设备（通用）
+pub fn register(name: &'static str, api: DeviceApi) -> Result<(), DrvError> {
+    REGISTRY.register(name, api)
+}
+
+/// 从全局注册表查找设备能力（通用）
+pub fn find(name: &str) -> Option<DeviceApi> {
+    REGISTRY.find(name)
+}
+
+/// 从全局注册表注销设备（通用，幂等）
+pub fn unregister(name: &str) -> bool {
+    REGISTRY.unregister(name)
+}
 
 /// 向全局注册表登记 LED 设备
 pub fn register_led(name: &'static str, dev: &'static dyn LedDevice) -> Result<(), DrvError> {
@@ -302,6 +350,37 @@ mod tests {
         assert_eq!(count2.load(Ordering::SeqCst), 0);
     }
 
+    /// 回归：名字全局唯一（Zephyr binding 语义）——LED 已占的名字,
+    /// UART 同名的二次注册必须拒绝，而不是各挂名的。
+    #[test]
+    fn names_are_global_across_classes() {
+        let reg = DriverRegistry::new();
+        let count = mock_led("dev0", &reg);
+        let dev: &'static dyn UartDevice =
+            Box::leak(Box::new(MockUart { written: Arc::new(AtomicUsize::new(0)) }));
+        assert_eq!(
+            reg.register_uart("dev0", dev),
+            Err(DrvError::Duplicate),
+            "跨类同名必须拒绝（名字全局唯一）"
+        );
+        // 原设备不受影响
+        reg.find_led("dev0").unwrap().on();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    /// 回归：类不符的查找——名字存在但是另一类设备，find_led 应返回 None；
+    /// 通用 find 能查到并区分（DeviceApi::Uart）。
+    #[test]
+    fn wrong_class_lookup_is_none() {
+        let reg = DriverRegistry::new();
+        mock_uart("port0", &reg);
+        assert!(reg.find_led("port0").is_none(), "名字是 UART 类，按 LED 找应得 None");
+        match reg.find("port0") {
+            Some(DeviceApi::Uart(_)) => {}
+            other => panic!("find 应返回 Uart 变体，实际 {:?}", other.map(|_| "非 Uart")),
+        }
+    }
+
     /// 回归：容量满必须报错（阳性对照——定长数组漏检查时第 9 个静默丢 => 红）。
     #[test]
     fn capacity_full_error() {
@@ -326,6 +405,7 @@ mod tests {
     #[test]
     fn unknown_name_is_none() {
         let reg = DriverRegistry::new();
+        assert!(reg.find("ghost").is_none());
         assert!(reg.find_led("ghost").is_none());
         assert!(reg.find_uart("ghost").is_none());
     }
@@ -338,21 +418,18 @@ mod tests {
         drop(count);
         assert!(reg.unregister_led("red"), "在册的设备注销应返回 true");
         assert!(!reg.unregister_led("red"), "二次注销应返回 false（幂等）");
+        // 注销后按名找不到；已拿到的旧引用仍有效（注册表只清名字映射，不拥有设备）
         assert!(reg.find_led("red").is_none());
-        // 已注销拿到的旧引用仍有效（注册表只清名字映射，不拥有设备）
-        let dev = reg.find_led("red");
-        assert!(dev.is_none());
     }
 
-    /// 回归：LED 与 UART 两类注册表命名空间独立——同名各注册各的、各找各的。
+    /// 回归：跨类注销互不干扰——UART 名字不会被 unregister_led 误删。
     #[test]
-    fn categories_have_independent_namespaces() {
+    fn unregister_does_not_touch_other_class() {
         let reg = DriverRegistry::new();
-        let led_count = mock_led("dev0", &reg);
-        let written = mock_uart("dev0", &reg);
-        reg.find_led("dev0").unwrap().on();
-        reg.find_uart("dev0").unwrap().write_all(b"abc");
-        assert_eq!(led_count.load(Ordering::SeqCst), 1);
+        mock_led("led0", &reg);
+        let written = mock_uart("u0", &reg);
+        assert!(!reg.unregister_led("u0"), "UART 的名字不该被 LED 注销碰掉");
+        reg.find_uart("u0").unwrap().write_all(b"abc");
         assert_eq!(written.load(Ordering::SeqCst), 3);
     }
 }
