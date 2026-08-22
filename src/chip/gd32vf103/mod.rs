@@ -4,6 +4,8 @@
 
 mod port;
 pub mod stdout;
+#[cfg(feature = "usb")]
+pub mod usb;
 
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;

@@ -7,4 +7,6 @@ pub mod drv_uart;
 pub mod lcd;
 pub mod led;
 pub mod stdout;
+#[cfg(feature = "usb")]
+pub mod usb;
 pub use gd32vf103xx_hal as hal;
