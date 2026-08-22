@@ -27,7 +27,7 @@
 
 use core::cell::UnsafeCell;
 
-use crate::drv::{DeviceApi, LedDevice, UartDevice};
+use crate::drv::{BdDevice, DeviceApi, LedDevice, UartDevice};
 use crate::sync;
 
 /// 设备实例槽：编译期清单里的"位置"，运行期由 init 填**一次**实例。
@@ -154,6 +154,14 @@ impl DeviceTable {
             _ => None,
         }
     }
+
+    /// 按名查找块设备；名字存在但不是块设备类时返回 `None`（用 `find` 可区分）
+    pub fn find_bd(&self, name: &str) -> Option<&'static dyn BdDevice> {
+        match self.find(name) {
+            Some(DeviceApi::Bd(dev)) => Some(dev),
+            _ => None,
+        }
+    }
 }
 
 /// 系统全局设备清单表（init 里 `attach` 后使用）
@@ -177,6 +185,11 @@ pub fn find_led(name: &str) -> Option<&'static dyn LedDevice> {
 /// 从全局清单表按名查找串口设备
 pub fn find_uart(name: &str) -> Option<&'static dyn UartDevice> {
     TABLE.find_uart(name)
+}
+
+/// 从全局清单表按名查找块设备
+pub fn find_bd(name: &str) -> Option<&'static dyn BdDevice> {
+    TABLE.find_bd(name)
 }
 
 #[cfg(test)]

@@ -49,6 +49,59 @@ pub trait UartDevice {
     fn read_byte(&self) -> u8;
 }
 
+/// 块设备逻辑扇区大小（字节）。SD 卡协议约定扇区 512B，
+/// 寻址单位 = 扇区号（SPI 模式下命令参数 = 字节地址 = 扇区号 << 9）。
+pub const SECTOR_SIZE: u64 = 512;
+
+/// 块设备错误。
+/// 前两个变体来自硬件（超时/传输错误）；后两个专为 fatfs::io::IoError 的
+/// 语义构造器服务（适配器在卷尾截断/零写入时构造它们）——见 fs/block.rs。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BdError {
+    /// 命令/数据超时（R1 无应答、忙等超限）
+    Timeout,
+    /// 传输 IO 错误（坏扇区等硬件级失败）
+    Io,
+    /// 参数非法（扇区越界、seek 越界等）
+    InvalidInput,
+    /// 读到卷尾（`IoError::new_unexpected_eof_error` 的对应物）
+    UnexpectedEof,
+    /// 写入零字节（`IoError::new_write_zero_error` 的对应物）
+    WriteZero,
+}
+
+/// 块设备类设备能力——**整个文件系统的地基只有两个函数**：读扇区、写扇区。
+/// FAT 层不需要知道设备是 SD 卡还是内存盘；第 21 章的适配器把这两个函数
+/// 翻译成 fatfs 要的"字节流 + 游标"。
+///
+/// 方法与 `LedDevice`/`UartDevice` 同款 `&self`（内部自持可变状态），为了
+/// 能挂进 `&'static dyn` 注册表。**单使用者契约**：块设备的事务（一条命令 +
+/// 一个扇区的数据）是协议原子单元，同一时刻只允许一个任务操作——第 21 章
+/// 的用法是所有访问经同一把文件系统互斥锁串行化；违反契约由设备内部的
+/// `RefCell` 双重借用 panic 探测（与 UART 的每字节短借用形成对照，见 ch21）。
+pub trait BdDevice {
+    /// 设备容量（扇区数）；0 = 无介质/未就绪
+    fn sector_count(&self) -> u64;
+    /// 读一个完整扇区（`buf.len() == SECTOR_SIZE`）。
+    fn read_sector(&self, no: u64, buf: &mut [u8]) -> Result<(), BdError>;
+    /// 写一个完整扇区（`data.len() == SECTOR_SIZE`）。
+    fn write_sector(&self, no: u64, data: &[u8]) -> Result<(), BdError>;
+}
+
+// 引用转发：`&'static dyn BdDevice` 也是 `BdDevice`，适配器可以统一处理
+// 具体设备（bsp 直用）与注册表出来的 trait 对象（示例用法）两种形态。
+impl<T: BdDevice + ?Sized> BdDevice for &T {
+    fn sector_count(&self) -> u64 {
+        (**self).sector_count()
+    }
+    fn read_sector(&self, no: u64, buf: &mut [u8]) -> Result<(), BdError> {
+        (**self).read_sector(no, buf)
+    }
+    fn write_sector(&self, no: u64, data: &[u8]) -> Result<(), BdError> {
+        (**self).write_sector(no, data)
+    }
+}
+
 /// 设备能力枚举——设备对象的"api 指针"（类型安全版）。
 /// 新增设备类 = 加一个变体；注册表本体（register/find/unregister）不感知类。
 #[derive(Clone, Copy)]
@@ -57,6 +110,8 @@ pub enum DeviceApi {
     Led(&'static dyn LedDevice),
     /// 串口类设备
     Uart(&'static dyn UartDevice),
+    /// 块设备（读/写扇区；第 21 章文件系统的地基）
+    Bd(&'static dyn BdDevice),
 }
 
 /// 注册表容量（定长数组，注册表不依赖堆；全部设备共用这一张表）
@@ -207,6 +262,40 @@ impl DriverRegistry {
             false
         })
     }
+
+    /// 登记一个块设备（等价 `register(name, DeviceApi::Bd(dev))`）。
+    /// 重名返回 Err(Duplicate)，满返回 Err(Full)。
+    pub fn register_bd(
+        &self,
+        name: &'static str,
+        dev: &'static dyn BdDevice,
+    ) -> Result<(), DrvError> {
+        self.register(name, DeviceApi::Bd(dev))
+    }
+
+    /// 按名查找块设备；名字存在但不是块设备类时返回 None（用 `find` 可区分"没有"与"类不符"）
+    pub fn find_bd(&self, name: &str) -> Option<&'static dyn BdDevice> {
+        match self.find(name) {
+            Some(DeviceApi::Bd(dev)) => Some(dev),
+            _ => None,
+        }
+    }
+
+    /// 注销块设备（幂等）：仅当该名字确实是块设备类时删除
+    pub fn unregister_bd(&self, name: &str) -> bool {
+        sync::free(|_| {
+            let mut devices = self.devices.borrow_mut();
+            for slot in devices.iter_mut() {
+                if let Some((n, DeviceApi::Bd(_))) = slot {
+                    if *n == name {
+                        *slot = None;
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
 }
 
 /// 系统全局注册表（应用初始化时向它登记设备）
@@ -257,6 +346,21 @@ pub fn unregister_uart(name: &str) -> bool {
     REGISTRY.unregister_uart(name)
 }
 
+/// 向全局注册表登记块设备
+pub fn register_bd(name: &'static str, dev: &'static dyn BdDevice) -> Result<(), DrvError> {
+    REGISTRY.register_bd(name, dev)
+}
+
+/// 从全局注册表查找块设备
+pub fn find_bd(name: &str) -> Option<&'static dyn BdDevice> {
+    REGISTRY.find_bd(name)
+}
+
+/// 从全局注册表注销块设备
+pub fn unregister_bd(name: &str) -> bool {
+    REGISTRY.unregister_bd(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +395,24 @@ mod tests {
         }
         fn read_byte(&self) -> u8 {
             0
+        }
+    }
+
+    /// mock 块设备：容量 2 扇区；每次读/写把扇区号累进计数（透传验证）
+    struct MockBd {
+        ops: Arc<AtomicUsize>,
+    }
+    impl BdDevice for MockBd {
+        fn sector_count(&self) -> u64 {
+            2
+        }
+        fn read_sector(&self, _no: u64, _buf: &mut [u8]) -> Result<(), BdError> {
+            self.ops.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn write_sector(&self, _no: u64, _data: &[u8]) -> Result<(), BdError> {
+            self.ops.fetch_add(10, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -431,5 +553,42 @@ mod tests {
         assert!(!reg.unregister_led("u0"), "UART 的名字不该被 LED 注销碰掉");
         reg.find_uart("u0").unwrap().write_all(b"abc");
         assert_eq!(written.load(Ordering::SeqCst), 3);
+    }
+
+    /// 回归：Bd 类注册→查找→使用 全流程；容量与读/写计数透传验证"同一实例"。
+    #[test]
+    fn bd_register_find_use_roundtrip() {
+        let reg = DriverRegistry::new();
+        let ops = Arc::new(AtomicUsize::new(0));
+        let dev: &'static dyn BdDevice = Box::leak(Box::new(MockBd { ops: ops.clone() }));
+        reg.register_bd("sd0", dev).unwrap();
+        let bd = reg.find_bd("sd0").expect("注册后应能找到");
+        assert_eq!(bd.sector_count(), 2);
+        let mut buf = [0u8; SECTOR_SIZE as usize];
+        bd.read_sector(0, &mut buf).unwrap();
+        bd.write_sector(1, &buf).unwrap();
+        assert_eq!(ops.load(Ordering::SeqCst), 11, "读(+1) 与写(+10) 都应透传");
+        // 类不符：按 UART 找应 None；通用 find 能区分
+        assert!(reg.find_uart("sd0").is_none(), "块设备名字按 UART 找应得 None");
+        match reg.find("sd0") {
+            Some(DeviceApi::Bd(_)) => {}
+            other => panic!("find 应返回 Bd 变体，实际 {:?}", other.map(|_| "非 Bd")),
+        }
+    }
+
+    /// 回归：Bd 同名二次注册拒绝（名字全局唯一不因类而异）。
+    #[test]
+    fn bd_duplicate_name_rejected() {
+        let reg = DriverRegistry::new();
+        let dev: &'static dyn BdDevice =
+            Box::leak(Box::new(MockBd { ops: Arc::new(AtomicUsize::new(0)) }));
+        reg.register_bd("sd0", dev).unwrap();
+        let dev2: &'static dyn BdDevice =
+            Box::leak(Box::new(MockBd { ops: Arc::new(AtomicUsize::new(0)) }));
+        assert_eq!(
+            reg.register_bd("sd0", dev2),
+            Err(DrvError::Duplicate),
+            "Bd 重名必须拒绝"
+        );
     }
 }
