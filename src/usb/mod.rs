@@ -17,3 +17,5 @@ pub use usbd_serial::*;
 
 pub mod fifo;
 pub mod otg;
+#[cfg(test)]
+mod mock;

@@ -154,12 +154,30 @@ impl From<EpAllocError> for UsbError {
 
 /// 端点分配状态:每方向独立发号(IN 从 0x81 起,OUT 从 0x01 起),
 /// EP0(号 0)允许 IN/OUT 各分配一次(crate 会先 0x00 后 0x80)。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// ⚠️ **计数器必须从 1 起**(`Default` 的 0 是陷阱):**隐式分配可能先于
+/// crate 的 EP0 显式分配发生**(usbd-serial 的类端点分配在
+/// `UsbDeviceBuilder::build()` 之前)——从 0 起会让首个隐式 IN/OUT 抢走
+/// 0x80/0x00 号,EP0 显式分配撞 Duplicate。宿主 e2e 抓到的真 bug:
+/// 纯函数测试因"先显式后隐式"的顺序恰好把计数器顶到 1,掩盖了默认值。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EpSlotState {
     in_next: u8,
     out_next: u8,
     in_used: u8,
     out_used: u8,
+}
+
+impl EpSlotState {
+    pub const fn new() -> Self {
+        EpSlotState { in_next: 1, out_next: 1, in_used: 0, out_used: 0 }
+    }
+}
+
+impl Default for EpSlotState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 分配一个端点号(纯函数,宿主测过)。
@@ -325,14 +343,14 @@ mod tests {
     }
 
     #[test]
-    fn allocate_slot_overflow_after_four_each_direction() {
-        let mut st = EpSlotState::default();
-        for i in 0..4u8 {
-            let r = EpRequest { dir_in: true, addr: None, ep_type: 2, mps: 64 };
-            allocate_slot(&mut st, &r).expect("in");
-            let r2 = EpRequest { dir_in: false, addr: None, ep_type: 2, mps: 64 };
-            allocate_slot(&mut st, &r2).expect("out");
-            let _ = i;
+    fn allocate_slot_overflow_after_three_each_direction() {
+        // 计数从 1 起:每方向只有 1/2/3 三号,分满后必须 Overflow
+        let mut st = EpSlotState::new();
+        for _ in 0..3u8 {
+            allocate_slot(&mut st, &EpRequest { dir_in: true, addr: None, ep_type: 2, mps: 64 })
+                .expect("in");
+            allocate_slot(&mut st, &EpRequest { dir_in: false, addr: None, ep_type: 2, mps: 64 })
+                .expect("out");
         }
         let extra = EpRequest { dir_in: true, addr: None, ep_type: 2, mps: 64 };
         assert_eq!(allocate_slot(&mut st, &extra), Err(EpAllocError::Overflow));
