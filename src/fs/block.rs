@@ -89,7 +89,7 @@ impl<B: BdDevice> Read for FatAdapter<B> {
                 Ok(()) => done += chunk,
                 // 契约补偿：错误时"本次未写任何字节"——已完成的部分退回短读，
                 // 未读到的留给下一次（坏扇区那时成为第一个扇区才诚实报错）。
-                Err(e) if done > 0 => break,
+                Err(_) if done > 0 => break,
                 Err(e) => return Err(e),
             }
         }
@@ -124,7 +124,7 @@ impl<B: BdDevice> Write for FatAdapter<B> {
             };
             match r {
                 Ok(()) => done += chunk,
-                Err(e) if done > 0 => break, // 同上：短写，失败延后
+                Err(_) if done > 0 => break, // 同上：短写，失败延后
                 Err(e) => return Err(e),
             }
         }
@@ -181,6 +181,11 @@ mod tests {
         bad_read: Cell<Option<u64>>,
         bad_write: Cell<Option<u64>>,
     }
+
+    // SAFETY: `BdDevice: Sync` 超约束要求所有实现兼具 Sync；本 mock 仅在
+    // 宿主测试内使用——所有访问发生在同一个测试线程里（借用的借出与归还
+    // 成对出现于单个测试函数体内），不存在跨线程/跨上下文并发访问。
+    unsafe impl Sync for RamDisk {}
 
     impl RamDisk {
         fn new() -> Self {

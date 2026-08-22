@@ -75,11 +75,17 @@ pub enum BdError {
 /// 翻译成 fatfs 要的"字节流 + 游标"。
 ///
 /// 方法与 `LedDevice`/`UartDevice` 同款 `&self`（内部自持可变状态），为了
-/// 能挂进 `&'static dyn` 注册表。**单使用者契约**：块设备的事务（一条命令 +
+/// 能挂进 `&'static dyn` 注册表。**`Sync` 是硬约束**：块设备句柄以
+/// `&'static dyn BdDevice` 在任务间共享（文件系统里 `FatAdapter` 经
+/// `RefCell` 持有它），`dyn BdDevice` 不是 `Sync` 的话 `&dyn` 就不是
+/// `Send`、`RefCell<...>` 就不是 `Send`——整条文件系统链连一个
+/// `OnceCell<Mutex<FileSystem<...>>>` 静态都放不进去。这与"共享引用 + 内部可变性 + 单使用者契约"的语义
+/// 一致：串行化靠外部锁，实现方保证内部状态在任何单核访问下无竞争。
+/// **单使用者契约**：块设备的事务（一条命令 +
 /// 一个扇区的数据）是协议原子单元，同一时刻只允许一个任务操作——第 21 章
 /// 的用法是所有访问经同一把文件系统互斥锁串行化；违反契约由设备内部的
 /// `RefCell` 双重借用 panic 探测（与 UART 的每字节短借用形成对照，见 ch21）。
-pub trait BdDevice {
+pub trait BdDevice: Sync {
     /// 设备容量（扇区数）；0 = 无介质/未就绪
     fn sector_count(&self) -> u64;
     /// 读一个完整扇区（`buf.len() == SECTOR_SIZE`）。
