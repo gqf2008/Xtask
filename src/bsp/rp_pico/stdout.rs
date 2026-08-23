@@ -1,100 +1,77 @@
-use core::fmt::{self, Write};
+//! UART0(GPIO0/1)串口输出——Pico 的 STDOUT。
+//!
+//! 类型上有别于 longan_nano 版(那个是 chip 层 SerialWrapper):rp2040 口
+//! 直接持有 UartPeripheral,静态槽 + 宏与 longan_nano 同构。
+
+use core::fmt::Write;
 use cortex_m::interrupt;
 
 use hal::pac;
 use rp2040_hal as hal;
 
-use hal::gpio::pin::bank0::{Gpio0, Gpio1};
+use hal::gpio::bank0::{Gpio0, Gpio1};
 type UartPins = (
-    hal::gpio::Pin<Gpio0, hal::gpio::Function<hal::gpio::Uart>>,
-    hal::gpio::Pin<Gpio1, hal::gpio::Function<hal::gpio::Uart>>,
+    hal::gpio::Pin<Gpio0, hal::gpio::FunctionUart, hal::gpio::PullDown>,
+    hal::gpio::Pin<Gpio1, hal::gpio::FunctionUart, hal::gpio::PullDown>,
 );
 
 type Uart = hal::uart::UartPeripheral<hal::uart::Enabled, pac::UART0, UartPins>;
 
-static mut STDOUT: Option<Stdout> = None;
-
-pub struct Stdout(Uart);
+static mut STDOUT: Option<Uart> = None;
 
 pub fn use_uart0(uart: Uart) {
     interrupt::free(|_| unsafe {
-        STDOUT.replace(Stdout(uart));
+        STDOUT.replace(uart);
     })
 }
 
-impl Write for Stdout {
+/// 经静态槽写(不消费 UART,宏专用出口)
+struct StaticWriter;
+
+impl Write for StaticWriter {
     fn write_str(&mut self, data: &str) -> core::fmt::Result {
-        self.0.write_full_blocking(data.as_bytes());
+        unsafe {
+            if let Some(uart) = &mut *core::ptr::addr_of_mut!(STDOUT).cast::<Option<Uart>>() {
+                uart.write_full_blocking(data.as_bytes());
+            }
+        }
         Ok(())
     }
 }
 
-#[inline]
-pub fn write_str(s: &str) {
-    unsafe {
-        if let Some(stdout) = STDOUT.as_mut() {
-            let _ = stdout.write_str(s);
-        }
-    }
+/// 直接向 STDOUT 写一行(stdout 初始化后可用)
+pub fn writeln_str(s: &str) {
+    use core::fmt::Write;
+    let mut w = StaticWriter;
+    let _ = writeln!(w, "{s}");
 }
 
-#[inline]
-pub fn write_fmt(args: fmt::Arguments) {
-    unsafe {
-        if let Some(stdout) = STDOUT.as_mut() {
-            let _ = stdout.write_fmt(args);
-        }
-    }
-}
-
-/// 加了中断保护，禁止在中断服务程序中调用
 #[macro_export]
 macro_rules! sprint {
-    ($s:expr) => {
-        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str($s))
-    };
-    ($($tt:tt)*) => {
-        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_fmt(format_args!($($tt)*)))
-    };
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = write!(StaticWriterHelper, $($arg)*);
+    }};
 }
 
-/// 加了中断保护，禁止在中断服务程序中调用
+/// 宏辅助(避免在宏内 unsafe)
+struct StaticWriterHelper;
+
+impl Write for StaticWriterHelper {
+    fn write_str(&mut self, data: &str) -> core::fmt::Result {
+        unsafe {
+            if let Some(uart) = &mut *core::ptr::addr_of_mut!(STDOUT).cast::<Option<Uart>>() {
+                uart.write_full_blocking(data.as_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
 #[macro_export]
 macro_rules! sprintln {
-    () => {
-        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str("\n"))
-    };
-    ($s:expr) => {
-        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n")))
-    };
-    ($s:expr, $($tt:tt)*) => {
-        $crate::sync::free(|_|$crate::bsp::rp_pico::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*)))
-    };
-}
-
-/// 在中断服务程序中调用，在用户程序
-/// 里调用可能输出不完整，因为随时会被中断
-#[macro_export]
-macro_rules! isr_sprint {
-    ($s:expr) => {
-        $crate::bsp::rp_pico::stdout::write_str($s)
-    };
-    ($($tt:tt)*) => {
-        $crate::bsp::rp_pico::stdout::write_fmt(format_args!($($tt)*))
-    };
-}
-
-/// 在中断服务程序中调用，在用户程序
-/// 里调用可能输出不完整，因为随时会被中断
-#[macro_export]
-macro_rules! isr_sprintln {
-    () => {
-        $crate::bsp::rp_pico::stdout::write_str("\n")
-    };
-    ($s:expr) => {
-        $crate::bsp::rp_pico::stdout::write_str(concat!(file!(),":",line!()," ",$s, "\n"))
-    };
-    ($s:expr, $($tt:tt)*) => {
-        $crate::bsp::rp_pico::stdout::write_fmt(format_args!(concat!(file!(),":",line!()," ",$s, "\n"), $($tt)*))
-    };
+    ($($arg:tt)*) => {{
+        use core::fmt::Write;
+        let _ = writeln!(StaticWriterHelper, $($arg)*);
+    }};
 }

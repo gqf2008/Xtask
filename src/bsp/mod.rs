@@ -9,5 +9,6 @@ pub mod greenpill;
 #[cfg(all(feature = "stm32f1", feature = "bluepill"))]
 pub mod bluepill;
 
-#[cfg(all(feature = "rp2040", feature = "rp-pico"))]
+// rp-pico 板 feature 已并入 rp2040(BSP 用仓库自带 bsp_pins!,无官方 rp-pico 依赖)
+#[cfg(feature = "rp2040")]
 pub mod rp_pico;

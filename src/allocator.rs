@@ -1,5 +1,10 @@
 //! 内存分配器
 //! TODO 对不连续的RAM设备块优化
+//!
+//! 全局分配器 = XTaskAllocer(本内核临界区保护)。原默认 XTaskSpinAlloc
+//! (linked_list_allocator 的自旋锁版)在 thumbv6m(rp2040/M0+)上编不过——
+//! M0+ 无原子 CAS,spinning_top 依赖 CAS;临界区版在单核上语义等价且
+//! 与内核的 free() 纪律同源。XTaskSpinAlloc 类型保留(有 CAS 的目标可用)。
 
 use crate::port::{Portable, Porting};
 use bare_metal::Mutex;
@@ -7,12 +12,11 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
 use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
-use linked_list_allocator::LockedHeap;
 
 // 测试构建链到 std，由 std 提供全局分配器，不能再注册 global_allocator；
 // 用 cfg_attr 保持单一声明：非测试构建注册为全局分配器，测试构建仅保留符号供 used()/free() 调用
 #[cfg_attr(not(test), global_allocator)]
-static ALLOCATOR: XTaskSpinAlloc = XTaskSpinAlloc::empty();
+static ALLOCATOR: XTaskAllocer = XTaskAllocer::empty();
 
 pub fn init(start_addr: usize, size: usize) {
     unsafe {
@@ -76,40 +80,6 @@ unsafe impl GlobalAlloc for XTaskAllocer {
                 .borrow_mut()
                 .deallocate(NonNull::new_unchecked(ptr), layout)
         });
-    }
-}
-
-pub struct XTaskSpinAlloc {
-    heap: LockedHeap,
-}
-
-impl XTaskSpinAlloc {
-    pub const fn empty() -> Self {
-        Self {
-            heap: LockedHeap::empty(),
-        }
-    }
-
-    pub unsafe fn init(&self, start_addr: usize, size: usize) {
-        self.heap.lock().init(start_addr as *mut u8, size);
-    }
-
-    pub fn used(&self) -> usize {
-        self.heap.lock().used()
-    }
-
-    pub fn free(&self) -> usize {
-        self.heap.lock().free()
-    }
-}
-
-unsafe impl GlobalAlloc for XTaskSpinAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.heap.alloc(layout)
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.heap.dealloc(ptr, layout)
     }
 }
 

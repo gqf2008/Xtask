@@ -62,7 +62,7 @@
    - [x] gd32vf103: --target riscv32imac-unknown-none-elf
    - [x] stm32f4: --target thumbv7em-none-eabihf
    - [x] stm32f1: --target thumbv7m-none-eabi
-   - [ ] rp2040: --target thumbv6m-none-eabi
+   - [x] rp2040: --target thumbv6m-none-eabi(rp2040-hal 0.9 复活;构建级验证 2026-08-23,真机待验)
 
    - 信号广播示例
 

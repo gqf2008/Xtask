@@ -24,14 +24,10 @@ timer = []
 xtask_scheduler = []
 # 芯片支持
 # rp2040
-# 暂时禁用：rp2040-hal 0.5.0 依赖的 critical-section 0.2.x 已被 crates.io 整体 yank，
-# 会导致整个 workspace 依赖解析失败、所有芯片都无法编译。
-# 这里保留一个空的 rp2040 feature 占位：源码与 build.rs 中的 #[cfg(feature = "rp2040")]
-# 保持合法（否则会刷 unexpected cfg 警告），但不会拉入任何依赖，默认不启用。
-# 恢复方法：升级 rp2040-hal 到不依赖 yanked critical-section 的版本后，
-# 把下面这行改回 rp2040 = ["rp2040-hal", "rp2040-boot2", "rp-pico"]，
-# 并取消 [dependencies] 中对应两项的注释。
-rp2040 = []
+# rp2040(2026-08-23 复活):曾经的阻断是 rp2040-hal 0.5.0 依赖被 yank 的
+# critical-section 0.2.x;0.9 起已换 1.x,现用 0.12。BSP 用仓库自带的
+# bsp_pins!(bsp/rp_pico/mod.rs),不依赖 rp-pico 官方 BSP crate。
+rp2040 = ["rp2040-hal", "rp2040-boot2"]
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal", "longan_nano"]
 # stm32f1xx
@@ -50,8 +46,6 @@ longan_nano = ["st7735-lcd", "mpu6050"]
 bluepill = []
 # greenpill stm32f401ccu6
 greenpill = []
-# rp-pico
-rp-pico = []
 # rtt_log
 rtt_log = []
 #stdout_log
@@ -74,7 +68,9 @@ crossbeam = {version = "0.8.1", default-features = false, features = ["alloc"]}
 embedded-hal = "0.2.3"
 heapless = "0.7"
 # lazy_static = {version = "1.4.0", default-features = false, features = ["spin_no_std"]}
-linked_list_allocator = "0.10.3"
+# default-features=false 去掉 spin 锁(thumbv6m 无原子 CAS,spinning_top 编不过);
+# 全局堆由 XTaskAllocer(本内核临界区保护)接管——单核语义不变
+linked_list_allocator = {version = "0.10.3", default-features = false}
 nb = "1.0.0"
 profont = "0.4.0"
 # spin = "0.9.3"
@@ -83,7 +79,6 @@ log = "0.4.17"
 # panic-probe = {version = "0.3", features = ["print-rtt"]}
 cty = "0.2.2"
 vcell="0.1.3"
-atomic = "0.5.1"
 anyhow = {version = "1.0.62", default-features = false}
 atomic-polyfill = "1.0.1"
 
@@ -91,10 +86,8 @@ atomic-polyfill = "1.0.1"
 fatfs = { git = "https://github.com/rafalh/rust-fatfs",optional = true,  features = ["unicode","alloc","lfn"], default-features = false }
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
 mpu6050 = {version = "0.1.4", optional = true}
-# 见上方 [features] 的说明：rp2040-hal 0.5.0 依赖被 yank 的 critical-section 0.2.x，
-# 会拖垮整个 workspace 的依赖解析，升级到可用版本前保持禁用。
-#rp2040-boot2 = {version = "0.2.0", optional = true}
-#rp2040-hal = {version = "0.5.0", optional = true}
+rp2040-boot2 = {version = "0.3", optional = true}
+rp2040-hal = {version = "0.9", optional = true}
 st7735-lcd = {version = "0.8", optional = true}
 stm32f1xx-hal = {version = "0.9.0", optional = true, features = ["rt", "stm32f103"]}
 stm32f4xx-hal = {version = "0.13.2", optional = true, features = ["rt", "stm32f411"]}

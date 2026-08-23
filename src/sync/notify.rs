@@ -9,7 +9,10 @@ use crate::{sync, yield_now};
 // use core::sync::atomic::Ordering;
 use super::arc::Arc;
 use atomic_polyfill::{AtomicBool, Ordering};
+#[cfg(target_has_atomic = "ptr")]
 use crossbeam::atomic::AtomicCell;
+#[cfg(not(target_has_atomic = "ptr"))]
+use crate::sync::atomic_cell::AtomicCell;
 
 #[derive(Clone)]
 pub struct Notifier {

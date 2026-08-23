@@ -11,7 +11,6 @@ use xtask::bsp::rp_pico::hal::pac;
 use xtask::bsp::rp_pico::hal::prelude::*;
 use xtask::bsp::rp_pico::led::Led;
 use xtask::bsp::rp_pico::stdout;
-use xtask::isr_sprintln;
 use xtask::prelude::*;
 
 pub fn stack_start() -> usize {
@@ -56,8 +55,8 @@ fn init() {
     );
     let uart = hal::uart::UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
         .enable(
-            hal::uart::common_configs::_9600_8_N_1,
-            clocks.peripheral_clock.into(),
+            hal::uart::common_configs::_115200_8_N_1,
+            clocks.peripheral_clock.freq(),
         )
         .unwrap();
     stdout::use_uart0(uart);

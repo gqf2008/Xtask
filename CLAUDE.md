@@ -22,17 +22,16 @@ cargo run --example led --features gd32vf103 --target riscv32imac-unknown-none-e
 cargo run --example multitask_greenpill --features stm32f4 --target thumbv7em-none-eabihf --release
 # stm32f1 (bluepill)
 cargo run --example multitask_bluepill --features stm32f1 --target thumbv7m-none-eabi --release
-# rp2040 — TEMPORARILY DISABLED: rp2040-hal 0.5.0 depends on a yanked critical-section 0.2.x
-# which breaks dependency resolution for the whole workspace. The `rp2040` feature is kept as
-# an empty placeholder; re-enable by upgrading rp2040-hal and restoring the deps in Cargo.toml.
-# cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-eabi --release
+# rp2040 (revived 2026-08-23 on rp2040-hal 0.9): the old 0.5.0 pin depended on a yanked
+# critical-section 0.2.x; 0.9+ uses 1.x. The board BSP is the repo's own bsp_pins! macro.
+cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-eabi --release
 ```
 
 `--release` is normal for flashing (both profiles use `opt-level = "z"`, `lto = true`). Some examples need extra features, e.g. the software-timer example: `--features gd32vf103,timer`.
 
 A default target (`thumbv7em-none-eabihf`) and per-target `runner` (probe-run / gdb+openocd / elf2uf2-rs) are set in `.cargo/config.toml`; `cargo run` uses the runner to flash. OpenOCD configs and GDB scripts live in `debug/<chip>/`. Chip HALs are mostly crates, but `gd32vf103xx-hal` is a local path dep at `hal2/gd32vf103xx-hal`.
 
-Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4` (`rp2040` exists but is an empty placeholder — temporarily disabled, see Build & run above). Non-chip features: `timer` (software timers), `debug_task`, `fs` (fatfs), `net` (smoltcp), `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp-pico`).
+Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4`, `rp2040` (all build-verified 2026-08-23; real-board verification pending for f4/f1 constants, h7 timeline, cm32m4/rp2040). Non-chip features: `timer` (software timers), `debug_task`, `fs` (fatfs), `net` (smoltcp), `usb`, `ble`, `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp_pico`).
 
 ## Architecture
 

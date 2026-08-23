@@ -29,7 +29,11 @@ pub fn init() -> Result<(), SetLoggerError> {
 
     #[cfg(not(atomic_cas))]
     unsafe {
-        log::set_logger_racy(&LOGGER).map(|()| log::set_max_level(LevelFilter::Debug))
+        log::set_logger_racy(&LOGGER).map(|()| {
+            // set_max_level 在 no-atomic 目标(thumbv6m)被 log 门控掉——跳过
+            #[cfg(target_has_atomic = "ptr")]
+            log::set_max_level(LevelFilter::Debug);
+        })
     }
     #[cfg(atomic_cas)]
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Debug))

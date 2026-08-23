@@ -45,7 +45,7 @@ pub const SYSTICK_CLOCK_HZ: usize = 24_000_000;
 #[cfg(feature = "rp2040")]
 pub const CPU_CLOCK_HZ: usize = 125_000_000;
 #[cfg(feature = "rp2040")]
-pub const SYSTICK_CLOCK_HZ: usize = 1_000_000;
+pub const SYSTICK_CLOCK_HZ: usize = 125_000_000; // SysTick clock_source=Core;原 1M 是错的(时间快 125 倍)
 
 /// ⚠️ 时钟契约:SYSTICK_CLOCK_HZ 必须 == SysTick 的实际输入时钟
 /// (ARM 口 clock_source(Core) 即 HCLK;示例 freeze() 的实际配置决定它——
