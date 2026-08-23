@@ -40,6 +40,11 @@ pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 pub const CPU_CLOCK_HZ: usize = 80_000_000;
 #[cfg(feature = "esp32c3")]
 pub const SYSTICK_CLOCK_HZ: usize = 16_000_000;
+// QEMU RISC-V virt 机:timebase 10MHz(mtime/mtimecmp 时基;核频 TCG 虚拟)
+#[cfg(feature = "qemu_riscv")]
+pub const CPU_CLOCK_HZ: usize = 10_000_000;
+#[cfg(feature = "qemu_riscv")]
+pub const SYSTICK_CLOCK_HZ: usize = 10_000_000;
 
 /// CPU时钟频率
 #[cfg(feature = "cm32m4")]

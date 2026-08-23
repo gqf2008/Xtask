@@ -58,6 +58,7 @@ usb=["usb-device","usbd-serial"]
 # CH32 移植(ch32-rs PAC;构建级验证,纯内核示例;PAC 零 embedded-hal 依赖)
 ch32v103 = ["ch32v1", "riscv-rt"]
 esp32c3 = ["dep:esp32c3", "riscv-rt"]
+qemu_riscv = ["riscv-rt"]  # 零 PAC:标准 CLINT/UART 直址
 ch32v203 = ["ch32v2", "riscv-rt"]
 ch32v307 = ["ch32v3", "riscv-rt"]
 #ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
