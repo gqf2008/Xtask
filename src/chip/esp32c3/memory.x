@@ -1,0 +1,16 @@
+/* ESP32-C3 内存布局(构建级;基址=真机核对点):
+   FLASH: MMU 缓存映射的 XIP 区 0x42000000(4M 假定——常规启动需
+          ROM bootloader/镜像头,或 direct boot 模式的 flash 头 magic)
+   RAM:   DRAM 0x3FC88000(esp-idf 惯用的用户 DRAM 起点;保守 256K) */
+MEMORY
+{
+  FLASH : ORIGIN = 0x42000000, LENGTH = 4M
+  RAM   : ORIGIN = 0x3FC88000, LENGTH = 256K
+}
+
+REGION_ALIAS("REGION_TEXT", FLASH);
+REGION_ALIAS("REGION_RODATA", FLASH);
+REGION_ALIAS("REGION_DATA", RAM);
+REGION_ALIAS("REGION_BSS", RAM);
+REGION_ALIAS("REGION_HEAP", RAM);
+REGION_ALIAS("REGION_STACK", RAM);

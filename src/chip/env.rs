@@ -34,6 +34,12 @@ pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 pub const CPU_CLOCK_HZ: usize = 8_000_000;
 #[cfg(feature = "ch32v103")]
 pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
+// ESP32-C3:复位默认 CPU 80MHz(TRM;PLL 160M 配好后同步改);
+// SYSTICK 是独立 16MHz 时基(与 CPU 时钟无关—— 调研已核)
+#[cfg(feature = "esp32c3")]
+pub const CPU_CLOCK_HZ: usize = 80_000_000;
+#[cfg(feature = "esp32c3")]
+pub const SYSTICK_CLOCK_HZ: usize = 16_000_000;
 
 /// CPU时钟频率
 #[cfg(feature = "cm32m4")]

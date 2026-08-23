@@ -26,6 +26,8 @@ fn main() {
     fs::copy("src/chip/ch32v203/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "ch32v103")]
     fs::copy("src/chip/ch32v103/memory.x", out_dir.join("memory.x")).unwrap();
+    #[cfg(feature = "esp32c3")]
+    fs::copy("src/chip/esp32c3/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "cm32m4")]
     fs::copy("src/chip/cm32m4/memory.x", out_dir.join("memory.x")).unwrap();
 
@@ -39,4 +41,5 @@ fn main() {
     println!("cargo:rerun-if-changed=src/chip/ch32v307/memory.x");
     println!("cargo:rerun-if-changed=src/chip/ch32v203/memory.x");
     println!("cargo:rerun-if-changed=src/chip/ch32v103/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/esp32c3/memory.x");
 }

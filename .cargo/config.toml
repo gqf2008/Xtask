@@ -6,6 +6,12 @@ target = "thumbv7em-none-eabihf"
 # target = "riscv32imac-unknown-none-elf"
 # target = "thumbv6m-none-eabi"
 
+[target.riscv32imc-unknown-none-elf]
+rustflags = [
+  "-Clink-arg=-Tmemory.x",
+  "-Clink-arg=-Tlink.x",
+]
+
 [target.riscv32imac-unknown-none-elf]
 runner = 'D:\\NucleiStudio\\toolchain\\gcc\\bin\\riscv-nuclei-elf-gdb.exe -x openocd.gdb'
 rustflags = [

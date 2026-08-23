@@ -23,6 +23,8 @@ pub use crate::chip::ch32v307::Ch32v307Porting as Porting;
 pub use crate::chip::ch32v203::Ch32v203Porting as Porting;
 #[cfg(all(feature = "ch32v103", not(test)))]
 pub use crate::chip::ch32v103::Ch32v103Porting as Porting;
+#[cfg(all(feature = "esp32c3", not(test)))]
+pub use crate::chip::esp32c3::Esp32c3Porting as Porting;
 
 #[cfg(all(
     not(test),
@@ -35,7 +37,8 @@ pub use crate::chip::ch32v103::Ch32v103Porting as Porting;
         feature = "cm32m4",
         feature = "ch32v307",
         feature = "ch32v203",
-        feature = "ch32v103"
+        feature = "ch32v103",
+        feature = "esp32c3"
     ))
 ))]
 pub use DefaultPorting as Porting;
