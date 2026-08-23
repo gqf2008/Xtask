@@ -17,6 +17,12 @@ pub use crate::chip::stm32h7::STM32H7Porting as Porting;
 
 #[cfg(all(feature = "cm32m4", not(test)))]
 pub use crate::chip::cm32m4::CM32M4Porting as Porting;
+#[cfg(all(feature = "ch32v307", not(test)))]
+pub use crate::chip::ch32v307::Ch32v307Porting as Porting;
+#[cfg(all(feature = "ch32v203", not(test)))]
+pub use crate::chip::ch32v203::Ch32v203Porting as Porting;
+#[cfg(all(feature = "ch32v103", not(test)))]
+pub use crate::chip::ch32v103::Ch32v103Porting as Porting;
 
 #[cfg(all(
     not(test),
@@ -26,7 +32,10 @@ pub use crate::chip::cm32m4::CM32M4Porting as Porting;
         feature = "stm32f1",
         feature = "rp2040",
         feature = "stm32h7",
-        feature = "cm32m4"
+        feature = "cm32m4",
+        feature = "ch32v307",
+        feature = "ch32v203",
+        feature = "ch32v103"
     ))
 ))]
 pub use DefaultPorting as Porting;

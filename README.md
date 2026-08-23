@@ -28,9 +28,9 @@
   - [x] GD32VF103xx
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [ ] ESP32C3
-  - [ ] CH32V3
-  - [ ] CH32V2
-  - [ ] CH32V1
+  - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
+  - [x] CH32V2: ch32v203(QingKe V4B;构建级验证 2026-08-23,真机待验)
+  - [x] CH32V1: ch32v103(QingKe V3A;构建级验证 2026-08-23,真机待验)
 - CM4F
   - [x] STM32F401CCU6
   - [x] STM32F427VIT6

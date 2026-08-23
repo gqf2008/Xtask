@@ -55,6 +55,10 @@ fs=["fatfs"]
 #usb 协议栈(第 23 章):协议在第三方 crate("协议是别家的,我们的活是搬字节"),
 #芯片相关实现(Gd32UsbBus)在 chip/gd32vf103/usb.rs,经 #[cfg(all(usb, gd32vf103))] 合闸
 usb=["usb-device","usbd-serial"]
+# CH32 移植(ch32-rs PAC;构建级验证,纯内核示例;PAC 零 embedded-hal 依赖)
+ch32v103 = ["ch32v1"]
+ch32v203 = ["ch32v2"]
+ch32v307 = ["ch32v3"]
 #ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
 #AT 命令编解码 + GATT 服务建模,纯 Rust 零新依赖
 ble=[]
@@ -84,6 +88,10 @@ atomic-polyfill = "1.0.1"
 
 # optional
 fatfs = { git = "https://github.com/rafalh/rust-fatfs",optional = true,  features = ["unicode","alloc","lfn"], default-features = false }
+# CH32 系列 PAC(ch32-rs;QingKe 内核 PFIC/SysTick 模型,依赖仅 riscv/vcell)
+ch32v1 = {version = "0.1.6", optional = true, features = ["ch32v103"]}
+ch32v2 = {version = "0.1.6", optional = true, features = ["ch32v20x"]}
+ch32v3 = {version = "0.1.6", optional = true, features = ["ch32v30x"]}
 gd32vf103xx-hal = {path = "hal2/gd32vf103xx-hal", optional = true}
 mpu6050 = {version = "0.1.4", optional = true}
 rp2040-boot2 = {version = "0.3", optional = true}

@@ -19,6 +19,22 @@ pub const TIMER_CTRL_ADDR: usize = 0xE002_0000;
 /// 中断控制器基地址
 #[cfg(feature = "cm32m4")]
 pub const ECLIC_CTRL_ADDR: usize = 0xE001_0000;
+/// CH32V307(QingKe V4F):复位默认 HSI 8MHz——本口无 BSP/时钟初始化,
+/// 诚实按默认配;PLL(最高 144M)配置后须同步改这里与 STCLK 语义
+#[cfg(feature = "ch32v307")]
+pub const CPU_CLOCK_HZ: usize = 8_000_000;
+#[cfg(feature = "ch32v307")]
+pub const SYSTICK_CLOCK_HZ: usize = 8_000_000; // STCLK=1 → HCLK(=8M)
+// V203/V103 同款:复位默认 HSI 8MHz(PLL 最高 144M,配置后同步改)
+#[cfg(feature = "ch32v203")]
+pub const CPU_CLOCK_HZ: usize = 8_000_000;
+#[cfg(feature = "ch32v203")]
+pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
+#[cfg(feature = "ch32v103")]
+pub const CPU_CLOCK_HZ: usize = 8_000_000;
+#[cfg(feature = "ch32v103")]
+pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
+
 /// CPU时钟频率
 #[cfg(feature = "cm32m4")]
 pub const CPU_CLOCK_HZ: usize = 144000000;

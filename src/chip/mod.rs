@@ -3,6 +3,12 @@
 include!("env.rs");
 #[cfg(feature = "cm32m4")]
 pub mod cm32m4;
+#[cfg(feature = "ch32v307")]
+pub mod ch32v307;
+#[cfg(feature = "ch32v203")]
+pub mod ch32v203;
+#[cfg(feature = "ch32v103")]
+pub mod ch32v103;
 #[cfg(feature = "gd32vf103")]
 pub mod gd32vf103;
 #[cfg(feature = "rp2040")]
