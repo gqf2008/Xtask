@@ -26,7 +26,7 @@
 
 - RISCV
   - [x] GD32VF103xx
-  - [ ] CM32M4xxR
+  - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [ ] ESP32C3
   - [ ] CH32V3
   - [ ] CH32V2

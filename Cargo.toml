@@ -41,7 +41,7 @@ stm32f4 = ["stm32f4xx-hal", "greenpill"]
 # stm32h7xx
 stm32h7 = ["stm32h7xx-hal"]
 # cm32m4
-cm32m4=[]
+cm32m4=[]  # 空依赖激活:chip 代码用内嵌 ECLIC 抽象,不需要 HAL(示例纯内核 API)
 
 # 板级支持包
 # longan_nano

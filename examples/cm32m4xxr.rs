@@ -6,6 +6,12 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+// CM32M4xxR(N308,RISC-V RV32IMAC)多任务示例——本口自 2022 年后首次纳入构建门禁。
+// ⚠️ 真机核对点(构建级验证已过,板上行为待验):①N308 的 ECLIC CSR
+// (0x7ED/0x307 等,与 Bumblebee 同族,内嵌 eclic.rs 已按此写);②144MHz
+// 主频与 mtime 分频(env.rs:CPU 144M/SYSTICK 36M);③port.S 的 N308 向量表
+// 偏移。无 RTT/stdout 配置——日志能力待 BSP 层补(当前纯任务演示)。
+
 use xtask::arch::riscv::rt;
 use xtask::prelude::*;
 
@@ -16,7 +22,7 @@ fn main() -> ! {
         static _sheap: u8;
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
-    xtask::init(start_addr, 128 * 1024);
+    xtask::init_heap(start_addr, 128 * 1024);
 
     //example_notify();
     //example_broadcast();
