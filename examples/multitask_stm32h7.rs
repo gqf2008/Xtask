@@ -2,6 +2,11 @@
 #![no_main]
 extern crate alloc;
 
+// ⚠️ 时间轴核对点(待真机):SysTick clock_source=Core 即 c_ck;本示例
+// 配 sys_ck(48M)/sysclk(24M)——若 HAL 推导 c_ck=48M 则 tick 快 2 倍、
+// delay_us 慢 2 倍(SYSTICK_CLOCK_HZ=24M 需改 48M);若 c_ck=24M 则完全自洽。
+// 真机跑一次 "clocks" 日志即可裁决(env.rs 的 stm32h7 段同步改)。
+
 use cortex_m_rt::{entry, exception, ExceptionFrame};
 use stm32h7xx_hal::{hal, pac, prelude::*};
 use xtask::arch::cortex_m::rt;

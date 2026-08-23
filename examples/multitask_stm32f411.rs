@@ -29,10 +29,11 @@ fn init() {
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
+        // env 常数已改 84M/84M(sysclk==hclk,AHB 不分频,SysTick(Core)=84M 自洽;
+        // 原 180M/24M 对 F411 非法:180 超 F411 上限 100M,且 180/24 非整数分频)
         let clocks = rcc
             .cfgr
             .sysclk((CPU_CLOCK_HZ as u32).Hz())
-            .hclk((SYSTICK_CLOCK_HZ as u32).Hz())
             .freeze();
 
         let gpioa = dp.GPIOA.split();

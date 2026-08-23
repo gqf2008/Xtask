@@ -14,11 +14,13 @@ use xtask::prelude::*;
 fn init() {
     let start_addr = rt::heap_start() as usize;
     //4k留给主栈
-    xtask::init(start_addr, 256 * 1024);
+    xtask::init_heap(start_addr, 64 * 1024);
 
     if let Some((_cp, dp)) = greenpill::take() {
         let rcc = dp.RCC.constrain();
-        let clocks = rcc.cfgr.freeze();
+        // 显式 84MHz(原默认 HSI 16M 与 SYSTICK_CLOCK_HZ 常数错配,tick 慢 1.5 倍);
+        // 84M 从 HSI 经 PLL 推得,是 f401/f411 两颗芯片的公共安全值
+        let clocks = rcc.cfgr.sysclk(84u32.Hz() * 1_000_000).freeze();
 
         let gpioa = dp.GPIOA.split();
         let gpioc = dp.GPIOC.split();

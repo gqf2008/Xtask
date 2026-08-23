@@ -51,7 +51,7 @@
 .endm
 
 // 恢复下文，和上面的上文对齐即可
-.macro REsw_CONTEXT_SOFT_IRQ
+.macro RESTORE_CONTEXT_SOFT_IRQ
   lw x1, 1 * 4(sp) // 任务返回地址
   lw x5, 5 * 4(sp)
   lw x6, 6 * 4(sp)
@@ -131,7 +131,7 @@ _irq_handler:
   // 这个任务栈地址要么是第一次创建的时候写入任务块的，要么是被切换走的时候写入任务块的
   lw sp, 0x0(t0)
   // 恢复下文到CPU寄存器
-  REsw_CONTEXT_SOFT_IRQ
+  RESTORE_CONTEXT_SOFT_IRQ
   // mepc值已经在上面恢复，执行这条伪指令将PC指向新任务断点处
   // 同时mie从mpie恢复到中断前的状态，也就是要恢复到进入中断函数前的中断状态
   mret

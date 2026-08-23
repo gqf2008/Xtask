@@ -23,5 +23,11 @@ fn main() {
     #[cfg(feature = "cm32m4")]
     fs::copy("src/chip/cm32m4/memory.x", out_dir.join("memory.x")).unwrap();
 
-    println!("cargo:rerun-if-changed=memory.x");
+    // rerun-if-changed 指向真实被复制的源文件(指错路径时改 memory.x 不触发重建)
+    println!("cargo:rerun-if-changed=src/chip/gd32vf103/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/rp2040/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/stm32f4/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/stm32f1/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/stm32h7/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/cm32m4/memory.x");
 }

@@ -179,7 +179,11 @@ impl Portable for STM32F4Porting {
             sp = sp.offset(-5); /* R12, R3, R2 and R1. */
             sp.write_volatile(task.args.addr()); /* R0 */
             sp = sp.offset(-1);
-            sp.write_volatile(0xfffffffd); //返回线程模式，sp=psp
+            sp.write_volatile(0xfffffffd);
+            // EXC_RETURN=0xFFFFFFFD:线程模式/PSP/**标准帧**——bit4=1(0xFD=…1111_1101),
+            // 硬件只弹 8 字硬件帧(R0-R3/R12/LR/PC/xPSR)+ 软件帧 R4-R11 由 SVCall 弹,
+            // 与上面的 16 字布局严格吻合。⚠️ 不要改成 bit4=0 的扩展帧值:那会让硬件
+            // 多弹 s0-s15+FPSCR 共 17 字,从任务栈分配区之外读垃圾(此处并未预留)。
             sp = sp.offset(-8); /* R11, R10, R9, R8, R7, R6, R5 and R4. */
             task.sp = sp.addr();
         }
