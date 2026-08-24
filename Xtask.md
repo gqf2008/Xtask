@@ -659,9 +659,12 @@ fn do_systick(&self) -> bool {
 .endm
 
 // 当前任务全局指针，在RUST代码中定义
-.extern CURRENT_TASK_PTR 
+.extern CURRENT_TASK_PTR
 
-// IRQ entry point
+// IRQ entry point —— 下面是 gd32 口(Bumblebee 内核)独有的形态:
+// 自定义 CSR 0x7ED 开硬件中断嵌套,ISR 由 ECLIC 向量表分发(见后文
+// INT_TMR/INT_SFT 导出)。后续口(ch32 系/esp32c3/qemu_riscv)未沿用
+// 此路,改为统一的纯软件模型——见本清单后的演进注记。
 .section .text.irq
 .option push
 .option norelax
@@ -701,6 +704,21 @@ _irq_handler:
   mret
 
 ```
+
+> **演进注记:从 0x7ED 硬件嵌套到统一软件模型。** 上面这份入口是 gd32
+> (Bumblebee 内核)独有的形态——用厂商自定义 CSR `0x7ED` 在 ISR 内重新
+> 打开全局中断实现硬件嵌套,并配合 `csrrw sp, mscratch, sp` 两次交换切
+> 换中断栈。后续五个口(ch32v103/203/307、esp32c3、qemu_riscv)统一放弃
+> 了这条路,改为:**显式关闭 HPE/厂商嵌套,trap 全程 mstatus.MIE=0,
+> mscratch 恒持中断栈地址(`csrr` 只读换栈,绝不交换)**,入口按 mcause
+> 分发 tick(7)与 yield(3),调度器始终运行在中断栈上。原因有三:
+> ① `csrrw` 交换会把任务栈地址写进 mscratch——任务退出、内存复用后,
+> 下一次中断就可能跑在已释放的栈上,现场错乱;② 厂商私有 CSR 不可移植,
+> QingKe 三代(V3A/V4B/V4F)都得显式关闭才能回到标准软件模型;③ 统一
+> 模型在 qemu_riscv 口完成了执行级验证(12 项内核机制自测 ×10 连稳定),
+> 其中沉淀了一条恢复顺序铁律——**CSR 装载必须先于通用寄存器**(见上文
+> 两个恢复宏内的注释:t0 作草稿会覆盖已恢复的 x5)。
+
 ```rust
 
     // 找到一个就绪任务把当前任务切出去
@@ -1469,6 +1487,8 @@ global_asm!(include_str!("port.S"));
 /// 定时中断服务函数，驱动任务调度，当有任务需求切换时触发软中断即可，
 /// 任务切换由软中断服务函数实现，gd32里使用自定义寄存器（0x7ED）巧
 /// 妙的实现了中断嵌套，工作职责清晰。
+/// （仅 gd32 口如此；后续口统一为 mcause 分发的纯软件模型，
+///   见上文"演进注记"）
 /// 当进入中断函数时SP已经在port.S汇编代码中切换到了中断栈，中断栈只
 /// 有1.5k，所以函数不要嵌套太深，特别要防止递归调用
 #[export_name = "INT_TMR"]

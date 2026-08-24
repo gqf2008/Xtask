@@ -13,34 +13,53 @@
 
 - [x] 单物理线程任务优先级+时间片调度机制，高优先级抢占，同优先级公平调度
 - [x] 堆内存分配器
-- [x] 二值信号量、计数信号量、信号广播
+- [x] 二值信号量、计数信号量、信号广播、互斥锁、任务通知
 - [x] 多生产者多消费者队列
 - [x] 临界段
 - [x] 栈溢出检查
 - [x] PubSub 模式消息总线
 - [x] 软件定时器
+- [x] 驱动抽象层：编译期设备清单 + 运行期注册表，"名字就是总线"
 - [x] 基于 FatFS 文件系统
 - [x] 基于 smoltcp 网络协议栈
+
+### 验证体系
+
+- [x] 宿主回归：`cargo test --lib`(纯逻辑单测，无需硬件)
+- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 12 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收)，全绿自退出
+- [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、esp32c3 待上板
 
 ### 移植的芯片
 
 - RISCV
   - [x] GD32VF103xx
+  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——12 项自测 ×10 连稳定)
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [x] ESP32C3: esp32c3(PAC 直依赖;构建级验证 2026-08-23,真机待验——启动需 direct boot/镜像头)
   - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
   - [x] CH32V2: ch32v203(QingKe V4B;构建级验证 2026-08-23,真机待验)
   - [x] CH32V1: ch32v103(QingKe V3A;构建级验证 2026-08-23,真机待验)
+- CM7F
+  - [x] STM32H7B0VBT6
 - CM4F
   - [x] STM32F401CCU6
   - [x] STM32F427VIT6
   - [x] STM32F411CEU6
 - CM3
   - [x] STM32F103C8T6
-- CM7F
-  - [x] STM32H7B0VBT6
+- CM0+
+  - [x] RP2040(rp2040-hal 0.9;构建级验证 2026-08-23,真机待验)
 
 ### 快速开始
+
+没有开发板也能跑:QEMU 执行级验证不需要任何硬件(安装 QEMU 后)
+
+```bash
+cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
+qemu-system-riscv32 -M virt -nographic -bios none -kernel \
+  target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
+# 期望输出 12/12 passed,进程以退出码 0 自行结束
+```
 
 如果您有一块 longan-nano 或者 stm32f401ccu6 或者 stm32f103c8t6 最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
 
@@ -63,7 +82,7 @@
    - [x] stm32f4: --target thumbv7em-none-eabihf
    - [x] stm32f1: --target thumbv7m-none-eabi
    - [x] rp2040: --target thumbv6m-none-eabi(rp2040-hal 0.9 复活;构建级验证 2026-08-23,真机待验)
-  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证**——check.sh 第 4 步真跑内核,2026-08-23)
+   - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证**——见上文"验证体系")
 
    - 信号广播示例
 
