@@ -111,6 +111,12 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
         match task.state {
             State::Ready => {
                 push_ready(task);
+                // 抢占式语义(修前缺失,QEMU 执行测试抓出):入队任务优先级
+                // 更高(数字更小)时请求调度——否则 spawn 高优先级任务、
+                // post/notify/unlock 唤醒高优先级 waiter 都要干等下个 tick。
+                // MSIP 只是"请求":本函数常在 sync::free 临界区内被调,
+                // 软中断 pending 到退出临界区(mret)后生效——语义正确
+                request_preempt_if_higher(task);
             }
             State::Blocked => {
                 push_delay(task);
@@ -171,6 +177,19 @@ unsafe fn pop_ready() -> *mut Task {
 
 /// 推入就绪队列
 #[track_caller]
+/// 入队任务比当前任务优先级更高(数字更小)则请求调度。
+/// 调度器未启动(spawn 阶段 CURRENT_TASK=null)时不触发——任务已入队,
+/// start() 自然会调度到它
+unsafe fn request_preempt_if_higher(task: *mut Task) {
+    let cur = super::xworker::current_ptr();
+    if cur.is_null() {
+        return;
+    }
+    if (*task).priority < (*cur).priority {
+        Porting::irq();
+    }
+}
+
 unsafe fn push_ready(task: *mut Task) {
     if let Some(task) = task.as_mut() {
         match task.priority {

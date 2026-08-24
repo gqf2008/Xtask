@@ -52,6 +52,19 @@
 
 // 恢复下文，和上面的上文对齐即可
 .macro RESTORE_CONTEXT_SOFT_IRQ
+  // ★ CSR 装载必须先于通用寄存器:CSR 段用 t0 作草稿,若先恢复 x5(t0)
+  //   再装 CSR,最后一次 lw t0(=mcause 槽)会把恢复好的 t0 覆盖——任务在
+  //   编译器 outlined 序言(`jr t0` 结尾)中被抢占时,恢复后 jr t0 野跳
+  //   (qemu_riscv 口实测:跳 _start+6 → 整机重启,详见该口 port.S 注)
+  lw t0, 32 * 4(sp)
+  csrw mstatus, t0 // 恢复mstatus
+  lw t0, 33 * 4(sp)
+  csrw mepc, t0 // 恢复任务PC到mepc寄存器，最后由mret伪指令恢复到PC寄存器
+  lw t0, 34 * 4(sp)
+  csrw 0x7C4, t0 // Bumblebee内核自定义寄存器
+  lw t0, 35 * 4(sp)
+  csrw mcause, t0 // 恢复mcause
+  // 通用寄存器最后装载——t0(x5)在所有草稿使用之后恢复
   lw x1, 1 * 4(sp) // 任务返回地址
   lw x5, 5 * 4(sp)
   lw x6, 6 * 4(sp)
@@ -81,15 +94,6 @@
   lw x30, 30 * 4(sp)
   lw x31, 31 * 4(sp)
 
-  // CSR寄存器出栈
-  lw t0, 32 * 4(sp)
-  csrw mstatus, t0 // 恢复mstatus
-  lw t0, 33 * 4(sp)
-  csrw mepc, t0 // 恢复任务PC到mepc寄存器，最后由mret伪指令恢复到PC寄存器
-  lw t0, 34 * 4(sp)
-  csrw 0x7C4, t0 // Bumblebee内核自定义寄存器
-  lw t0, 35 * 4(sp)
-  csrw mcause, t0 // 恢复mcause
   // SP指针上移，释放当前任务的栈空间，使SP指向任务被切换前的栈顶
   addi sp, sp, 4 * 36 
 .endm

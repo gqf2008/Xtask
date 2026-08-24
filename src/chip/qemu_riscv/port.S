@@ -50,7 +50,20 @@
 .endm
 
 // 恢复下文宏(与保存严格对称)
+// ★ CSR 装载必须放在通用寄存器之前:CSR 段用 t0 作草稿,若先恢复
+//   x5(t0)再装 CSR,最后一次 `lw t0, mcause槽` 会把恢复好的 t0 覆盖成
+//   0x80000007——任务若是在编译器 outlined 序言(`jr t0` 结尾)中被
+//   抢占的,恢复后 jr t0 → 0x80000006(_start+6)→ 整机"重启"
+//   (qemu_kernel_tests 偶发复位 3/10 的根因)
 .macro RESTORE_CONTEXT
+  lw t0, 32 * 4(sp)
+  csrw mstatus, t0
+  lw t0, 33 * 4(sp)
+  csrw mepc, t0
+  // 34 槽跳过(保留)
+  lw t0, 35 * 4(sp)
+  csrw mcause, t0
+  // 通用寄存器最后装载——t0(x5)在所有草稿使用之后恢复
   lw x1, 1 * 4(sp)
   lw x5, 5 * 4(sp)
   lw x6, 6 * 4(sp)
@@ -79,13 +92,6 @@
   lw x29, 29 * 4(sp)
   lw x30, 30 * 4(sp)
   lw x31, 31 * 4(sp)
-  lw t0, 32 * 4(sp)
-  csrw mstatus, t0
-  lw t0, 33 * 4(sp)
-  csrw mepc, t0
-  // 34 槽跳过(保留)
-  lw t0, 35 * 4(sp)
-  csrw mcause, t0
   addi sp, sp, 4 * 36
 .endm
 
@@ -116,8 +122,10 @@ _start_trap:
   // 任务块首字段存 sp
   lw t0, CURRENT_TASK_PTR
   sw sp, 0x0(t0)
-  // 切到中断栈(mscratch 在 restore_ctx.S 初始化)
-  csrrw sp, mscratch, sp
+  // 切到中断栈:mscratch 恒持中断栈地址(restore_ctx.S 启动时写一次,
+  // 之后永不改)——必须 csrr 只读,csrrw 交换会把任务栈地址写进 mscratch,
+  // 下一次中断就跑在陈旧/已释放的任务栈上(任务退出+内存复用后现场错乱)
+  csrr sp, mscratch
 
   // 分发:中断? (mcause < 0 即 bit31=1)
   csrr t0, mcause
@@ -146,19 +154,37 @@ _isr_tick:
 
 _isr_yield:
   jal ra, YieldHandler  // RUST:清 MSIP(电平源)
+  // 顺流落入 _switch_and_restore(yield 的公共切换出口)
 
   // ---- 切换与恢复(公共出口) ----
 _switch_and_restore:
-  // 回任务栈前先切回旧 sp 由调度器换新任务:
-  // 调用 switch_context(等价 gd32 的 INT_SFT 主体)
-  csrrw sp, mscratch, sp  // 先换回 mscratch 语义:此时 sp=中断栈
+  // 调度器在中断栈上运行(mscratch 恒持中断栈——绝不在任务栈上跑:
+  // ①小栈任务会被调度器自身栈帧撑爆;②csrrw 交换会污染 mscratch,
+  //   修前 bug:任务退出后 mscratch 残留已释放的任务栈地址,下一次
+  //   中断在已释放内存上运行 → 内存复用后现场错乱 → guest 复位)
   jal ra, switch_context
-  // 中断栈换出、新任务 sp 装入
-  csrrw sp, mscratch, sp
+  // 装载新任务 sp(调度器已更新 CURRENT_TASK)
   lw t0, CURRENT_TASK_PTR
   lw sp, 0x0(t0)
   RESTORE_CONTEXT
   mret
+
+/*
+  任务首调蹦床:save_context 造的初始帧 mepc 指向这里(而非 task.entry)。
+  mret 直入入口函数不可靠:编译器(LTO)会把闭包入口的序言/尾声 outlined
+  成共享 stub(如 `sw..; jr t0` / `lw ra,0xc(sp); ret`),这些 stub 只在
+  调用方先设置好寄存器(jalr 调用模式)时成立,mret 路径跳过了调用方 →
+  stub 读到未初始化的帧槽(陈旧堆数据)→ 野跳(实测跳进 _start → 整机
+  "重启")。task.entry 是地址已取的 fn 指针,经标准 jalr 调用必然合法
+  ——蹦床恢复"调用方"角色,入口返回后接统一的退出路径。
+*/
+.section .text
+.global _task_entry_trampoline
+_task_entry_trampoline:
+  lw t0, CURRENT_TASK_PTR   // CURRENT == 本任务(restore 前由 execute 设置)
+  lw t1, 8(t0)              // Task.entry(offset 8,见 mod.rs 布局断言)
+  jalr t1                   // 标准调用:a0=args(帧设置),ra=返回蹦床
+  j task_exit               // 入口跑完 → 退出路径(不返回)
 
 /*
   riscv-rt link.x 在启动时调用:配 mtvec(Direct)与 HPE 关闭。

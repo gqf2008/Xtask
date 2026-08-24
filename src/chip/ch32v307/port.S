@@ -50,6 +50,18 @@
 
 // 恢复下文宏(与保存严格对称)
 .macro RESTORE_CONTEXT
+  // ★ CSR 装载必须先于通用寄存器:CSR 段用 t0 作草稿,若先恢复 x5(t0)
+  //   再装 CSR,最后一次 lw t0(=mcause 槽)会把恢复好的 t0 覆盖——任务在
+  //   编译器 outlined 序言(`jr t0` 结尾)中被抢占时,恢复后 jr t0 野跳
+  //   (qemu_riscv 口实测:跳 _start+6 → 整机重启,详见该口 port.S 注)
+  lw t0, 32 * 4(sp)
+  csrw mstatus, t0
+  lw t0, 33 * 4(sp)
+  csrw mepc, t0
+  // 34 槽跳过(保留)
+  lw t0, 35 * 4(sp)
+  csrw mcause, t0
+  // 通用寄存器最后装载——t0(x5)在所有草稿使用之后恢复
   lw x1, 1 * 4(sp)
   lw x5, 5 * 4(sp)
   lw x6, 6 * 4(sp)
@@ -78,13 +90,6 @@
   lw x29, 29 * 4(sp)
   lw x30, 30 * 4(sp)
   lw x31, 31 * 4(sp)
-  lw t0, 32 * 4(sp)
-  csrw mstatus, t0
-  lw t0, 33 * 4(sp)
-  csrw mepc, t0
-  // 34 槽跳过(保留)
-  lw t0, 35 * 4(sp)
-  csrw mcause, t0
   addi sp, sp, 4 * 36
 .endm
 
@@ -113,8 +118,10 @@ _start_trap:
   // 任务块首字段存 sp
   lw t0, CURRENT_TASK_PTR
   sw sp, 0x0(t0)
-  // 切到中断栈(mscratch 在 restore_ctx.S 初始化)
-  csrrw sp, mscratch, sp
+  // 切到中断栈:mscratch 恒持中断栈地址(restore_ctx.S 启动时写一次,
+  // 之后永不改)——必须 csrr 只读,csrrw 交换会把任务栈地址写进 mscratch,
+  // 下一次中断就跑在陈旧/已释放的任务栈上(任务退出+内存复用后现场错乱)
+  csrr sp, mscratch
 
   // 分发:中断? (mcause < 0 即 bit31=1)
   csrr t0, mcause
@@ -142,12 +149,12 @@ _isr_systick:
 
   // ---- 切换与恢复(公共出口) ----
 _switch_and_restore:
-  // 回任务栈前先切回旧 sp 由调度器换新任务:
-  // 调用 switch_context(等价 gd32 的 INT_SFT 主体)
-  csrrw sp, mscratch, sp  // 先换回 mscratch 语义:此时 sp=中断栈
+  // 调度器在中断栈上运行(mscratch 恒持中断栈——绝不在任务栈上跑:
+  // ①小栈任务会被调度器自身栈帧撑爆;②csrrw 交换会污染 mscratch,
+  //   修前 bug:任务退出后 mscratch 残留已释放的任务栈地址,下一次
+  //   中断在已释放内存上运行 → 内存复用后现场错乱 → guest 复位)
   jal ra, switch_context
-  // 中断栈换出、新任务 sp 装入
-  csrrw sp, mscratch, sp
+  // 装载新任务 sp(调度器已更新 CURRENT_TASK)
   lw t0, CURRENT_TASK_PTR
   lw sp, 0x0(t0)
   RESTORE_CONTEXT

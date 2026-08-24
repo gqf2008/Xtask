@@ -17,6 +17,22 @@ use xtask::chip::qemu_riscv::stdout::{qemu_exit_pass, write_str};
 use xtask::{sprint, sprintln};
 use xtask::prelude::*;
 
+// 覆盖 panic 处理:panic 位置打到串口并 FAIL 退出,而非静默挂死
+// (lib 的 panic_halt 对 qemu_riscv 被排除——测试类示例各自定义)
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    use xtask::chip::qemu_riscv::stdout::{putc, qemu_exit_fail};
+    write_str("\r\n!!! PANIC at ");
+    if let Some(l) = info.location() {
+        let full = alloc::format!("{}:{}:{}", l.file(), l.line(), l.column());
+        for b in full.bytes() {
+            putc(b);
+        }
+    }
+    write_str("\r\n");
+    qemu_exit_fail()
+}
+
 /// 目标乒乓次数(双方各 200 次)
 const ROUNDS: usize = 200;
 

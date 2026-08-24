@@ -10,6 +10,13 @@ static mut CURRENT_TASK: *mut Task = core::ptr::null_mut();
 #[cfg(feature = "xtask_executor")]
 pub(crate) type XTaskExecutor = ();
 
+/// 当前任务裸指针(不 unwrap——调度器启动前为 null,调用方须判空)。
+/// submit_task 的抢占检查用它:spawn 阶段 CURRENT_TASK 尚为 null
+#[cfg(feature = "xtask_executor")]
+pub(crate) unsafe fn current_ptr() -> *mut Task {
+    CURRENT_TASK
+}
+
 impl Executor for XTaskExecutor {
     fn threads() -> u16 {
         1

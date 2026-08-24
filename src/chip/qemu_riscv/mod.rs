@@ -16,9 +16,15 @@
 //! - mtvec=Direct 单入口分发(36 字帧与 gd32/ch32/esp 同一约定)。
 //!
 //! env:CPU/SYSTICK = 10MHz(virt 机 timebase 默认——mtime 10MHz 计数)。
+//!
+//! **panic handler 契约**:lib.rs 把本口排除出了默认 `panic_halt`
+//! (`#[cfg(all(not(test), not(target_arch = "arm"), not(feature = "qemu_riscv")))]`),
+//! 因此**每个 qemu_riscv 例程/应用必须自带 `#[panic_handler]`**
+//! (惯例:位置打到串口 + `qemu_exit_fail()` 确定性退出,见
+//! examples/qemu_kernel_tests.rs),否则得到的是链接错误
+//! "`#[panic_handler]` function required"。
 mod port;
 pub mod stdout;
-
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
@@ -59,6 +65,11 @@ pub(crate) fn setup_intrrupt() {
 
 /// QEMU virt 机移植层实现
 pub struct QemuRiscvPorting;
+
+// port.S 依赖的 Task 布局偏移(蹦床 `lw t1, 8(t0)` 取 entry、trap 入口
+// `sw sp, 0(t0)` 存 sp)——失配在编译期炸,而非静默错跳
+const _: () = assert!(core::mem::offset_of!(Task, sp) == 0);
+const _: () = assert!(core::mem::offset_of!(Task, entry) == 8);
 
 impl Portable for QemuRiscvPorting {
     #[inline]
@@ -139,15 +150,28 @@ impl Portable for QemuRiscvPorting {
     }
 
     /// 任务现场(36 字帧,[35]=mcause 取定时中断形态)
+    ///
+    /// 初始帧必须把除定值外的全部槽清零、mepc 指向 port.S 的首调蹦床:
+    /// 任务首次调度经 mret 直入入口,而编译器(LTO)会把入口序言/尾声
+    /// outlined 成只按 jalr 调用约定成立的共享 stub(实测会读到帧里
+    /// 未初始化的陈旧堆数据并野跳,见 port.S 蹦床与 RESTORE_CONTEXT 注)
     #[inline]
     fn save_context(task: &mut Task) {
         unsafe {
             let sp = task.stack.add(task.stack_size - 1);
             sp.offset(-1).write_volatile(0x8000_0007); // mcause:中断|7(定时)
             sp.offset(-2).write_volatile(0); // 保留槽
+            unsafe extern "C" {
+                fn _task_entry_trampoline();
+            }
             sp.offset(-3)
-                .write_volatile((task.entry as *const ()).addr()); // mepc
+                .write_volatile((_task_entry_trampoline as *const ()).addr()); // mepc
             sp.offset(-4).write_volatile(0x0000_1880); // mstatus:MPP=M, MPIE=1
+            for i in 0..32usize {
+                if i != 1 && i != 10 {
+                    sp.offset(i as isize - 36).write_volatile(0);
+                }
+            }
             sp.offset(-26).write_volatile(task.args.addr()); // a0
             sp.offset(-35)
                 .write_volatile((port::task_exit as *const ()).addr()); // ra

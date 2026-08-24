@@ -2,15 +2,26 @@
 
 // 关全局中断
 csrc mstatus, 0x00000008
-// 栈顶下留 512 字节作中断栈(启动函数可能已占一部分;硬件启动栈 2k)
-// 存入 mscratch,trap 入口经 csrrw 换栈
+// 栈顶下留 4K 作中断栈(trap 后 TickHandler→调度器→take_expired 的 Vec/迭代器
+// 全在此栈上跑,512B 会溢出——gd32 的 512 依据是 2K 启动栈只剩 1.5K,不适用)
+// 存入 mscratch,trap 入口经 csrr 只读换栈(mscratch 恒持中断栈,永不改写)
 la t0, _stack_start
-addi t0, t0, -512
+li t1, 4096
+sub t0, t0, t1
 csrw mscratch, t0
 // 装载第一个任务
 lw t0, CURRENT_TASK_PTR
 lw sp, 0x0(t0)
-// 恢复通用寄存器
+// CSR 出栈先于通用寄存器(34 槽保留,跳过)——CSR 段用 t0 作草稿,
+// 若先恢复 x5 再装 CSR,t0 会被 mcause(0x80000007)覆盖;任务入口在
+// 编译器 outlined 序言(`jr t0` 结尾)中时会野跳(port.S RESTORE_CONTEXT 同注)
+lw t0, 32 * 4(sp)
+csrw mstatus, t0
+lw t0, 33 * 4(sp)
+csrw mepc, t0
+lw t0, 35 * 4(sp)
+csrw mcause, t0
+// 恢复通用寄存器(t0 最后,在所有草稿使用之后)
 lw x1, 1 * 4(sp)
 lw x5, 5 * 4(sp)
 lw x6, 6 * 4(sp)
@@ -39,13 +50,6 @@ lw x28, 28 * 4(sp)
 lw x29, 29 * 4(sp)
 lw x30, 30 * 4(sp)
 lw x31, 31 * 4(sp)
-// CSR 出栈(34 槽保留,跳过)
-lw t0, 32 * 4(sp)
-csrw mstatus, t0
-lw t0, 33 * 4(sp)
-csrw mepc, t0
-lw t0, 35 * 4(sp)
-csrw mcause, t0
 // 释放帧,跳进任务(mret:PC=mepc,mie=mpie)
 addi sp, sp, 4 * 36
 mret

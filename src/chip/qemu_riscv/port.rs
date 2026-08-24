@@ -28,7 +28,9 @@ unsafe extern "C" fn switch_context() {
     scheduler::schedule();
 }
 
-/// 所有任务的退出函数
+/// 所有任务的退出函数(port.S 首调蹦床以 `j task_exit` 引用——保持
+/// 符号不改名)
+#[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn task_exit() {
     scheduler::exit_current_task();
 }

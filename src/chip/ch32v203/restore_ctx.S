@@ -3,7 +3,7 @@
 // 关全局中断
 csrc mstatus, 0x00000008
 // 栈顶下留 512 字节作中断栈(启动函数可能已占一部分;硬件启动栈 2k)
-// 存入 mscratch,trap 入口经 csrrw 换栈
+// 存入 mscratch,trap 入口经 csrr 只读换栈(mscratch 恒持中断栈,永不改写)
 la t0, _stack_start
 addi t0, t0, -512
 csrw mscratch, t0

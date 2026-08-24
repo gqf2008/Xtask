@@ -609,8 +609,23 @@ fn do_systick(&self) -> bool {
   sw t0, 35 * 4(sp)
 .endm
 
-// 恢复下文，和上面的上文对齐即可
+// 恢复下文，和上面的上文对齐即可。
+// ★ CSR 必须先于通用寄存器出栈：CSR 段用 t0 作草稿，若先恢复 x5(t0)
+//   再装 CSR，最后一次 lw t0(=mcause 槽)会把恢复好的 t0 覆盖成
+//   0x80000007——任务在编译器 outlined 序言(`jr t0` 结尾)中被抢占时，
+//   恢复后 jr t0 野跳(实测跳 _start+6 → 整机假复位，见 qemu_riscv 口
+//   port.S 注:RESTORE_CONTEXT 顺序约束适用于全部七口)
 .macro REsw_CONTEXT_SOFT_IRQ
+  // CSR寄存器出栈（先装 CSR，t0 作草稿用完再恢复通用寄存器）
+  lw t0, 32 * 4(sp)
+  csrw mstatus, t0 // 恢复mstatus
+  lw t0, 33 * 4(sp)
+  csrw mepc, t0 // 恢复任务PC到mepc寄存器，最后由mret伪指令恢复到PC寄存器
+  lw t0, 34 * 4(sp)
+  csrw 0x7C4, t0 // Bumblebee内核自定义寄存器
+  lw t0, 35 * 4(sp)
+  csrw mcause, t0 // 恢复mcause
+  // 通用寄存器出栈——x5(t0)在所有草稿使用之后恢复
   lw x1, 1 * 4(sp) // 任务返回地址
   lw x5, 5 * 4(sp)
   lw x6, 6 * 4(sp)
@@ -639,16 +654,6 @@ fn do_systick(&self) -> bool {
   lw x29, 29 * 4(sp)
   lw x30, 30 * 4(sp)
   lw x31, 31 * 4(sp)
-
-  // CSR寄存器出栈
-  lw t0, 32 * 4(sp)
-  csrw mstatus, t0 // 恢复mstatus
-  lw t0, 33 * 4(sp)
-  csrw mepc, t0 // 恢复任务PC到mepc寄存器，最后由mret伪指令恢复到PC寄存器
-  lw t0, 34 * 4(sp)
-  csrw 0x7C4, t0 // Bumblebee内核自定义寄存器
-  lw t0, 35 * 4(sp)
-  csrw mcause, t0 // 恢复mcause
   // SP指针上移，释放当前任务的栈空间，使SP指向任务被切换前的栈顶
   addi sp, sp, 4 * 36 
 .endm
@@ -788,7 +793,21 @@ lw t0, CURRENT_TASK_PTR
 // SP指向任务栈栈顶，任务块第一个变量就是指向任务栈顶
 lw sp, 0x0(t0) 
 // 从栈顶出栈恢复CPU状态
-// 通用寄存器出栈操作
+// CSR先出栈（t0 作草稿；若先恢复通用寄存器，x5(t0)会被最后一次
+// lw t0(=mcause 槽)覆盖成 0x80000007——任务在编译器 outlined 序言
+// (`jr t0` 结尾)中被抢占时，恢复后 jr t0 野跳，实测整机假复位）
+lw t0, 32 * 4(sp)
+csrw mstatus, t0 // 恢复mstatus，当mret时mie=mpie，即打开全局中断
+lw t0, 33 * 4(sp)
+csrw mepc, t0 // 任务首调蹦床在这里（初始帧的mepc不再直指任务入口：
+              // 编译器会把入口序言outlined成只按jalr调用约定成立的
+              // 共享stub，mret直入会读到未初始化的帧槽——蹦床经标准
+              // jalr调task.entry，入口返回后接统一的退出路径）
+lw t0, 34 * 4(sp)
+csrw 0x7c4, t0 // 自定义寄存器
+lw t0, 35 * 4(sp)
+csrw mcause, t0 // 保存异常代码
+// 通用寄存器后出栈——x5(t0)在所有草稿使用之后恢复
 lw x1, 1 * 4(sp) // 任务返回地址
 lw x5, 5 * 4(sp)
 lw x6, 6 * 4(sp)
@@ -817,16 +836,6 @@ lw x28, 28 * 4(sp)
 lw x29, 29 * 4(sp)
 lw x30, 30 * 4(sp)
 lw x31, 31 * 4(sp)
-
-// CSR寄存器出栈
-lw t0, 32 * 4(sp)
-csrw mstatus, t0 // 恢复mstatus，当mret时mie=mpie，即打开全局中断
-lw t0, 33 * 4(sp)
-csrw mepc, t0 // 任务入口函数在这里，也是PC地址
-lw t0, 34 * 4(sp)
-csrw 0x7c4, t0 // 自定义寄存器
-lw t0, 35 * 4(sp)
-csrw mcause, t0 // 保存异常代码
 // 释放栈空间，栈指针上移，
 // 任务块栈顶指针的值还是保持在原来的地方，这里更
 // 不更新无所谓，因为任务已经在运行，当被切换掉时会被更新掉
