@@ -383,3 +383,20 @@ _setup_interrupts:
 .weak CAN1_RX1
 .weak CAN1_EWMC
 .weak USBFS
+
+/*
+  任务首调蹦床:save_context 造的初始帧 mepc 指向这里(而非 task.entry)。
+  mret 直入入口函数不可靠:编译器(LTO)会把闭包入口的序言/尾声 outlined
+  成共享 stub(如 `sw..; jr t0` / `lw ra,0xc(sp); ret`),这些 stub 只在
+  调用方先设置好寄存器(jalr 调用模式)时成立,mret 路径跳过了调用方 →
+  stub 读到未初始化的帧槽(陈旧堆数据)→ 野跳(qemu_riscv 口实测曾跳进
+  _start → 整机"重启")。task.entry 是地址已取的 fn 指针,经标准 jalr
+  调用必然合法——蹦床恢复"调用方"角色,入口返回后接统一的退出路径。
+*/
+.section .text
+.global _task_entry_trampoline
+_task_entry_trampoline:
+  lw t0, CURRENT_TASK_PTR   // CURRENT == 本任务(restore 前由 execute 设置)
+  lw t1, 8(t0)              // Task.entry(offset 8,见 mod.rs 布局断言)
+  jalr t1                   // 标准调用:a0=args(帧设置),ra=返回蹦床
+  j task_exit               // 入口跑完 → 退出路径(不返回)

@@ -39,6 +39,7 @@ unsafe extern "C" fn switch_context() {
 }
 
 /// 所有任务的退出函数
+#[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn task_exit() {
     scheduler::exit_current_task();
 }

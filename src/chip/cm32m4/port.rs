@@ -62,6 +62,7 @@ unsafe extern "C" fn soft_irq_isr() {
 }
 
 /// 所有任务的退出函数，调用exit函数即可
+#[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn task_exit() {
     scheduler::exit_current_task();
 }

@@ -58,6 +58,10 @@ pub(crate) fn setup_intrrupt() {
 /// gd32芯片移植层实现
 pub struct Gd32vf103Porting;
 
+// port.S 蹦床 `_task_entry_trampoline` 依赖的 Task 布局偏移(失配编译期炸)
+const _: () = assert!(core::mem::offset_of!(Task, sp) == 0);
+const _: () = assert!(core::mem::offset_of!(Task, entry) == 8);
+
 impl Portable for Gd32vf103Porting {
     /// 完全内存屏障
     /// 保证在屏障之前的任何存储操作先于屏障之后的代码执行。
@@ -176,9 +180,19 @@ impl Portable for Gd32vf103Porting {
              */
             sp.offset(-1).write_volatile(0xb8000000);
             sp.offset(-2).write_volatile(0x40);
+            // mepc = 首调蹦床:经标准 jalr 进入 task.entry(mret 直入会被
+            // 编译器 outlined 的入口 stub 坑到野跳,见 port.S 蹦床注)
+            unsafe extern "C" {
+                fn _task_entry_trampoline();
+            }
             sp.offset(-3)
-                .write_volatile((task.entry as *const ()).addr());
+                .write_volatile((_task_entry_trampoline as *const ()).addr()); // mepc
             sp.offset(-4).write_volatile(0x00000C80);
+            for i in 0..32usize {
+                if i != 1 && i != 10 {
+                    sp.offset(i as isize - 36).write_volatile(0);
+                }
+            }
             sp.offset(-26).write_volatile(task.args.addr());
             sp.offset(-35)
                 .write_volatile((port::task_exit as *const ()).addr());
