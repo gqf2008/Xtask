@@ -1,4 +1,4 @@
-use crate::port::{Portable, Porting};
+use crate::port::{Portable, Porting, MAX_HARTS};
 use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::State;
@@ -19,6 +19,9 @@ impl Scheduler for XTaskScheduler {
     /// 启动调度器
     fn start(&self) -> ! {
         start_idle_task();
+        // 多核口此刻放行停泊的从核(就绪队列/每核 idle 已就绪);
+        // 单核口是空操作
+        Porting::start_secondary_cores();
         Porting::start_scheduler()
     }
     /// 提交一个任务进队列，待调度
@@ -27,7 +30,10 @@ impl Scheduler for XTaskScheduler {
     }
 
     fn do_systick(&self) -> bool {
-        unsafe {
+        // 整段进全局临界区:SMP 下 tick ISR(主核)与别核任务侧并发,
+        // DELAY/READYQ 的访问必须与任务侧同一把锁(ch25 失效清单三:
+        // "ISR 裸访问"在 SMP 下集体失效——ISR 侧显式进锁)
+        sync::free(|_| unsafe {
             //摘到期任务（队首起 wake_tick <= now 的连续段）重新提交调度。
             //队列按 wake_tick 升序，tick 开销 = O(到期数)，不再全队列扫描
             let now = crate::time::tick();
@@ -38,23 +44,44 @@ impl Scheduler for XTaskScheduler {
             // TODO 需改进 ARM CLZ指令计算前导零
             let trailing_zero = READY_BITS.trailing_zeros();
             trailing_zero < 16 && (trailing_zero + 1) <= self.current().priority as u32
-        }
+        })
     }
     // 找到一个就绪任务把当前任务切出去
     fn do_schedule(&self) {
-        unsafe {
-            //弹出一个就绪任务
+        // 与 do_systick 同理进全局临界区;嵌套深度由 critical.rs 配平
+        sync::free(|_| unsafe {
+            //弹出一个就绪任务(本核无就绪则回本核 idle)
             let new = pop_ready();
-            if new != xworker.current() {
-                if let Some(new) = new.as_mut() {
-                    if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
-                        //检查是否栈溢出
-                        old.stack_overflow();
-                        submit_task(old);
+            let cur = super::xworker::current_ptr();
+            // current_ptr 判空:从核首调度时本核 CURRENT 尚为 null
+            if new != cur {
+                // 切换判据:cur 不在跑(阻塞/退出/尚未首调度)必切;
+                // cur 在跑时仅当新任务优先级不低(数字不大)于它才切——
+                // SMP 下伪 IPI 天然存在(电平合并/选核广播),不能让
+                // idle(16)或更低优先级任务顶掉在跑任务(否则每 tick 的
+                // 公共出口都会把在跑任务踢回就绪队列,抖动且跨核迁移放大)
+                let switch = match cur.as_mut() {
+                    None => true,
+                    Some(cur) => {
+                        cur.state != State::Running
+                            || (!new.is_null() && (*new).priority <= cur.priority)
                     }
+                };
+                if switch {
+                    if let Some(new) = new.as_mut() {
+                        if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
+                            //检查是否栈溢出
+                            old.stack_overflow();
+                            submit_task(old);
+                        }
+                    }
+                } else if new != IDLE_TASKS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)] {
+                    // 不切且弹出的不是 idle(idle 是捏造的,本就不在队列):
+                    // 把弹出的任务放回就绪队列,否则它从调度器视野里丢失
+                    push_ready(new);
                 }
             }
-        }
+        })
     }
 }
 
@@ -127,14 +154,15 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
 }
 
 /// 查找并弹出就绪任务
-/// 如果任务队列里没有就绪任务，则返回IDLE任务
+/// 如果任务队列里没有就绪任务，则返回本核 IDLE 任务
 /// 不变式：`READY_BITS` 位 i 置位 ⟺ `READYQ[i]` 非空（push/pop 双侧维护，
 /// 不一致时 pop 侧自清位并在 debug 下断言——F4：修前一致性纯靠约定）
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
+    let idle = IDLE_TASKS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)];
     let tz = READY_BITS.trailing_zeros() as usize;
     if tz >= 16 {
-        return IDLE_TASK;
+        return idle;
     }
     let q = &mut READYQ[tz];
     match q.pop_front() {
@@ -147,23 +175,28 @@ unsafe fn pop_ready() -> *mut Task {
         None => {
             debug_assert!(false, "READY_BITS 位{tz}置位但队列为空——不变式被破坏");
             READY_BITS.set_bit(tz, false);
-            IDLE_TASK
+            idle
         }
     }
 }
 
 /// 推入就绪队列
 #[track_caller]
-/// 入队任务比当前任务优先级更高(数字更小)则请求调度。
-/// 调度器未启动(spawn 阶段 CURRENT_TASK=null)时不触发——任务已入队,
-/// start() 自然会调度到它
+/// 入队任务比某核当前任务优先级更高(数字更小)则向该核发 IPI 请求调度。
+/// 调度器未启动(该核 CURRENT=null)的核跳过——任务已入队,
+/// 该核 start()/首调度自然会调度到它。
+/// SMP:遍历全部在线核选核投递(ch25 路线③)——idle 核(优先级 16)
+/// 天然被任意任务"抢占",跨核唤醒由此闭环
 unsafe fn request_preempt_if_higher(task: *mut Task) {
-    let cur = super::xworker::current_ptr();
-    if cur.is_null() {
-        return;
-    }
-    if (*task).priority < (*cur).priority {
-        Porting::irq();
+    let n = Porting::core_count().min(MAX_HARTS as u16);
+    for h in 0..n {
+        let cur = super::xworker::current_ptr_at(h);
+        if cur.is_null() {
+            continue;
+        }
+        if (*task).priority < (*cur).priority {
+            Porting::irq_to(h);
+        }
     }
 }
 
@@ -200,8 +233,9 @@ unsafe fn push_delay(task: *mut Task) {
 }
 static mut READY_BITS: u16 = 0;
 
-/// 空闲任务，没有就绪任务时就切到这个任务
-pub(crate) static mut IDLE_TASK: *mut Task = core::ptr::null_mut();
+/// 每核空闲任务(按 mhartid 索引)——该核没有就绪任务时切到本核 idle;
+/// 每核一个:同一 idle 任务块绝不能在两核并发运行(state 字段会撕裂)
+pub(crate) static mut IDLE_TASKS: [*mut Task; MAX_HARTS] = [core::ptr::null_mut(); MAX_HARTS];
 
 /// 1-16 优先级任务就绪队列（下标 = 优先级-1），数字越小优先级越高。
 /// `VecDeque::new` 是 const——编译期初始化，运行期零惰性初始化

@@ -54,6 +54,11 @@ pub use HostPorting as Porting;
 use crate::task::Task;
 use bare_metal::CriticalSection;
 
+/// 内核数组定界用的核数上限——实际参与调度的核数由 `Porting::core_count()`
+/// 运行期决定(≤ MAX_HARTS)。CURRENT_TASK/IDLE_TASKS/临界区深度等
+/// 每核数组一律按此定界(ch25 改造路线②)
+pub(crate) const MAX_HARTS: usize = 16;
+
 /// 移植层接口定义
 pub trait Portable {
     /// 完全内存屏障
@@ -103,6 +108,10 @@ pub trait Portable {
         let _ = hart;
         Self::irq();
     }
+    /// 启动从核参与调度——单核默认空操作;多核口唤醒停泊的从核
+    /// (在 `start_scheduler` 之前由调度器调用,此刻就绪队列/每核 idle 已就绪)
+    #[inline]
+    fn start_secondary_cores() {}
 }
 
 /// host 测试用移植层 mock。

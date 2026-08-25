@@ -33,7 +33,7 @@
 
 - RISCV
   - [x] GD32VF103xx
-  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——12 项自测 ×10 连稳定)
+  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——12 项自测 ×10 连稳定;**SMP 双核执行验证** 2026-08-26——`-smp 2` 下从核参与调度,`smp::enable()` 显式开启,qemu_smp 6 项全绿)
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [x] ESP32C3: esp32c3(PAC 直依赖;构建级验证 2026-08-23,真机待验——启动需 direct boot/镜像头)
   - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
@@ -59,6 +59,12 @@ cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target ris
 qemu-system-riscv32 -M virt -nographic -bios none -kernel \
   target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
 # 期望输出 12/12 passed,进程以退出码 0 自行结束
+
+# SMP 双核执行验证(应用 smp::enable() 后 hart1 参与调度):
+cargo build --example qemu_smp --features qemu_riscv --target riscv32imac-unknown-none-elf --release
+qemu-system-riscv32 -M virt -smp 2 -nographic -bios none -kernel \
+  target/riscv32imac-unknown-none-elf/release/examples/qemu_smp
+# 期望输出 smp PASS: 6/6(双核并行/跨核唤醒/锁与堆压力/节拍推进)
 ```
 
 如果您有一块 longan-nano 或者 stm32f401ccu6 或者 stm32f103c8t6 最小系统板，那么[example](https://github.com/gqf2008/xtask/tree/master/examples)中的例子直接可以跑起来
@@ -161,6 +167,8 @@ pub trait Portable {
         let _ = hart;
         Self::irq();
     }
+    /// 启动从核参与调度——单核默认空操作;多核口唤醒停泊的从核
+    fn start_secondary_cores() {}
 }
 
 ```

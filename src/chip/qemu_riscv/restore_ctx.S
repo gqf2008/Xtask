@@ -1,16 +1,27 @@
-// 调度器启动:恢复第一个任务(gd32 restore_ctx.S 的无 msubm 变体)
+// 调度器启动:恢复本核第一个任务(gd32 restore_ctx.S 的无 msubm 变体)
+// 主核由 start_scheduler 调用;从核由 secondary_main 在放行后调用——
+// 同一份代码,mhartid 寻址天然每核正确(ch25 改造路线②)
 
 // 关全局中断
 csrc mstatus, 0x00000008
-// 栈顶下留 4K 作中断栈(trap 后 TickHandler→调度器→take_expired 的 Vec/迭代器
-// 全在此栈上跑,512B 会溢出——gd32 的 512 依据是 2K 启动栈只剩 1.5K,不适用)
-// 存入 mscratch,trap 入口经 csrr 只读换栈(mscratch 恒持中断栈,永不改写)
+// 每核中断栈:mscratch = _stack_start - 4K*(hartid+1)。
+// 栈顶下每核各留 4K(trap 后 TickHandler→调度器→take_expired 的 Vec/迭代器
+// 全在此栈上跑,512B 会溢出——gd32 的 512 依据是 2K 启动栈只剩 1.5K,不适用)。
+// 布局(_hart_stack_size=2K):hart0 启动栈 [-2K,0]、hart1 启动栈 [-4K,-2K]
+// 互不重叠;hart0 中断栈顶在 -4K 向下生长,hart1 在 -8K 向下,亦互不重叠。
+// 存入 mscratch,trap 入口经 csrr 只读换栈(mscratch 恒持本核中断栈,永不改写)
 la t0, _stack_start
-li t1, 4096
+csrr t1, mhartid
+addi t1, t1, 1
+slli t1, t1, 12
 sub t0, t0, t1
 csrw mscratch, t0
-// 装载第一个任务
-lw t0, CURRENT_TASK_PTR
+// 装载本核当前任务:CURRENT_TASK_PTR 是每核指针表的基址,按 mhartid 索引
+csrr t1, mhartid
+slli t1, t1, 2
+la t0, CURRENT_TASK_PTR
+add t0, t0, t1
+lw t0, 0(t0)
 lw sp, 0x0(t0)
 // CSR 出栈先于通用寄存器(34 槽保留,跳过)——CSR 段用 t0 作草稿,
 // 若先恢复 x5 再装 CSR,t0 会被 mcause(0x80000007)覆盖;任务入口在

@@ -14,10 +14,16 @@ static mut TICKS: VolatileCell<u64> = VolatileCell::new(0);
 /// 每TICK多少微秒
 const TICK_PREIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 
+/// 节拍自增(tick ISR 侧,主核独占调用)。
+/// 读写同锁:SMP 下读侧(tick())在临界区内读,写侧也必须持同一把锁——
+/// 否则 RV32 上 u64 两次 32 位读写可撕裂,别核读者会读到高低位错代的值
 #[inline]
 pub(crate) unsafe fn increase_tick() {
-    let tick = TICKS.get() + 1;
-    TICKS.set(tick);
+    let tick = crate::sync::free(|_| {
+        let tick = TICKS.get() + 1;
+        TICKS.set(tick);
+        tick
+    });
     #[cfg(feature = "timer")]
     timer::do_tick(tick);
 }

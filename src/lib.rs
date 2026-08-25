@@ -30,6 +30,7 @@ pub mod ble;
 pub mod port;
 pub mod prelude;
 pub mod sd_proto;
+pub mod smp;
 pub mod sync;
 pub mod task;
 pub mod time;

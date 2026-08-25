@@ -1445,9 +1445,22 @@ pub trait Portable {
     fn core_count() -> u16 { 1 }
     /// 向指定核发软中断(IPI)——默认退化为本核 irq()
     fn irq_to(hart: u16) { let _ = hart; Self::irq(); }
+    /// 启动从核参与调度——单核默认空操作;多核口唤醒停泊的从核
+    fn start_secondary_cores() {}
 }
 
 ```
+
+> 演进注记(2026-08-26):SMP 已从设计落地为执行。qemu_riscv 口上,
+> 应用显式 `xtask::smp::enable()` 后,`-smp 2` 的 hart1 从 `_mp_hook`
+> 停泊中被放行参与调度:`CURRENT_TASK`/临界区深度/idle 任务全部
+> 每核化(mhartid 索引,单核口槽 0 语义逐字不变),每核 4K 中断栈
+> (mscratch 按 hartid 分址),`submit` 的抢占请求遍历在线核定向投递
+> IPI,tick 主核独占(从核只开 MSIE)。执行验证:`examples/qemu_smp.rs`
+> 6 项全绿(双核并行/跨核唤醒/8×1000 跨核锁精确/并发堆压力/节拍推进),
+> check.sh 第 4 步门禁;`qemu_kernel_tests` 在 -smp 1/-smp 2 下仍各
+> 12/12(未开启 SMP 时 hart1 永久停泊,单核语义不变)。设计分析与
+> 改造路线见 book/src/ch25-smp.md。
 
 ## RISC-V
 

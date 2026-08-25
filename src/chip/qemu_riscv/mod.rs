@@ -40,13 +40,66 @@ const CLINT_MTIME: usize = 0xBFF8;
 /// SiFive test 设备(测试自退出)
 pub(crate) const SIFIVE_TEST: usize = 0x0010_0000;
 
-/// 重装 MTIMECMP(= MTIME + TICKS;先写 hi 再写 lo 防中途匹配——gd32 同序)
+// ---- SMP bring-up(ch25 改造路线②)----
+// 从核在 riscv-rt 的 `_mp_hook` 里停泊;应用 `smp::enable()` 后,
+// 调度器 start() 经 `start_secondary_cores` 写 SMP_GO 放行。
+
+/// 已登记的核数(从核进 _mp_hook 时按 hartid+1 抬升;主核出厂即 1)。
+/// core_count() 据此返回真实核数——同一 ELF 跑 -smp 1 时恒 1
+static HARTS_ONLINE: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(1);
+/// 放行魔数闸:主核调度数据(就绪队列/每核 idle)就绪后写入,
+/// 从核轮询到此值才进调度。魔数而非 bool:bss 清零(0)与未初始化
+/// 内存(任意值)都必须判"未放行"
+static SMP_GO: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+const SMP_GO_MAGIC: u32 = 0xC0FF_EE11;
+
+/// riscv-rt 启动闸(覆盖其 PROVIDE 默认):hart0 返回 true 走正常启动;
+/// 从核直接进 secondary_main——登记、装 trap、等放行、进调度,皆不返回
+#[no_mangle]
+extern "Rust" fn _mp_hook(hartid: usize) -> bool {
+    if hartid == 0 {
+        return true;
+    }
+    unsafe { secondary_main(hartid) }
+}
+
+/// 从核入口(mp_hook 上下文,M 态,本核启动栈上运行)
+///
+/// # Safety
+/// 只应由 `_mp_hook` 以本核 hartid 调用一次。不返回。
+unsafe fn secondary_main(hartid: usize) -> ! {
+    use core::sync::atomic::Ordering;
+    extern "C" {
+        fn _setup_interrupts();
+    }
+    // 登记本核存在(主核 core_count() 依此放行对应数量的 idle/IPI)
+    HARTS_ONLINE.fetch_max((hartid + 1) as u16, Ordering::Relaxed);
+    // mtvec = _start_trap(hart0 由 riscv-rt 代调;从核不返回 mp_hook,自调)
+    _setup_interrupts();
+    // 只开 MSIE(IPI 唤醒)——不开 MTIE:tick 主核独占(ch25 ⑤),
+    // 本核 MTIMECMP 永不装载(reset=0 会立触发,绝不能开)
+    core::arch::asm!("csrs mie, {0}", in(reg) 1u32 << 3);
+    // 等主核放行:自旋轮询(一次性启动会合,毫秒级——不用 wfi:
+    // wfi 需要放行方再补一脚 IPI 才能醒,且"踢早于 GO 可见"会永久
+    // 睡死;启动会合用自旋最简单且无竞争窗口)
+    while SMP_GO.load(Ordering::Acquire) != SMP_GO_MAGIC {
+        core::hint::spin_loop();
+    }
+    // 首调度:挑一个就绪任务(或本核 idle)装进 CURRENT[本核]
+    crate::task::scheduler::schedule();
+    // 恢复现场进任务(mret,不返回)——与主核共用 restore_ctx.S:
+    // mscratch 按 hartid 分址、CURRENT 按 hartid 索引,天然每核正确
+    core::arch::asm!(include_str!("restore_ctx.S"), options(noreturn, raw));
+}
+
+/// 重装 MTIMECMP(= MTIME + TICKS;先写 hi 再写 lo 防中途匹配——gd32 同序)。
+/// MTIMECMP 是 per-hart 寄存器(+8*hartid);tick 主核独占,故实际只写 hart0 的
 #[inline]
 pub(crate) fn reset_systick() {
     const TICKS: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
     let mtime = QemuRiscvPorting::systick();
     let v = mtime + TICKS;
-    let cmp = (CLINT_BASE + CLINT_MTIMECMP) as *mut u32;
+    let cmp = (CLINT_BASE + CLINT_MTIMECMP + 8 * QemuRiscvPorting::hart_id() as usize) as *mut u32;
     unsafe {
         cmp.add(1).write_volatile(((v >> 32) as u32) & 0xffff_ffff); // hi 先
         cmp.write_volatile(v as u32); // lo 后
@@ -127,6 +180,25 @@ impl Portable for QemuRiscvPorting {
     #[inline]
     fn hart_id() -> u16 {
         riscv::register::mhartid::read() as u16
+    }
+    /// 参与调度的核数:应用 `smp::enable()` 后 = 实际在线核数(-smp 2 → 2);
+    /// 未开启恒 1——同一 ELF 跑 -smp 1、或未开启 SMP 的 -smp 2(如
+    /// qemu_kernel_tests),都保持单核语义逐字不变
+    #[inline]
+    fn core_count() -> u16 {
+        if crate::smp::enabled() {
+            HARTS_ONLINE.load(core::sync::atomic::Ordering::Acquire)
+        } else {
+            1
+        }
+    }
+    /// 放行从核:写魔数闸(从核正在 _mp_hook 里 wfi 轮询)。
+    /// 仅在应用开启 SMP 时放行;否则从核永远停泊(单核语义)
+    #[inline]
+    fn start_secondary_cores() {
+        if crate::smp::enabled() {
+            SMP_GO.store(SMP_GO_MAGIC, core::sync::atomic::Ordering::Release);
+        }
     }
     /// 向指定核发软中断(IPI):CLINT MSIP 是 per-hart 寄存器(基址+4*hart),
     /// 按目标核寻址即天然 IPI(ch25 失效清单里的"写死单核 MSIP"就此解开)

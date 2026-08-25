@@ -8,10 +8,10 @@
 //! - **全局自旋**挡住别的核——单核恒立得,开销可忽略;SMP 落地时它就是
 //!   跨核互斥的半边(ch25 失效清单一)。无原子 CAS 的目标(rp2040/M0+)
 //!   暂为空桩:SMP 移植时由 SIO 硬件自旋锁补上,单核语义不受影响;
-//! - **每执行上下文深度计数**保证嵌套安全:外层已持区时,内层直接复用,
+//! - **每核深度计数**保证嵌套安全:外层已持区时,内层直接复用,
 //!   不重复关中断/抢锁。这同时解决了 host 端 `std::sync::Mutex` 不可重入
 //!   的死锁隐患(F1 修复的前提:`wakeup` 内包临界区后,已在临界区内的
-//!   调用方走嵌套路径)。
+//!   调用方走嵌套路径)。目标端深度按 mhartid 分槽,每核独占一字。
 //!
 //! 内核代码一律经 `sync::free` 进临界区;`Porting::free` 只是本模块
 //! 组合用的"关中断原语",不再被直接使用(唯一的例外历史遗留已清理)。
@@ -26,10 +26,18 @@ thread_local! {
     static CS_DEPTH: core::cell::Cell<usize> = core::cell::Cell::new(0);
 }
 
-/// 目标端:单核只有一个执行上下文持有临界区,一个深度字即可;
-/// SMP 时每核一个深度(per-hart 数组,ch25 改造路线②一并落地)
+/// 目标端:深度按核分槽——每核只读写自己的槽,计数器本身无跨核竞态;
+/// 同核上 ISR 不会抢占持区任务(持区即关本核中断),故每核一个字即可
 #[cfg(not(test))]
-static mut CS_DEPTH: usize = 0;
+static mut CS_DEPTH: [usize; crate::port::MAX_HARTS] = [0; crate::port::MAX_HARTS];
+
+/// 本核深度槽下标(mhartid;恒 < MAX_HARTS——_max_hart_id 闸保证)
+#[cfg(not(test))]
+#[inline]
+fn hart() -> usize {
+    debug_assert!((Porting::hart_id() as usize) < crate::port::MAX_HARTS);
+    Porting::hart_id() as usize
+}
 
 #[inline]
 fn depth() -> usize {
@@ -38,10 +46,10 @@ fn depth() -> usize {
         CS_DEPTH.with(|d| d.get())
     }
     #[cfg(not(test))]
-    // SAFETY: 读之后只用于"是否嵌套"判断。外层路径在关中断后读写,嵌套路径
-    // 只在"本上下文已持区"(中断已被外层关)时为真——单核无竞态窗口
+    // SAFETY: 本核独占的槽;读之后只用于"是否嵌套"判断。外层路径在关中断后
+    // 读写,嵌套路径只在"本核已持区"(中断已被外层关)时为真——同核无竞态窗口
     unsafe {
-        CS_DEPTH
+        CS_DEPTH[hart()]
     }
 }
 
@@ -52,9 +60,9 @@ fn enter() {
         CS_DEPTH.with(|d| d.set(d.get() + 1));
     }
     #[cfg(not(test))]
-    // SAFETY: 同 depth()——外层关中断后写、嵌套在中断已关时写
+    // SAFETY: 同 depth()——本核独占槽,外层关中断后写、嵌套在中断已关时写
     unsafe {
-        CS_DEPTH += 1;
+        CS_DEPTH[hart()] += 1;
     }
 }
 
@@ -67,7 +75,7 @@ fn leave() {
     #[cfg(not(test))]
     // SAFETY: 同 enter();深度恒 ≥1 时才会 leave(配平由本模块结构保证)
     unsafe {
-        CS_DEPTH -= 1;
+        CS_DEPTH[hart()] -= 1;
     }
 }
 

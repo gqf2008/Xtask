@@ -119,8 +119,13 @@
 _start_trap:
   // 保存上文到当前任务栈
   SAVE_CONTEXT
-  // 任务块首字段存 sp
-  lw t0, CURRENT_TASK_PTR
+  // 任务块首字段存 sp——本核槽位:CURRENT_TASK_PTR 是每核指针表基址,
+  // 按 mhartid*4 偏移寻址(单核时 mhartid=0,与旧写死符号等价)
+  csrr t0, mhartid
+  slli t0, t0, 2
+  la t1, CURRENT_TASK_PTR
+  add t0, t0, t1
+  lw t0, 0(t0)
   sw sp, 0x0(t0)
   // 切到中断栈:mscratch 恒持中断栈地址(restore_ctx.S 启动时写一次,
   // 之后永不改)——必须 csrr 只读,csrrw 交换会把任务栈地址写进 mscratch,
@@ -163,8 +168,12 @@ _switch_and_restore:
   //   修前 bug:任务退出后 mscratch 残留已释放的任务栈地址,下一次
   //   中断在已释放内存上运行 → 内存复用后现场错乱 → guest 复位)
   jal ra, switch_context
-  // 装载新任务 sp(调度器已更新 CURRENT_TASK)
-  lw t0, CURRENT_TASK_PTR
+  // 装载本核新任务 sp(调度器已更新 CURRENT[本核];mhartid 索引同上)
+  csrr t0, mhartid
+  slli t0, t0, 2
+  la t1, CURRENT_TASK_PTR
+  add t0, t0, t1
+  lw t0, 0(t0)
   lw sp, 0x0(t0)
   RESTORE_CONTEXT
   mret
@@ -181,7 +190,11 @@ _switch_and_restore:
 .section .text
 .global _task_entry_trampoline
 _task_entry_trampoline:
-  lw t0, CURRENT_TASK_PTR   // CURRENT == 本任务(restore 前由 execute 设置)
+  csrr t0, mhartid        // CURRENT[本核] == 本任务(restore 前由 execute 设置)
+  slli t0, t0, 2
+  la t1, CURRENT_TASK_PTR
+  add t0, t0, t1
+  lw t0, 0(t0)
   lw t1, 8(t0)              // Task.entry(offset 8,见 mod.rs 布局断言)
   jalr t1                   // 标准调用:a0=args(帧设置),ra=返回蹦床
   j task_exit               // 入口跑完 → 退出路径(不返回)
