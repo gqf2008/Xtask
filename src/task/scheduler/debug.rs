@@ -15,7 +15,6 @@ pub(crate) fn start_debug_task() {
             unsafe {
                 print_ready_task();
                 print_delay_task();
-                print_blocked_task();
             }
             sleep_ms(5000);
         }
@@ -28,21 +27,7 @@ pub(crate) fn start_debug_task() {
 }
 unsafe fn print_ready_task() {
     use super::xtask::*;
-    let readys = &[
-        &Q1, &Q2, &Q3, &Q4, &Q5, &Q6, &Q7, &Q8, &Q9, &Q10, &Q11, &Q12, &Q13, &Q14, &Q15, &Q16,
-    ];
-
-    for q in readys.iter() {
-        if let Some(q) = *q {
-            q.iter().for_each(|item| {
-                print_task_list(*item);
-            });
-        }
-    }
-}
-unsafe fn print_blocked_task() {
-    use super::xtask::*;
-    if let Some(q) = &BLOCKED {
+    for q in READYQ.iter() {
         q.iter().for_each(|item| {
             print_task_list(*item);
         });
@@ -50,11 +35,9 @@ unsafe fn print_blocked_task() {
 }
 unsafe fn print_delay_task() {
     use super::xtask::*;
-    if let Some(q) = &DELAY {
-        q.iter().for_each(|item| {
-            print_task_list(*item);
-        });
-    }
+    DELAY.iter().for_each(|item| {
+        print_task_list(*item);
+    });
 }
 
 #[track_caller]
@@ -65,7 +48,7 @@ fn print_task_list(task: *mut Task) {
             task.name(),
             task.priority,
             task.ticks,
-            task.delay_ticks,
+            task.wake_tick,
             task.state
         );
     }

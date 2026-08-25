@@ -124,7 +124,9 @@ pub struct Task {
     pub(crate) name: String,
     pub(crate) stack_size: usize,
     pub(crate) ticks: usize,
-    pub(crate) delay_ticks: usize,
+    /// 绝对到期时刻（tick 计）——延时队列按它升序排列，tick 中断只查队首，
+    /// 不再每 tick 全队列递减（F3：消掉每 tick 的 O(n) 扫描与 ISR 内分配）
+    pub(crate) wake_tick: u64,
     pub(crate) id: u16,
     pub(crate) priority: u8,
     pub(crate) hwid: Option<u16>,
@@ -172,7 +174,7 @@ impl Task {
             queue: None,
             stack_size,
             ticks: 0,
-            delay_ticks: 0,
+            wake_tick: 0,
             name: name.to_string(),
             id: 1,
             priority,
@@ -208,12 +210,18 @@ impl Task {
         self.queue = None;
     }
     /// 唤醒任务，进入就绪队列待调度
-    /// 这个函数如果在用户任务里调用需要临界区保护
+    /// 内部已含临界区（检查+改状态+入队同一区）：裸任务上下文、ISR、
+    /// 已在临界区内的调用方都可直接调用——临界区可重入，嵌套安全（F1 修复：
+    /// 修前互斥靠注释约定，漏包临界区的调用方会与 ISR 并发撕队列）
     pub(crate) fn wakeup(&mut self) {
-        if self.state == State::Suspended {
-            self.state = State::Ready;
-            unsafe { scheduler::xtask::submit_task(self) };
-        }
+        let ptr = self as *mut Task;
+        crate::sync::free(|_| unsafe {
+            // SAFETY: ptr 来自上面的 &mut self，唤醒语义保证任务未释放
+            if (*ptr).state == State::Suspended {
+                (*ptr).state = State::Ready;
+                scheduler::xtask::submit_task(ptr);
+            }
+        });
     }
     //任务退出，立即立刻中断
     pub(crate) fn exit(&mut self) {
@@ -249,29 +257,15 @@ impl Task {
             self.queue = None;
         }
     }
-    /// 滴答
-    /// 总tick累加，延时tick累减，延时等于0且
-    /// 任务状态为阻塞时任务状态变更为就绪状态
-    #[inline(always)]
-    pub(crate) fn tick(&mut self) -> bool {
-        if self.delay_ticks > 0 {
-            self.delay_ticks -= 1;
-            if self.delay_ticks == 0 {
-                self.state = State::Ready;
-            }
-        } else {
-            self.ticks += 1;
-        }
-        self.state == State::Ready
-    }
-
     /// 暂停一定tick数，状态变更为阻塞状态
     /// 触发软中断切换任务
     /// 当前任务等待，在当前任务调用
     #[inline]
     pub(crate) fn wait(&mut self, ticks: usize) {
         self.state = State::Blocked;
-        self.delay_ticks = ticks;
+        // 记绝对到期时刻：延时队列按 wake_tick 升序插入（push_delay），
+        // tick 中断侧从队首摘取，同刻到期保持 FIFO 唤醒次序
+        self.wake_tick = crate::time::tick() + ticks as u64;
     }
 
     /// 栈围栏标志是否被修改
@@ -304,8 +298,8 @@ impl Display for Task {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "Task(id: {}, name: {}, ticks: {}, delay_ticks: {}, priority: {}, state: {:?})",
-            self.id, self.name, self.ticks, self.delay_ticks, self.priority, self.state
+            "Task(id: {}, name: {}, ticks: {}, wake_tick: {}, priority: {}, state: {:?})",
+            self.id, self.name, self.ticks, self.wake_tick, self.priority, self.state
         )
     }
 }

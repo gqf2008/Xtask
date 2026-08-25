@@ -6,7 +6,6 @@ pub mod arc;
 /// 于 PRIMASK,嵌套安全)。
 #[cfg(not(target_has_atomic = "ptr"))]
 pub(crate) mod atomic_cell {
-    use crate::port::Portable; // trait 方法解析需要
     pub(crate) struct AtomicCell<T>(core::cell::Cell<T>);
 
     impl<T: Copy> AtomicCell<T> {
@@ -14,17 +13,17 @@ pub(crate) mod atomic_cell {
             AtomicCell(core::cell::Cell::new(v))
         }
         pub(crate) fn load(&self) -> T {
-            crate::port::Porting::free(|_| self.0.get())
+            crate::sync::free(|_| self.0.get())
         }
         pub(crate) fn store(&self, v: T) {
-            crate::port::Porting::free(|_| self.0.set(v))
+            crate::sync::free(|_| self.0.set(v))
         }
         /// CAS 语义(返回 Ok(旧值) 表示已从 old 换成 new)——由闭包裁决
         pub(crate) fn fetch_update<F: FnOnce(T) -> Option<T>>(
             &self,
             f: F,
         ) -> Result<T, ()> {
-            crate::port::Porting::free(|_| {
+            crate::sync::free(|_| {
                 let cur = self.0.get();
                 match f(cur) {
                     Some(new) => {
@@ -38,6 +37,7 @@ pub(crate) mod atomic_cell {
     }
 }
 pub mod broadcast;
+pub mod critical;
 // crossbeam epoch 依赖原子 CAS——no-CAS 目标(thumbv6m)不可用,门控掉
 #[cfg(target_has_atomic = "ptr")]
 pub mod free_queue;
@@ -46,7 +46,7 @@ pub mod notify;
 pub mod queue;
 pub mod semaphore;
 
-pub use mutex::free;
+pub use critical::free;
 
 #[derive(Debug)]
 pub enum Error {

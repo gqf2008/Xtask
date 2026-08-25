@@ -6,7 +6,6 @@
 //! M0+ 无原子 CAS,spinning_top 依赖 CAS;临界区版在单核上语义等价且
 //! 与内核的 free() 纪律同源。XTaskSpinAlloc 类型保留(有 CAS 的目标可用)。
 
-use crate::port::{Portable, Porting};
 use bare_metal::Mutex;
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
@@ -44,7 +43,7 @@ impl XTaskAllocer {
     }
 
     pub unsafe fn init(&self, start_addr: usize, size: usize) {
-        Porting::free(|cs| {
+        crate::sync::free(|cs| {
             self.heap
                 .borrow(*cs)
                 .borrow_mut()
@@ -53,17 +52,17 @@ impl XTaskAllocer {
     }
 
     pub fn used(&self) -> usize {
-        Porting::free(|cs| self.heap.borrow(*cs).borrow().used())
+        crate::sync::free(|cs| self.heap.borrow(*cs).borrow().used())
     }
 
     pub fn free(&self) -> usize {
-        Porting::free(|cs| self.heap.borrow(*cs).borrow().free())
+        crate::sync::free(|cs| self.heap.borrow(*cs).borrow().free())
     }
 }
 
 unsafe impl GlobalAlloc for XTaskAllocer {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        Porting::free(|cs| {
+        crate::sync::free(|cs| {
             self.heap
                 .borrow(*cs)
                 .borrow_mut()
@@ -74,7 +73,7 @@ unsafe impl GlobalAlloc for XTaskAllocer {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        Porting::free(|cs| {
+        crate::sync::free(|cs| {
             self.heap
                 .borrow(*cs)
                 .borrow_mut()

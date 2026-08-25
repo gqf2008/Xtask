@@ -400,8 +400,9 @@ pub struct Task {
     //任务运行节拍计数器，任务每次获得CPU时累加，用于统计任务运行时长
     pub(crate) ticks: usize,
 
-    //任务延时tick计数器，每tick一次减1，直到为0时表示延时结束，重新进入就绪队列等待下一次tick到来时调度
-    pub(crate) delay_ticks: usize,
+    //任务延时的绝对到期时刻（tick计）。旧版是相对计数delay_ticks、每tick全队列减1；
+    //现行改为绝对时刻+按序排队，tick中断只看队首（见下文"节拍器中断服务程序"的演进注记）
+    pub(crate) wake_tick: u64,
 
     //任务ID，任务唯一的标识
     pub(crate) id: u16,
@@ -477,30 +478,10 @@ pub struct Task {
 /// 这个函数如果返回true，就说明有就绪任务，需要把当前任务切换掉，其实就是一条指令产生一个软中断，然后CPU会进入软中断服务程序里完成真正的切换，往下看下面一个函数就是
 fn do_systick(&self) -> bool {
         unsafe {
-            //从延时任务队列里扫描所有任务，并更新延时的delay_ticks-=1，同时收集delay_ticks==0的任务索引号
-            if let Some(delay) = &mut DELAY {
-                let readys: Vec<usize> = delay
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, task)| {
-                        if let Some(task) = (*task).as_mut() {
-                            if task.tick() {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                    //这段代码就是把delay_ticks==0（延时时间到了）的任务从延时队列里删除，并重新放到就绪队列里，submit_task这个函数会根据任务的状态值分发到不同的队列里
-                readys.iter().for_each(|i| {
-                    if let Some(task) = delay.remove(*i) {
-                        submit_task(task);
-                    }
-                });
-            }
+            //延时队列按wake_tick（绝对到期时刻）升序维护，到期任务必然是队首的一段连续前缀，
+            //从队首摘到第一个未到期就停——tick开销=O(到期数)，不再每tick全队列扫描递减
+            let now = crate::time::tick();
+            take_expired(&mut DELAY, now, |task| submit_task(task));
 
             // 检查尾导零，是否有比当前任务相等或更高优先级的任务
             // 如果想等优先级则时间片调度，否则就一直抢占着，直到任务主动挂起
@@ -512,39 +493,27 @@ fn do_systick(&self) -> bool {
 
 ```
 
-> ⚠️ **踩坑记录（这段代码曾经有个 bug）**：上面把到期任务从延时队列里删除时，用的是**升序**下标 `readys.iter().for_each(|i| delay.remove(*i))`。`VecDeque::remove(i)` 删掉一个元素后，它后面的所有元素都会前移一位，于是下一个要删的下标就错位了。比如 3 个任务同一个 tick 到期（下标 0、1、2)，升序删除会变成：删 0 → 队列前移 → 删 1（实际删的是原来的 2)→ 删 2（已越界，删不到）。结果只删了 2 个、漏 1 个——被漏掉的任务不会"永远睡死"（它的状态在下一次扫描时已被 `tick()` 翻回 Ready，见上面 `tick()` 的 else 分支），而是**滞留到下一次扫描才被唤醒，白多睡 1 个 tick**。一次确定性迟醒，就是这类"静默"bug 的全部面容。
+> 📜 **演进注记（延时队列的两代实现）**：旧版队列存**相对计数** `delay_ticks`，每个 tick 把全队列扫一遍、逐任务减 1，减到 0 的收回就绪队列——实现直白，但每 tick 都是 O（阻塞任务数），且收割时要先收集下标再删除。删除那一步曾有个真 bug：用**升序**下标 `readys.iter().for_each(|i| delay.remove(*i))`，而 `VecDeque::remove(i)` 删掉一个元素后后面全部前移，下一个下标就错位了。3 个任务同 tick 到期（下标 0、1、2)，升序删除变成：删 0 → 前移 → 删 1（实际删的是原来的 2)→ 删 2（已越界）。结果只删 2 个、漏 1 个——被漏的任务不会"永远睡死"（状态已被 `tick()` 翻回 Ready)，而是**白多睡 1 个 tick**。一次确定性迟醒，就是这类"静默"bug 的全部面容。当年的修法是先收集、**降序删除**，并抽成纯函数 `take_expired` 配 host 单测钉死。
 >
-> **修复后**：先收集到期下标，**按降序删除**（删大的下标不影响小的下标；下标本身是升序收集的，逆序遍历即降序，无需排序），并把这段逻辑抽成纯函数 `take_expired`，方便写单元测试：
+> 现行实现把模型换掉了：任务 `wait()` 时记**绝对到期时刻** `wake_tick = 当前tick + 延时tick数`，入队即按序插入（同刻到期的排已有之后，保 FIFO 唤醒次序）。收割不再需要"扫全队列+收集+删除"，从队首连摘即可，**下标错位这个 bug 类连根消失**：
 >
 > ```rust
-> /// 从延时队列取出所有到期任务。关键：必须降序删除，避免下标前移错位
-> pub(crate) fn take_expired(delay: &mut TaskQueue) -> Vec<*mut Task> {
->     let readys: Vec<usize> = delay
->         .iter()
->         .enumerate()
->         .filter_map(|(i, &task)| {
->             // SAFETY: 仅在临界区或单线程测试下调用，无二度可变别名
->             unsafe { task.as_mut() }.and_then(|t| if t.tick() { Some(i) } else { None })
->         })
->         .collect();
->     //逆序遍历升序下标 = 降序删除；出队后清掉 task.queue，避免 bind 时无谓的 O(n) 扫描
->     let mut expired: Vec<*mut Task> = readys
->         .iter()
->         .rev()
->         .filter_map(|i| {
->             let task = delay.remove(*i);
->             if let Some(&task) = task.as_ref() {
->                 unsafe { (*task).queue = None };
->             }
->             task
->         })
->         .collect();
->     expired.reverse(); //恢复先进先出的唤醒次序
->     expired
+> /// 从延时队列队首摘下所有到期任务（wake_tick <= now），逐个回调
+> pub(crate) fn take_expired(delay: &mut TaskQueue, now: u64, mut on_expired: impl FnMut(*mut Task)) {
+>     loop {
+>         match delay.front() {
+>             Some(&head) if unsafe { (*head).wake_tick <= now } => {}
+>             _ => break, // 队首未到期，后面更不会到期（有序性保证）
+>         }
+>         if let Some(task) = delay.pop_front() {
+>             unsafe { (*task).queue = None; (*task).state = State::Ready; }
+>             on_expired(task); // 调用侧 submit_task 分发回就绪队列
+>         }
+>     }
 > }
 > ```
 >
-> 对应的回归测试（host 单测）：3 个到期任务必须全部被取出、队列清空。这个 bug 就是靠这个测试抓住的——把修复改回升序，测试立刻变红。
+> 回归测试也随之换代（host 单测 5 条）：同刻到期全取出且 FIFO 次序不变、未到期保留、**队首未到期则一个都不摘**（阳性对照——误摘中段即破坏有序性）、出队任务状态回 Ready 且 queue 回指清空、空队列安全。
 
 
 
@@ -555,7 +524,7 @@ fn do_systick(&self) -> bool {
 什么时候触发任务切换呢？有以下几种情况:
 
 - 节拍器周期到了且有就绪任务，就是上面节拍器中断服务程序里做的事情
-- 任务函数里主动延时，例如调用了sleep函数，sleep函数里把当前任务状态置为Blocked，delay_ticks=延时tick数
+- 任务函数里主动延时，例如调用了sleep函数，sleep函数里把当前任务状态置为Blocked，并记下绝对到期时刻wake_tick=当前tick+延时tick数
 - 任务被挂起，例如：两个任务互斥（二值信号量/互斥锁），那么其中一个任务会被挂起
 
 任务切换需要直接操作CPU寄存器，以RISC-V为例，汇编代码如下

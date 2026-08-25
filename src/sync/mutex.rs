@@ -1,8 +1,10 @@
-//! 互斥锁（任务阻塞版）与临界区转发
+//! 互斥锁（任务阻塞版）
 //!
 //! 本文件回答"互斥"的两种粒度：
-//! - [`free`]：**不放弃 CPU 的互斥**——关中断的短临界区，保护"登记/取数"级代码
-//!   （几行到几十行，微秒级）。第 20 章 UART 驱动、注册表、bus 全用它。
+//! - [`free`](crate::sync::free)：**不放弃 CPU 的互斥**——可重入临界区
+//!   （irqsave 形态：关本核中断+全局自旋+深度计数，见 critical.rs），
+//!   保护"登记/取数"级代码（几行到几十行，微秒级）。第 20 章 UART 驱动、
+//!   注册表、bus 全用它。
 //! - [`Mutex`]：**愿意睡到拿锁为止的互斥**——拿不到的任务进入 `Blocked` 状态，
 //!   由持锁者释放时唤醒。文件 I/O 这种毫秒级操作只能用它（关中断几毫秒会打死 systick）。
 //!
@@ -11,22 +13,10 @@
 //! 安全代码里根本无法表达（guard 不被共享），双释放/他者释放的整类 bug 被类型系统
 //! 直接排除；C 版本需要运行时检查（错误码 EPERM/EBUSY）兜底同样的场景。
 
-use crate::port::{Portable, Porting};
-use bare_metal::CriticalSection;
-
-use crate::sync::semaphore::Semaphore;
 use crate::sync;
+use crate::sync::semaphore::Semaphore;
 use core::cell::{OnceCell, UnsafeCell};
 use core::ops::{Deref, DerefMut};
-
-/// 临界区保护
-#[inline]
-pub fn free<F, R>(f: F) -> R
-where
-    F: FnOnce(&CriticalSection) -> R,
-{
-    Porting::free(f)
-}
 
 /// 任务阻塞互斥锁。
 ///
