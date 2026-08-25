@@ -146,6 +146,21 @@ pub trait Portable {
     fn delay_us(us: u64);
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task);
+
+    // ---- SMP 扩展面(第 25 章改造路线②③,全部带单核默认实现)----
+    /// 当前核(hart)ID——SMP 口按 mhartid;单核口恒 0(默认)
+    fn hart_id() -> u16 {
+        0
+    }
+    /// 参与调度的物理核数——单核恒 1(默认)
+    fn core_count() -> u16 {
+        1
+    }
+    /// 向指定核发软中断(IPI)——默认退化为本核 irq();SMP 口按目标核寻址
+    fn irq_to(hart: u16) {
+        let _ = hart;
+        Self::irq();
+    }
 }
 
 ```

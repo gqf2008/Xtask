@@ -79,6 +79,30 @@ pub trait Portable {
     fn delay_us(us: u64);
     /// 保存任务环境到任务栈
     fn save_context(task: &mut Task);
+
+    // ---- SMP 扩展面(第 25 章改造路线②③)----
+    // 三个方法全部带单核默认实现:现有各口零改动、行为逐字不变;
+    // 多核口按需覆盖。见 book/src/ch25-smp.md。
+
+    /// 当前核(hart)ID——SMP 口按 mhartid;单核口恒 0(默认)
+    #[inline]
+    fn hart_id() -> u16 {
+        0
+    }
+    /// 参与调度的物理核数——单核恒 1(默认)。
+    /// 注意:这是"内核调度会使用的核数",不是硅片上的核数;
+    /// hart0-only 双核起跑阶段仍返回 1
+    #[inline]
+    fn core_count() -> u16 {
+        1
+    }
+    /// 向指定核发软中断(IPI)——默认退化为本核 `irq()`;
+    /// SMP 口按目标核寻址(CLINT MSIP 本就是 per-hart 寄存器)
+    #[inline]
+    fn irq_to(hart: u16) {
+        let _ = hart;
+        Self::irq();
+    }
 }
 
 /// host 测试用移植层 mock。

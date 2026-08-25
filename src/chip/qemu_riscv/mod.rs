@@ -109,19 +109,32 @@ impl Portable for QemuRiscvPorting {
     }
 
     /// 软中断(yield/调度请求):CLINT MSIP 写 1(电平源,ISR 写 0 清)
+    /// 按本核 hartid 寻址——单核时即 MSIP 基址,与旧实现等价
     #[inline]
     fn irq() {
-        let msip = (CLINT_BASE + CLINT_MSIP) as *mut u32;
-        unsafe {
-            msip.write_volatile(1);
-        }
+        Self::irq_to(Self::hart_id());
     }
     /// 清软中断(MSIP 写 0)
     #[inline]
     fn disable_irq() {
-        let msip = (CLINT_BASE + CLINT_MSIP) as *mut u32;
+        let msip = (CLINT_BASE + CLINT_MSIP + 4 * Self::hart_id() as usize) as *mut u32;
         unsafe {
             msip.write_volatile(0);
+        }
+    }
+
+    /// 当前核 ID:读 mhartid CSR(`-smp N` 启动时为 0..N-1)
+    #[inline]
+    fn hart_id() -> u16 {
+        riscv::register::mhartid::read() as u16
+    }
+    /// 向指定核发软中断(IPI):CLINT MSIP 是 per-hart 寄存器(基址+4*hart),
+    /// 按目标核寻址即天然 IPI(ch25 失效清单里的"写死单核 MSIP"就此解开)
+    #[inline]
+    fn irq_to(hart: u16) {
+        let msip = (CLINT_BASE + CLINT_MSIP + 4 * hart as usize) as *mut u32;
+        unsafe {
+            msip.write_volatile(1);
         }
     }
 
