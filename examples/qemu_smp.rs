@@ -124,10 +124,10 @@ fn main() -> ! {
         .spawn(|| {
             *DONE.lock() = Some(Queue::with_capacity(16));
 
-            // ---- 1. 核数 ----
+            // ---- 1. 核数(同一 ELF 支持 -smp 2..8;门禁跑 -smp 2)----
             let n = Porting::core_count();
             sprintln!("harts online: {n}");
-            check(n == 2, "core_count", format!("core_count={n}(应 2)"));
+            check(n >= 2, "core_count", format!("core_count={n}(应 ≥2)"));
 
             // ---- 2. 双核并行:两个自旋任务应落在不同核 ----
             static SEEN_A: AtomicUsize = AtomicUsize::new(0);

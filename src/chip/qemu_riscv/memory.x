@@ -18,12 +18,14 @@ REGION_ALIAS("REGION_BSS", RAM);
 REGION_ALIAS("REGION_HEAP", RAM);
 REGION_ALIAS("REGION_STACK", RAM);
 
-/* 双核起跑(SMP bring-up 第一步):放行 hart1 过 riscv-rt 的 _max_hart_id
-   闸(默认 0,超限 hart 在汇编段进 abort 死循环)。hart1 进入 Rust 侧后由
-   riscv-rt 默认 _mp_hook 停泊(wfi 循环,不进 main、不碰共享内存);
-   内核当前是 hart0-only 语义,hart1 唤醒纳入每核化改造(ch25 路线②)。
-   -smp 1 运行时此值无害(hart1 根本不存在)。 */
-_max_hart_id = 1;
+/* 多核起跑(SMP bring-up):放行 hart 过 riscv-rt 的 _max_hart_id 闸
+   (默认 0,超限 hart 在汇编段进 abort 死循环)。上限 7(支持 -smp 2..8;
+   内核数组按 MAX_HARTS=16 定界,栈布局亦按 16 个启动栈让位)。
+   从核进入 Rust 侧后由内核自覆的 _mp_hook 接管:登记在线数→
+   自旋等放行魔数(应用 smp::enable() 后由 start() 写入)→首调度进
+   任务;未开启 SMP 时永久停泊,hart0-only 语义不变。
+   -smp 1 运行时此值无害(从核根本不存在)。 */
+_max_hart_id = 7;
 
 /* 丢弃 .eh_frame:no_std + panic-halt 不展开栈;.L0 人格引用在
    --gc-sections 回收后落到 0 地址,与 0x80000000 基址差出 PC 相对域 */

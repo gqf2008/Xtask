@@ -219,7 +219,15 @@ impl Task {
             // SAFETY: ptr 来自上面的 &mut self，唤醒语义保证任务未释放
             if (*ptr).state == State::Suspended {
                 (*ptr).state = State::Ready;
-                scheduler::xtask::submit_task(ptr);
+                // SMP 关键：任务可能仍挂在某核 CURRENT 上（"临界区内 block()
+                // 入队挂起"与"出区后 yield 让出 CPU"之间的窗口——semaphore
+                // wait/post 等原语的标准形态）。此刻把它推进就绪队列，第三个
+                // 核会把它弹出并发执行同一个任务（>2 核下必现的整机挂死）。
+                // 仍在核上的不入队：它让出时 do_schedule 的 old 路径
+                // （submit_task(old)，state==Ready）会把它补入就绪队列，恰好一份
+                if !scheduler::xworker::is_current_any(ptr) {
+                    scheduler::xtask::submit_task(ptr);
+                }
             }
         });
     }

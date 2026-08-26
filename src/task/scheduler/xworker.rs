@@ -36,6 +36,17 @@ pub(crate) unsafe fn current_ptr_at(hart: u16) -> *mut Task {
     CURRENT_TASK[(hart as usize).min(MAX_HARTS - 1)]
 }
 
+/// 该任务是否正挂在某个核的 CURRENT 上(物理上仍在某核执行)。
+/// wakeup 用它区分"已离核的阻塞任务"(直接入队)与"挂起-让出窗口内
+/// 仍在核上的任务"(不入队——它让出时由 do_schedule 的 old 路径补入,
+/// 否则第三核会把它弹出并发执行,>2 核必现)。
+/// 只在临界区内调用:CURRENT 槽与 do_schedule 的 execute 同一把锁
+#[cfg(feature = "xtask_executor")]
+pub(crate) unsafe fn is_current_any(task: *mut Task) -> bool {
+    let n = Porting::core_count().min(MAX_HARTS as u16);
+    (0..n).any(|h| CURRENT_TASK[h as usize] == task)
+}
+
 impl Executor for XTaskExecutor {
     fn threads() -> u16 {
         Porting::core_count()
