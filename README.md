@@ -26,14 +26,14 @@
 ### 验证体系
 
 - [x] 宿主回归：`cargo test --lib`(纯逻辑单测，无需硬件)
-- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 14 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承)，全绿自退出
+- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 15 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁)，全绿自退出
 - [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、esp32c3 待上板
 
 ### 移植的芯片
 
 - RISCV
   - [x] GD32VF103xx
-  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——14 项自测 ×10 连稳定;**SMP 多核执行验证** 2026-08-26——`smp::enable()` 显式开启,从核参与调度,qemu_smp 8 项在 -smp 2/3/4/8 全绿;`TaskBuilder::affinity` 绑核确定性放置)
+  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——15 项自测 ×10 连稳定;**SMP 多核执行验证** 2026-08-26——`smp::enable()` 显式开启,从核参与调度,qemu_smp 8 项在 -smp 2/3/4/8 全绿;`TaskBuilder::affinity` 绑核确定性放置)
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [x] ESP32C3: esp32c3(PAC 直依赖;构建级验证 2026-08-23,真机待验——启动需 direct boot/镜像头)
   - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
@@ -58,7 +58,7 @@
 cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
 qemu-system-riscv32 -M virt -nographic -bios none -kernel \
   target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
-# 期望输出 14/14 passed,进程以退出码 0 自行结束
+# 期望输出 15/15 passed,进程以退出码 0 自行结束
 
 # SMP 多核执行验证(应用 smp::enable() 后从核参与调度):
 cargo build --example qemu_smp --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release

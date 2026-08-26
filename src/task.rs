@@ -119,6 +119,12 @@ pub enum State {
 /// 任务函数
 pub type Func = fn(*mut c_void);
 
+/// 一个任务最多同时持有的互斥锁数目(持锁集合数组容量)。
+/// 完整 PI 重算以集合为输入;嵌套深度超过 8 层的任务现实中不存在,
+/// 一旦触顶 debug 断言,超出部分不入账(该部分锁上的继承会退化为
+/// "等待者重试时再补抬"的经典行为)。
+pub(crate) const HELD_MAX: usize = 8;
+
 /// 任务队列
 pub type TaskQueue = VecDeque<*mut Task>;
 
@@ -154,6 +160,12 @@ pub struct Task {
     /// 优先级继承链靠它上传:"等锁 → 谁在持锁 → 持锁者又在等谁"。
     /// 普通信号量阻塞不设(PI 链止于非互斥原语,与 FreeRTOS/Zephyr 一致)。
     pub(crate) blocked_lock: *mut crate::sync::lock_core::LockCore,
+    /// **持锁集合**:本任务当前持有的所有互斥锁内核(认领成功压入,深度归零
+    /// 释放时摘出)。完整 PI 语义的根据——释放一把锁时,继承优先级从"剩余
+    /// 每把锁的队首等待者"重算,而不是一把锁一把锁地临时回落。
+    pub(crate) held_locks: [*mut crate::sync::lock_core::LockCore; HELD_MAX],
+    /// 持锁集合当前长度(0..=HELD_MAX;溢出时 debug 断言,超出部分不记账)
+    pub(crate) held_count: u8,
     pub(crate) hwid: Option<u16>,
     pub(crate) state: State,
 }
@@ -205,6 +217,8 @@ impl Task {
             priority,
             base_priority: priority,
             blocked_lock: ptr::null_mut(),
+            held_locks: [ptr::null_mut(); HELD_MAX],
+            held_count: 0,
             hwid: None,
             state: State::Ready,
         });
@@ -262,6 +276,36 @@ impl Task {
     pub(crate) fn exit(&mut self) {
         self.state = State::Terminated;
         yield_now();
+    }
+
+    /// 持锁记账:认领成功压入(可重入加深不重复压——同一把锁只记一次)。
+    /// 只在 `sync::free` 内被 lock_core 调用。
+    pub(crate) fn held_push(&mut self, core: *mut crate::sync::lock_core::LockCore) {
+        if (self.held_count as usize) < HELD_MAX {
+            self.held_locks[self.held_count as usize] = core;
+            self.held_count += 1;
+        } else {
+            debug_assert!(
+                false,
+                "任务 {} 同时持锁超过 {HELD_MAX} 把——集合溢出,这部分继承只按经典行为补抬",
+                self.name
+            );
+        }
+    }
+
+    /// 持锁记账:深度归零的真正释放时摘出(swap_remove,集合无序——
+    /// 完整 PI 重算只看"还持有谁",不看顺序)。返回是否摘到了。
+    pub(crate) fn held_remove(&mut self, core: *mut crate::sync::lock_core::LockCore) -> bool {
+        for i in 0..self.held_count as usize {
+            if ptr::eq(self.held_locks[i], core) {
+                let last = self.held_count as usize - 1;
+                self.held_locks[i] = self.held_locks[last];
+                self.held_locks[last] = ptr::null_mut();
+                self.held_count -= 1;
+                return true;
+            }
+        }
+        false
     }
 
     #[track_caller]

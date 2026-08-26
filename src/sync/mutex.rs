@@ -27,7 +27,8 @@ use core::ops::{Deref, DerefMut};
 ///
 /// 内核是 [`LockCore`]：锁空闲 → 认领为持有者；别人持有 → 本任务 `Blocked`
 /// 排队睡到被唤醒(等待队列**按优先级排序**,队首先醒);guard 析构 = 释放,
-/// 唤醒队首并**把持有者的继承优先级回落到出生值**。
+/// 唤醒队首,旧持有者的继承优先级由**全链重算**落位——从剩余持锁集合的
+/// 队首等待者取最大紧迫度,而不是一刀切回落到出生值(完整 PI)。
 /// 不可重入:同一任务嵌套拿同一把锁会把自己睡死(那是 [`ReentrantMutex`] 的
 /// 领域,见 `src/sync/reentrant_mutex.rs`——可重入锁在账本上多记一层递归深度)。
 /// [`ReentrantMutex`]: crate::sync::reentrant_mutex::ReentrantMutex
@@ -45,8 +46,9 @@ pub struct Mutex<T> {
 // 2) LockCore 的账本/队列访问全在 sync::free 临界区内:任务侧关中断串行、
 //    SMP 下全局自旋跨核互斥,不存在裸并发借用(rw 不变量与 critical.rs 同构);
 // 3) "认领失败+入队挂起"在同一临界区(lock_core::acquire),不存在丢失唤醒窗口;
-// 4) 优先级继承的一切优先级字段修改(lock_core::inherit_chain / set_priority)
-//    都在同一临界区内,与调度器的就绪队列换桶构成一个不可分割的事实。
+// 4) 优先级继承的一切优先级字段修改(lock_core::recompute_inheritance /
+//    place_priority → set_priority)都在同一临界区内,与调度器的就绪队列
+//    换桶构成一个不可分割的事实。
 // 因此 Mutex<T: Send> 的 Send/Sync 是 sound 的——与 semaphore.rs 同一论证
 // 家族,只是把"队列"换成了"数据"、把"计数"换成了"持有者"。
 unsafe impl<T: Send> Send for Mutex<T> {}

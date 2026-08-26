@@ -18,6 +18,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc as XArc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use xtask::arch::riscv::rt;
 use xtask::chip::qemu_riscv::stdout::{qemu_exit_fail, qemu_exit_pass, write_str};
@@ -435,6 +436,71 @@ fn test_priority_inheritance() {
     );
 }
 
+// ============ 测试 15:完整 PI——多锁持有下释放不丢继承 ★ ============
+// 经典实现的已知局限:持有者 T 先拿 A 再拿 B,WA(4)/WB(3) 分别阻塞在
+// A/B 上(T 被继承抬到 3);T 释放 A 时若"一把锁一把锁地回落到出生值",
+// 会直接掉回 6——B 上的继承暂时丢失,M(4) 就能在 T 放 B 之前插进来,
+// 反转从"释放缝"钻回。完整 PI(Task 持锁集合 + 全链重算)让 T 停在 3
+// (B 的队首 WB),M 只能排在 WB 之后。判别:完整实现序列
+// ...RA→RL→WB→WA→M(T 一气放完 B,M 排最后);经典实现是
+// ...RA→WA→WB→RL→M(WA 在 T 放 B 之前就抢进)——WA 的位置即判别点。
+fn test_priority_inheritance_multi_hold() {
+    static LOCK_A: Mutex<()> = Mutex::new(());
+    static LOCK_B: Mutex<()> = Mutex::new(());
+    static L_DONE: AtomicBool = AtomicBool::new(false);
+    static SEQ: Mutex<Vec<(&'static str, u64)>> = Mutex::new(Vec::new());
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    let m_not = Notifier::new();
+    let m_wait = m_not.clone();
+    SEQ.lock().clear();
+    L_DONE.store(false, Ordering::SeqCst);
+    // 持有者 T:先 A 后 B;两个高位等待者分别堵在两把锁上。
+    TaskBuilder::new().name("t15.holder").priority(6).spawn(move || {
+        let ga = LOCK_A.lock();
+        SEQ.lock().push(("TA", xtask::tick()));
+        // WA(4) 抢入:WA0 → 阻塞在 A 上 → T 被抬到 4
+        TaskBuilder::new().name("t15.wa").priority(4).spawn(move || {
+            SEQ.lock().push(("WA0", xtask::tick()));
+            let _g = LOCK_A.lock(); // 阻塞;醒后(T 放 B 之后)才拿得到
+            SEQ.lock().push(("WA", xtask::tick()));
+        });
+        let gb = LOCK_B.lock();
+        SEQ.lock().push(("TB", xtask::tick()));
+        // WB(3) 抢入:WB0 → 阻塞在 B 上(T 的继承变成 min(4,3)=3)
+        TaskBuilder::new().name("t15.wb").priority(3).spawn(move || {
+            SEQ.lock().push(("WB0", xtask::tick()));
+            let _g = LOCK_B.lock();
+            SEQ.lock().push(("WB", xtask::tick()));
+        });
+        // M(4):等第二阶段结束的观察者——完整 PI 下它只能排在 WB 后
+        TaskBuilder::new().name("t15.m").priority(4).spawn(move || {
+            SEQ.lock().push(("M0", xtask::tick()));
+            m_wait.wait(); // 等 T 释放 A 的通知
+            while !L_DONE.load(Ordering::SeqCst) {
+                xtask::sleep_ms(5); // 观察窗口:慢速轮询(经典实现会在此插队)
+            }
+            SEQ.lock().push(("M", xtask::tick()));
+            d2.post();
+        });
+        xtask::sleep_ms(30); // 等 WA/WB 阻塞、M 挂到通知上
+        drop(ga); // 释放 A:还剩 B——继承必须停在 3(B 的队首 WB),不许掉 6
+        SEQ.lock().push(("RA", xtask::tick()));
+        m_not.notify(); // 放 M 出来观察 WA 身后有多少空档
+        drop(gb); // 释放 B:再无持锁,T 才真正回落到出生值 6
+        SEQ.lock().push(("RL", xtask::tick()));
+        L_DONE.store(true, Ordering::SeqCst);
+    });
+    done.wait();
+    let s = SEQ.lock().clone();
+    let names: Vec<&str> = s.iter().map(|(n, _)| *n).collect();
+    check(
+        names == ["TA", "WA0", "TB", "WB0", "M0", "RA", "RL", "WB", "WA", "M"],
+        "priority_inheritance_multi_hold",
+        format!("序列 {names:?}(应 TA WA0 TB WB0 M0 RA RL WB WA M——释放 A 后 T 仍持 B 的继承 3,M 不能插进第二个临界区)"),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -451,7 +517,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 14/14 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 15/15 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
@@ -478,6 +544,7 @@ fn main() -> ! {
                 ("task_exit", test_task_exit),
                 ("reentrant_mutex", test_reentrant_mutex),
                 ("priority_inheritance", test_priority_inheritance),
+                ("priority_inheritance_multi_hold", test_priority_inheritance_multi_hold),
             ];
             let total = tests.len();
             let mut passed = 0usize;

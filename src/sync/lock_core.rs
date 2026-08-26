@@ -15,17 +15,21 @@
 //!    释放时唤醒队首即**最高优先级的等待者**。若按 FIFO 唤醒,换手后新
 //!    持有者可能比余下等待者还低,而低出的那笔继承没有人再补——优先级
 //!    反转会从"换手"的缝里钻回来(这是"优先级序队列"存在的全部理由)。
-//! 3. **PI 链**。阻塞时沿"等锁链"把每个持有者抬到不低于等待者的优先级:
-//!    等待者 →(在等 LockCore)持有者 →(持有者若也在等别的锁)那个锁的
-//!    持有者 → …传播值取途中最急者(数字最小)。链的边由 `Task.blocked_lock`
-//!    记录——只在互斥锁阻塞时设置,普通信号量不设(信号量无持有者,
-//!    PI 链止于此,与 FreeRTOS/Zephyr 一致)。
+//! 3. **完整 PI:per-task 持锁集合 + 全链重算**。`Task` 记着自己的持锁
+//!    集合(`held_locks`);每个触发点(等待者阻塞 / 释放 / 认领)都调
+//!    [`recompute_inheritance`]:从"有效优先级 = max(出生值, 每把仍持锁的
+//!    队首等待者优先级)"重算,并在"持有者又阻塞在另一把锁上"时沿
+//!    `blocked_lock` 边上溯到不动点。升**和降**都走同一条路:
+//!    释放 A 时,如果持有者还握着 B 且 B 有更高优先级等待者,那笔继承
+//!    由重算保住(第一代"释放即回落出生值"在这里暂时丢继承——经典
+//!    实现同款缺陷,本书第一版也是);同理,等待者的紧迫度消失(认领成功)
+//!    时沿链上溯收回,链上每一层的继承都随之重算,而不是只动直接持有者。
+//!    链的边由 `Task.blocked_lock` 记录——只在互斥锁阻塞时设置,普通
+//!    信号量不设(信号量无持有者,PI 链止于此,与 FreeRTOS/Zephyr 一致)。
 //!
-//! **已知局限**(与 FreeRTOS/Zephyr 经典实现同款,书稿第 8 章有专述):
-//! 释放时持有者优先级回落到 `base_priority`,若它此时还持有**另一把**锁
-//! 且那锁有更高优先级的等待者,这笔继承会被暂时丢掉(等待者只会在被
-//! 唤醒重试时才补抬)。完整语义需要 per-task 持锁集合 + 全链重算,
-//! 是留给读者的延伸题。
+//! 已知局限只剩一个:持锁集合溢出(单任务同时持锁 > [`HELD_MAX`](crate::task::HELD_MAX),
+//! 现实中不存在)时,溢出部分按"等待者重试补抬"的经典行为退化;
+//! 另与 FreeRTOS/Zephyr 一致地不提供 PCP(优先级天花板),那是另一个协议。
 
 use crate::sync;
 use crate::task::scheduler::xworker;
@@ -81,6 +85,11 @@ impl LockCore {
             None => {
                 self.owner = Some(me);
                 self.depth = 1;
+                // 完整 PI 的记账:新持有者把本锁压入持锁集合(可重入加深不重复)
+                if !me.is_null() {
+                    // SAFETY: 认领成功的 me 是当前执行身份,持有者语义有效
+                    unsafe { (*me).held_push(self as *mut LockCore) };
+                }
                 Claim::Held
             }
             Some(o) if o == me && reentrant => {
@@ -93,15 +102,17 @@ impl LockCore {
     }
 
     /// 阻塞路径(调用方在 `sync::free` 内,`claim_locked` 刚失败):
-    /// PI 抬链 + 按优先级入队 + 挂起。三步与认领的失败判定**同一临界区**,
+    /// PI 重算 + 按优先级入队 + 挂起。三步与认领的失败判定**同一临界区**,
     /// 不存在"判定失败后、入队前对方释放"的窗口——与信号量"试计数+入队
     /// 挂起同区"是同一纪律(书稿踩坑 2 的丢失唤醒在这条纪律下不可能发生)。
+    /// 入队**先于**重算:新等待者可能是队首(最高优先级),持有者的
+    /// 继承优先级要从队列现状重算。
     unsafe fn park_locked(&mut self, me: *mut Task) {
         debug_assert!(!me.is_null(), "阻塞路径只能在真任务上下文中走(host 单身份永远可重入)");
         if let Some(owner) = self.owner {
             (*me).blocked_lock = self as *mut LockCore;
-            inherit_chain(owner, (*me).priority);
             push_priority(&mut self.waiters, me);
+            recompute_inheritance(owner);
             (*me).block();
         }
         // owner 为 None 不可达:claim 失败只可能因 Busy,而释放也走本临界区,
@@ -109,7 +120,10 @@ impl LockCore {
     }
 
     /// 释放一层(调用方在 `sync::free` 内):深度 -1;减到 0 才真正释放——
-    /// 持有者优先级回落到出生值、账本清空、唤醒队首(最高优先级等待者)。
+    /// 从持锁集合摘掉这把锁、账本清空、唤醒队首(最高优先级等待者),
+    /// 再由**全链重算**决定旧持有者的继承优先级——不是"释放即回落到
+    /// 出生值":若它还持有别的锁且那锁有更高优先级的等待者,
+    /// 这笔继承由重算从剩余持锁的队首等待者里取回(完整 PI)。
     /// 返回是否彻底释放(可重入锁据此决定是否唤醒)。
     unsafe fn release_locked(&mut self, me: *mut Task) -> bool {
         let Some(owner) = self.owner else {
@@ -118,17 +132,19 @@ impl LockCore {
         debug_assert_eq!(owner, me, "锁只能由持有者自己释放(guard 不可跨任务移交)");
         self.depth -= 1;
         if self.depth > 0 {
-            return false; // 仍持有(外层还在锁内),不回落不唤醒
+            return false; // 仍持有(外层还在锁内),不摘集合不唤醒
         }
-        // 继承回落:恢复出生优先级。**已知局限**:持有者若还持有另一把锁且
-        // 那锁有更高优先级的等待者,这里回落会暂时丢掉那笔继承——等待者
-        // 重试拿锁时才是下一轮抬升(书稿"互斥量与信号量"节有专述)。
         if !owner.is_null() {
-            (*owner).priority = (*owner).base_priority;
+            (*owner).held_remove(self as *mut LockCore);
         }
         self.owner = None;
         if let Some(waiter) = self.waiters.pop_front() {
             (*waiter).wakeup();
+        }
+        // 唤醒之后重算:被唤醒的队首此刻尚未回临界区认领,而旧持有者的
+        // 优先级要按"剩余持锁"落位(是否仍有更高等待者取决于别的锁)
+        if !owner.is_null() {
+            recompute_inheritance(owner);
         }
         true
     }
@@ -152,6 +168,11 @@ pub(crate) fn acquire(core: &UnsafeCell<LockCore>, reentrant: bool) -> bool {
                 // 拿到锁 = 不再等任何人:清掉 PI 链的边。host(null)无任务可清
                 if !me.is_null() {
                     (*me).blocked_lock = ptr::null_mut();
+                    // 完整 PI:认领可能发生在"释放唤醒队首、队首还没认领"
+                    // 的挥舞窗口(barging)——此时队列里可能还压着更高优先级
+                    // 的等待者,新持有者必须被抬到队首的级别,否则反转从
+                    // 换手缝钻回。重算以持锁集合为输入,其余场景是幂等空转
+                    recompute_inheritance(me);
                 }
                 true
             }
@@ -171,6 +192,7 @@ pub(crate) fn try_acquire(core: &UnsafeCell<LockCore>, reentrant: bool) -> bool 
         if let Claim::Held | Claim::Nested = c.claim_locked(me, reentrant) {
             if !me.is_null() {
                 (*me).blocked_lock = ptr::null_mut();
+                recompute_inheritance(me);
             }
             true
         } else {
@@ -198,51 +220,78 @@ unsafe fn push_priority(q: &mut TaskQueue, t: *mut Task) {
     q.insert(pos, t);
 }
 
-/// PI 链:把从持有者开始的每个链节点抬到不低于传播优先级 `p`。
-/// 链:持有者 →(持有者若也阻塞在另一把互斥锁上)那个锁的持有者 → …
-/// 传播值取途中最急者(`p = min(p, 各节点现有优先级)`)——节点可能已被别的
-/// 等待者抬得更高,上传它就够了(这比 FreeRTOS 经典实现的"只抬直接持有者"
-/// 多走一步,传递阻塞链(H→M→L)因此不会掉链)。
-/// 步数上界 64:死锁环等病态链下每步至多改一次优先级字段,幂等,终止即可。
-unsafe fn inherit_chain(mut cur: *mut Task, mut p: u8) {
-    for _ in 0..64 {
-        if cur.is_null() {
-            return;
+/// 等锁链级联步数上界(老 `inherit_chain` 的 64 同款纪律):死锁环等病态链
+/// 下优先级字段每次落位后要么收敛要么被后续步覆写,幂等,到界即停;
+/// 正常链远小于此(n 个任务等锁链至多 n 层,每层至多重算几次)
+const MAX_INHERIT_STEPS: usize = 256;
+
+/// 一个任务此刻的**有效优先级** = max(出生优先级, 仍持有的每一把锁的
+/// 队首等待者优先级)。队首 = 最高优先级等待者(等待队列按优先级降序),
+/// 等待者的 `priority` 字段由不变式保证等于它自己的有效优先级
+/// ——传递继承(H→M→L)因此自动折叠进"队首扫描",不需要单独走链。
+unsafe fn compute_effective(t: *mut Task) -> u8 {
+    let mut p = (*t).base_priority;
+    let n = ((*t).held_count as usize).min((*t).held_locks.len());
+    for i in 0..n {
+        let lc = &*(*t).held_locks[i];
+        if let Some(&head) = lc.waiters.front() {
+            let hp = (*head).priority;
+            if hp < p {
+                p = hp;
+            }
         }
-        raise_one(cur, p);
-        p = (*cur).priority; // 节点可能本就更高(数字更小):上传它的
-        let next = (*cur).blocked_lock;
-        if next.is_null() {
-            return;
+    }
+    p
+}
+
+/// 把任务优先级落位为 `p`(升、降都可以——完整 PI 的"重算"既抬也落),
+/// 并处理两个连带事实:Ready 换就绪桶(`set_priority`,READY_BITS 不变式);
+/// Suspended 且在锁等待队列里 → 按新优先级重排(队首恒为最高——
+/// 它作为"在等者"的紧迫度变了,所有权者要按新现状重算)。
+unsafe fn place_priority(t: *mut Task, p: u8) {
+    if (*t).priority == p {
+        return;
+    }
+    crate::task::scheduler::xtask::set_priority(t, p);
+    if (*t).state == crate::task::State::Suspended && !(*t).blocked_lock.is_null() {
+        let lc = &mut *(*t).blocked_lock;
+        let q = &mut lc.waiters;
+        if q.iter().any(|&x| ptr::eq(x, t)) {
+            q.retain(|&x| !ptr::eq(x, t));
+            push_priority(q, t);
         }
-        cur = (*(next as *mut LockCore)).owner.unwrap_or(ptr::null_mut());
     }
 }
 
-/// 抬高单个任务到 `p`(数字更小者更高;反则不动)。
-/// 优先级变化的连锁反应有两处,都在这里处理:
-/// - Ready(在就绪队列里):`READYQ` 下标 = 优先级-1,同一临界区换桶
-///   (`set_priority`,破坏"位图⟺队列非空"不变式的窗口被临界区碾平);
-/// - Suspended 且在锁等待队列里:按新优先级重排(队首必须是最高)。
-unsafe fn raise_one(t: *mut Task, p: u8) {
-    if (*t).priority > p {
-        crate::task::scheduler::xtask::set_priority(t, p);
-        if (*t).state == crate::task::State::Suspended && !(*t).blocked_lock.is_null() {
-            let lc = &mut *(*t).blocked_lock;
-            let ptr = t;
-            let q = &mut lc.waiters;
-            if q.iter().any(|&x| ptr::eq(x, ptr)) {
-                q.retain(|&x| !ptr::eq(x, ptr));
-                push_priority(q, ptr);
-            }
+/// 完整 PI:从 `start` 开始按持锁集合重算有效优先级,并在等锁链上级联
+/// 直到不动点。每次落位都意味着"这个任务在它等的锁里作为等待者的紧迫度
+/// 变了",那把锁的持有者必须重算(可能连带自己的持有者…),如此沿
+/// `blocked_lock` 边上溯;某层重算结果没变即不动点,上层不受影响。
+/// 升、降都走这条路:等待者阻塞(升)、锁释放(落)、认领成功(落,
+/// 等待者的紧迫度从队列消失)都从这里进。
+unsafe fn recompute_inheritance(start: *mut Task) {
+    let mut cur = start;
+    for _ in 0..MAX_INHERIT_STEPS {
+        if cur.is_null() {
+            return;
         }
+        let p = compute_effective(cur);
+        if p == (*cur).priority {
+            return; // 不动点:本层没变,上层无感
+        }
+        place_priority(cur, p);
+        let up = (*cur).blocked_lock;
+        if up.is_null() {
+            return;
+        }
+        cur = (*(up as *mut LockCore)).owner.unwrap_or(ptr::null_mut());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::Task;
+    use crate::task::{State, Task};
     use alloc::boxed::Box;
     use core::ffi::c_void;
 
@@ -301,6 +350,7 @@ mod tests {
         let task = make_task(6);
         let mut core = LockCore::new();
         unsafe {
+            (*task).state = crate::task::State::Running; // 不落就绪队列(host 无调度器)
             core.owner = Some(task);
             core.depth = 1;
             (*task).priority = 2; // 模拟被高优先级等待者抬到 2
@@ -310,32 +360,123 @@ mod tests {
         unsafe { reclaim(&[task]) };
     }
 
-    /// 回归(核心):PI 链沿"等锁传链"上传——持有者若也阻塞在另一把锁上,
+    /// 回归(核心):PI 重算沿"等锁链"上传——持有者若也阻塞在另一把锁上,
     /// 那把锁的持有者一样被抬。H→M→L 三级是经典传递场景:
     /// H 等 M 的锁,M(持着单锁)又在等 L 的锁——L 必须被抬到 H 的级别,
     /// 否则 L 永远排在无关任务后面,H 被无限期卡住(火星探路者事故形态)。
     #[test]
-    fn inherit_chain_walks_transitive_edges() {
+    fn recompute_cascades_transitive_edges() {
         let h = make_task(1); // 等待者(链的源头)
         let m = make_task(5); // 中间层:持有 core1,阻塞在 core2 上
         let l = make_task(8); // 底层:持有 core2
         let mut core1 = LockCore::new();
         let mut core2 = LockCore::new();
         unsafe {
+            (*h).state = State::Suspended;
+            (*m).state = State::Suspended;
+            (*l).state = State::Running;
             core1.owner = Some(m);
-            // 链上节点不落就绪队列:避免 set_priority 的 Ready 换桶把它们
-            // 送进全局 READYQ(回收后成悬垂)。Running/Suspended 只改字段
-            (*m).state = crate::task::State::Suspended;
-            (*m).blocked_lock = &mut core2;
             core2.owner = Some(l);
-            (*l).state = crate::task::State::Running;
-            // 只有 h 是"刚阻塞在 core1 上"的等待者,传入 h 的优先级
-            inherit_chain(core1.owner.unwrap(), (*h).priority);
+            // 持锁集合与等待队列按不变式摆好:h ∈ core1 队、m ∈ core2 队
+            (*m).held_push(&mut core1);
+            (*l).held_push(&mut core2);
+            (*h).blocked_lock = &mut core1;
+            push_priority(&mut core1.waiters, h);
+            (*m).blocked_lock = &mut core2;
+            push_priority(&mut core2.waiters, m);
+            // h 刚阻塞在 core1 上:从持有者起重算并上溯
+            recompute_inheritance(core1.owner.unwrap());
             assert_eq!((*m).priority, 1, "直接持有者应被抬到 H 的优先级");
             assert_eq!((*l).priority, 1, "传递链上的底层持有者同样要被抬");
             // 清零边,避免回收后悬垂指针
             (*m).blocked_lock = ptr::null_mut();
+            (*h).blocked_lock = ptr::null_mut();
         }
         unsafe { reclaim(&[h, m, l]) };
+    }
+
+    /// 完整 PI(第一代缺陷的回归):释放一把锁时,从**剩余持锁集合**的队首
+    /// 等待者重算继承——持有者先拿 A 再拿 B,WA(2)/WB(3) 分别阻塞在
+    /// 两把锁上;释放 A 后必须停在 3(B 的队首),而不是直接回落到出生值 6
+    /// (经典实现在此处暂时丢掉 B 上的继承——书稿专述的已知局限)。
+    #[test]
+    fn release_keeps_inheritance_from_remaining_holds() {
+        let t = make_task(6);
+        let wa = make_task(2);
+        let wb = make_task(3);
+        let mut a = LockCore::new();
+        let mut b = LockCore::new();
+        unsafe {
+            (*t).state = State::Running;
+            (*wa).state = State::Suspended;
+            (*wb).state = State::Suspended;
+            a.owner = Some(t);
+            a.depth = 1;
+            b.owner = Some(t);
+            b.depth = 1;
+            (*t).held_push(&mut a);
+            (*t).held_push(&mut b);
+            // WA 阻塞在 A 上(模拟 park_locked 的入队+重算)
+            (*wa).blocked_lock = &mut a;
+            push_priority(&mut a.waiters, wa);
+            recompute_inheritance(t);
+            assert_eq!((*t).priority, 2, "A 的队首 WA(2) 应把持有者抬到 2");
+            // WB 阻塞在 B 上:持有者保持 2(A 的队首更急)
+            (*wb).blocked_lock = &mut b;
+            push_priority(&mut b.waiters, wb);
+            recompute_inheritance(t);
+            assert_eq!((*t).priority, 2);
+            // 释放 A:唤醒 WA,重算——B 上还挂着 WB(3),继承必须停在 3
+            let _ = a.release_locked(t);
+            assert_eq!((*t).priority, 3, "释放 A 后:B 的队首 WB(3) 仍要继承——完整 PI 不许掉到 6");
+            // 释放 B:再无持锁,才真正回落到出生值
+            let _ = b.release_locked(t);
+            assert_eq!((*t).priority, 6, "全部释放后必须回落到出生优先级 6");
+            (*wa).blocked_lock = ptr::null_mut();
+            (*wb).blocked_lock = ptr::null_mut();
+        }
+        unsafe { reclaim(&[t, wa, wb]) };
+    }
+
+    /// 完整 PI:继承"被收回"必须沿链级联——T(持 B、阻塞在 N 上)被
+    /// WB(3) 抬起来后,Y(N 的持有者)跟着抬到 3;T 释放 B 后 T 落回 5,
+    /// Y 必须跟着落到 5。"等锁链"每一层都按各自队首现状重算,而不是
+    /// 只动直接持有者(经典实现的链式抬升只会上抬,下落靠等待者重试补抬,
+    /// 会滞留到下一次假事件)。
+    #[test]
+    fn demote_cascades_up_blocked_chain() {
+        let t = make_task(5);
+        let y = make_task(6);
+        let wb = make_task(3);
+        let mut b = LockCore::new();
+        let mut n = LockCore::new();
+        unsafe {
+            (*t).state = State::Suspended;
+            (*y).state = State::Running;
+            (*wb).state = State::Suspended;
+            b.owner = Some(t);
+            b.depth = 1;
+            n.owner = Some(y);
+            n.depth = 1;
+            (*t).held_push(&mut b);
+            (*y).held_push(&mut n);
+            // T 阻塞在 N 上(T 在 N 的等待者里)
+            (*t).blocked_lock = &mut n;
+            push_priority(&mut n.waiters, t);
+            // WB 阻塞在 B 上:抬 T → 级联抬 Y
+            (*wb).blocked_lock = &mut b;
+            push_priority(&mut b.waiters, wb);
+            recompute_inheritance(t);
+            assert_eq!((*t).priority, 3, "B 的队首 WB(3) 应把 T 抬到 3");
+            assert_eq!((*y).priority, 3, "T 是 N 的队首——N 的持有者 Y 应级联抬到 3");
+            // T 释放 B(WB 被唤醒):T 的有效优先级重算为 5(无持锁),
+            // 这回落必须沿链上传到 Y
+            let _ = b.release_locked(t);
+            assert_eq!((*t).priority, 5, "T 释放 B 后回落出生值 5");
+            assert_eq!((*y).priority, 5, "Y 的抬升来自 T 的紧迫度——T 落了,Y 必须跟着落");
+            (*t).blocked_lock = ptr::null_mut();
+            (*wb).blocked_lock = ptr::null_mut();
+        }
+        unsafe { reclaim(&[t, y, wb]) };
     }
 }
