@@ -47,14 +47,16 @@ unsafe extern "C" fn mtimer_irq_isr() {
         // 早于 cmp 触发;ISR 延迟超过一拍时 el 会进位,语义仍正确)
         super::TICKLESS_ARMED.set(0);
         let now = super::Gd32vf103Porting::systick();
-        const PERIOD: u64 = (super::SYSTICK_CLOCK_HZ / super::TICK_CLOCK_HZ) as u64;
-        let el = now.wrapping_sub(armed) / PERIOD;
-        if scheduler::systick_jump(el.max(1)) {
+        let el = now.wrapping_sub(armed) / super::TICK_PERIOD;
+        let wake = scheduler::systick_jump(el.max(1));
+        // 先补"下一拍"再请求切换:若先发 MSIP,Bumblebee 的中断嵌套
+        // (0x7ED,ISR 内 MIE=1)会让软中断立刻叠进本 ISR,而 cmp 仍指
+        // 向刚过期的一击——嵌套走调度、出来后陈旧 MTI 立即再中,给
+        // 跳账补一笔白送的 +1 拍。重装即消(与 qemu 同构:跳账后重装)
+        super::reset_systick();
+        if wake {
             super::Gd32vf103Porting::irq();
         }
-        // 补一击"下一拍":电平/比较源若停在陈旧 cmp 上,出中断后条件
-        // 仍成立会立刻重入——重装即消
-        super::reset_systick();
     } else {
         //设置下一次中断时间
         super::reset_systick();

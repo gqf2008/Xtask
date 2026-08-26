@@ -15,7 +15,7 @@ use crate::{Task, IDLE_TASK_NAME};
 enum IdleDecision {
     /// 无任何期限——停表睡到外部中断(tick 冻结)
     SleepForever,
-    /// 期限已到——先处理到期(防御分支,理论不可达)
+    /// 期限已到——立即按"到点处理"语义走一次完整 tick(记 1 拍 + 摘到期)
     ProcessNow,
     /// 距最近期限 delta 拍——一次性武装后睡
     SleepUntil(u64),
@@ -52,10 +52,16 @@ pub(crate) fn start_idle_task() {
             if Porting::tickless_supported() && !crate::smp::enabled() && crate::tickless::enabled()
             {
                 tickless_idle();
+            } else {
+                // 恒定节拍:原地自旋等中断(每拍 tick ISR 都要进来推动
+                // 时间片/抢占;tickless 引擎的睡眠只发生在 tickless_idle 内部)。
+                // 但"停表长眠"期间若有人把开关关掉(SleepForever 的唤醒
+                // 之外,ISR 侧 set_enabled(false) 可直接发生),定时中断仍
+                // 被 mask——先补回恒定节拍(mie/cmp),否则自旋等不到任何
+                // 时钟推动,整机饿死。口侧自检幂等:未停表时零成本返回
+                Porting::tickless_resume_periodic();
+                core::hint::spin_loop();
             }
-            // 恒定节拍:原地自旋等中断(每拍 tick ISR 都要进来推动
-            // 时间片/抢占;tickless 引擎的睡眠只发生在 tickless_idle 内部)
-            core::hint::spin_loop();
         }
     }
 
@@ -74,52 +80,55 @@ pub(crate) fn start_idle_task() {
 }
 
 /// tickless 空闲引擎单轮:先看"有没有想跑的",再看"最近期限在哪",
-/// 然后三选一(停表长眠 / 一次性武装深睡 / 补办到期)。全部状态读取在
-/// 一个临界区内完成——DELAY/READYQ/软定时器堆与任何任务侧/ISR 侧操作
-/// 都要同一把锁(ch25 假设三纪律);行动(武装/停表)在移植层内各自成临界区
+/// 然后三选一(停表长眠 / 一次性武装深睡 / 到点处理)。**决策+行动+
+/// 入眠全程一个临界区**:不是为防 ISR 并发改内核状态(那由同一把锁保证),
+/// 而是关死"决策→行动"之间的状态漂移窗口——窗口内到达的中断一律
+/// pending,出区才被取走,ISR 看到的总是决策当时的一致状态;不会出现
+/// "MSIP 已把某任务标就绪、idle 却按旧状态停表长眠/按旧期限武装"的
+/// 竞态。wfi 在区内执行是合法惯例(RISC-V:已使能的中断 pending 即
+/// 唤醒 wfi,与全局 mstatus.MIE 无关;pending 的中断出区即 trap,不丢)
 fn tickless_idle() {
-    // 恒定节拍下,idle 靠"下一拍"把就绪任务踢出;tickless 没有拍可等:
-    // 就绪队列非空(例如 start() 之前已 spawn 的任务)必须主动让出,
-    // 否则整机停在 idle 里等一个永远不会来的期限。
-    unsafe {
+    sync::free(|_| unsafe {
+        // 恒定节拍下,idle 靠"下一拍"把就绪任务踢出;tickless 没有拍可等:
+        // 就绪队列非空(例如 start() 之前已 spawn 的任务)必须主动让出,
+        // 否则整机停在 idle 里等一个永远不会来的期限。
         if xtask::has_ready() {
             crate::yield_now();
             return;
         }
-    }
-    let decision = sync::free(|_| unsafe {
         let now = crate::time::tick();
         let delay_next = xtask::next_delay_tick();
         #[cfg(feature = "timer")]
         let timer_next = crate::timer::next_timer_tick();
         #[cfg(not(feature = "timer"))]
         let timer_next = None;
-        decide_idle(now, combine_deadline(delay_next, timer_next))
+        match decide_idle(now, combine_deadline(delay_next, timer_next)) {
+            IdleDecision::SleepForever => {
+                // 无期限可等:停表 + 深度睡——tick() 冻结是正确语义(
+                // 运行时时钟,不是墙钟;墙钟走 Porting::systick()/Instant)。
+                // 被外部中断(IPI/串口/任意已使能中断)唤醒,回外层循环重决
+                Porting::tickless_stop_timer();
+                Porting::tickless_wait();
+            }
+            IdleDecision::SleepUntil(delta) => {
+                // 一次性武装:delta 拍整后一次节拍中断,中断路径实测时长
+                // 跳账(TICKS += el)后照常摘到期任务——到点之间没有
+                // 任何中间拍,这就是"动态节拍"的全部收益。
+                // 早醒(睡眠期间来了 MSIP 等)时 ISR 测到 ~0 拍、清掉武装,
+                // 无事发生,回循环重决——无害(见第 29 章踩坑:早醒零拍)
+                Porting::tickless_arm_delta(delta);
+                Porting::tickless_wait();
+            }
+            IdleDecision::ProcessNow => {
+                // 期限已到而当前拍尚未跳(可达输入:Timer::after(0) 未拦、
+                // 延时入队时出现空档等)。按"到点处理"的真实语义走一次
+                // 完整 tick:记 1 拍账 + 摘延时队列 + 驱动软定时器堆 +
+                // 抢占检查(即 scheduler::systick)——之后过期期限必被
+                // 清理,下一轮决策按新状态进行。绝不空转
+                scheduler::systick();
+            }
+        }
     });
-    match decision {
-        IdleDecision::SleepForever => {
-            // 无期限可等:停表 + 深度睡——tick() 冻结是正确语义(
-            // 运行时时钟,不是墙钟;墙钟走 Porting::systick()/Instant)。
-            // 被外部中断(IPI/串口/任意已使能中断)唤醒,回外层循环重决
-            Porting::tickless_stop_timer();
-            Porting::tickless_wait();
-        }
-        IdleDecision::SleepUntil(delta) => {
-            // 一次性武装:delta 拍整后一次节拍中断,中断路径实测时长
-            // 跳账(TICKS += el)后照常摘到期任务——到点之间没有
-            // 任何中间拍,这就是"动态节拍"的全部收益。
-            // 早醒(睡眠期间来了 MSIP 等)时 ISR 测到 ~0 拍、清掉武装,
-            // 无事发生,回循环重决——无害(见第 29 章踩坑:早醒零拍)
-            Porting::tickless_arm_delta(delta);
-            Porting::tickless_wait();
-        }
-        IdleDecision::ProcessNow => {
-            // 防御分支:期限 ≤ now 而 tick 没跳——不变式"到点即摘"
-            // 保证其理论不可达(跳账与摘取同在中断路径完成);保留为
-            // 守卫,并让三态决策对全部输入有定义
-            let _ = unsafe { scheduler::do_systick_now() };
-        }
-    }
 }
 
 #[cfg(test)]
@@ -141,7 +150,7 @@ mod tests {
 
     #[test]
     fn decide_idle_past_or_equal_deadline_processes() {
-        // 提前 1 拍:防御分支
+        // 提前 1 拍:已到期,按到点处理走一次完整 tick
         assert_eq!(decide_idle(100, Some(99)), IdleDecision::ProcessNow);
         // 恰好到点:也是"已到期"——由中断路径的摘取处理
         assert_eq!(decide_idle(100, Some(100)), IdleDecision::ProcessNow);

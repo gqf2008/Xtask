@@ -28,6 +28,7 @@ pub mod stdout;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
+use crate::task::scheduler;
 use crate::task::Task;
 use core::arch::asm;
 
@@ -36,6 +37,11 @@ pub(crate) const CLINT_BASE: usize = 0x0200_0000;
 const CLINT_MSIP: usize = 0x0;
 const CLINT_MTIMECMP: usize = 0x4000;
 const CLINT_MTIME: usize = 0xBFF8;
+
+/// 每拍 mtime 计数 = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ = 10000。
+/// reset_systick 重装、一次性武装(tickless_arm_delta)、tick ISR
+/// 实测 el 三处共用(修前各写各的局部 const,名称也不一致)
+pub(crate) const TICK_PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
 
 /// SiFive test 设备(测试自退出)
 pub(crate) const SIFIVE_TEST: usize = 0x0010_0000;
@@ -92,13 +98,12 @@ unsafe fn secondary_main(hartid: usize) -> ! {
     core::arch::asm!(include_str!("restore_ctx.S"), options(noreturn, raw));
 }
 
-/// 重装 MTIMECMP(= MTIME + TICKS;先写 hi 再写 lo 防中途匹配——gd32 同序)。
+/// 重装 MTIMECMP(= MTIME + TICKS;先写 hi 再写 lo 防中途匹配)。
 /// MTIMECMP 是 per-hart 寄存器(+8*hartid);tick 主核独占,故实际只写 hart0 的
 #[inline]
 pub(crate) fn reset_systick() {
-    const TICKS: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
     let mtime = QemuRiscvPorting::systick();
-    let v = mtime + TICKS;
+    let v = mtime + TICK_PERIOD;
     let cmp = (CLINT_BASE + CLINT_MTIMECMP + 8 * QemuRiscvPorting::hart_id() as usize) as *mut u32;
     unsafe {
         cmp.add(1).write_volatile(((v >> 32) as u32) & 0xffff_ffff); // hi 先
@@ -240,11 +245,9 @@ impl Portable for QemuRiscvPorting {
     #[inline]
     fn tickless_arm_delta(delta_ticks: u64) {
         Self::free(|_| unsafe {
-            // 局部 const:PERIOD = 每拍 mtime 计数 = 10MHz/1000 = 10000
-            const PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
             let now = QemuRiscvPorting::systick();
             TICKLESS_ARMED.set(now);
-            let v = now + delta_ticks * PERIOD;
+            let v = now + delta_ticks * TICK_PERIOD;
             let cmp = (CLINT_BASE + CLINT_MTIMECMP + 8 * Self::hart_id() as usize) as *mut u32;
             cmp.add(1).write_volatile(((v >> 32) as u32) & 0xffff_ffff); // hi 先
             cmp.write_volatile(v as u32); // lo 后(防中途匹配)
@@ -268,6 +271,50 @@ impl Portable for QemuRiscvPorting {
     fn tickless_wait() {
         unsafe {
             core::arch::asm!("wfi");
+        }
+    }
+    /// 即将离开本核 idle(调度器回调):放弃未到期的一次性武装、按实测
+    /// 补账(只补整拍,子拍不记),并把节拍拨回恒定。没有这一步,
+    /// "睡眠中被外部中断早醒 → 有任务运行 → idle 重新武装"会把新武装
+    /// 锚在冻结的 TICKS 上——墙钟期限被每个清醒片段整体拖后;任务
+    /// 运行期也没有逐拍时间片/到期摘取
+    #[inline]
+    fn tickless_leave_idle() {
+        // tick 主核独占(ch25 ⑤):从核从不武装/停表,也不许恢复
+        if Self::hart_id() != 0 {
+            return;
+        }
+        Self::free(|_| unsafe {
+            let armed = TICKLESS_ARMED.get();
+            if armed != 0 {
+                TICKLESS_ARMED.set(0);
+                let el = QemuRiscvPorting::systick().wrapping_sub(armed) / TICK_PERIOD;
+                if el > 0 {
+                    scheduler::systick_jump(el);
+                }
+            }
+            // 无论睡眠形态(武装深睡/停表长眠),离开空闲都回恒定节拍
+            core::arch::asm!("csrs mie, {0}", in(reg) 1u32 << 7);
+            reset_systick();
+        });
+    }
+    /// 恒定节拍兜底自旋前的"节拍恢复"(自愈幂等):长眠期间应用/ISR
+    /// 关掉 tickless 后,自旋等的是被 mask 的节拍中断——不恢复就饿死。
+    /// 读 mie 自检:未停表(位已置)时一行分支即返回
+    #[inline]
+    fn tickless_resume_periodic() {
+        if Self::hart_id() != 0 {
+            return;
+        }
+        unsafe {
+            let mut mie: u32;
+            core::arch::asm!("csrr {0}, mie", out(reg) mie, options(nomem, nostack));
+            if mie & (1u32 << 7) == 0 {
+                Self::free(|_| {
+                    core::arch::asm!("csrs mie, {0}", in(reg) 1u32 << 7);
+                    reset_systick();
+                });
+            }
         }
     }
 

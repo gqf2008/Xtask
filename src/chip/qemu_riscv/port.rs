@@ -20,8 +20,7 @@ unsafe extern "C" fn TickHandler() {
         // 早于 cmp 触发;ISR 延迟超过一拍时 el 会进位,语义仍正确)
         super::TICKLESS_ARMED.set(0);
         let now = QemuRiscvPorting::systick();
-        const PERIOD: u64 = (super::SYSTICK_CLOCK_HZ / super::TICK_CLOCK_HZ) as u64;
-        let el = now.wrapping_sub(armed) / PERIOD;
+        let el = now.wrapping_sub(armed) / super::TICK_PERIOD;
         scheduler::systick_jump(el.max(1));
         // 补一击"下一拍"(now + PERIOD):电平源若停在陈旧 cmp 上,
         // mret 后中断条件仍成立,会立即重入——重装即消

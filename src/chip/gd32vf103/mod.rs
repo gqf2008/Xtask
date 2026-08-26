@@ -10,6 +10,7 @@ pub mod usb;
 use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ, TIMER_CTRL_ADDR};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
+use crate::task::scheduler;
 use crate::task::Task;
 use core::arch::asm;
 use gd32vf103xx_hal::eclic::*;
@@ -21,6 +22,11 @@ const TIMER_MTIME: usize = 0x0;
 const TIMER_MTIMECMP: usize = 0x8;
 /// msip软中断寄存器偏移量
 const TIMER_MSIP: usize = 0xFFC;
+
+/// 每拍 mtime 计数 = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ。
+/// reset_systick 重装、一次性武装(tickless_arm_delta)、tick ISR
+/// 实测 el 三处共用(修前各写各的局部 const,名称/类型也不一致)
+pub(crate) const TICK_PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
 
 /// 配置定时器、软中断、使能定时器中断和软中断
 #[inline]
@@ -147,10 +153,9 @@ impl Portable for Gd32vf103Porting {
     #[inline]
     fn tickless_arm_delta(delta_ticks: u64) {
         Self::free(|_| unsafe {
-            const PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
             let now = Gd32vf103Porting::systick();
             TICKLESS_ARMED.set(now);
-            set_mtimecmp(now + delta_ticks * PERIOD);
+            set_mtimecmp(now + delta_ticks * TICK_PERIOD);
             ECLIC::unmask(Interrupt::INT_TMR);
         });
     }
@@ -165,6 +170,45 @@ impl Portable for Gd32vf103Porting {
     fn tickless_wait() {
         unsafe {
             core::arch::asm!("wfi");
+        }
+    }
+    /// 即将离开本核 idle(调度器回调):放弃未到期的一次性武装、按实测
+    /// 补账(只补整拍,子拍不记),并把节拍拨回恒定。没有这一步,
+    /// "睡眠中被外部中断早醒 → 有任务运行 → idle 重新武装"会把新武装
+    /// 锚在冻结的 TICKS 上——墙钟期限被每个清醒片段整体拖后;任务
+    /// 运行期也没有逐拍时间片/到期摘取
+    #[inline]
+    fn tickless_leave_idle() {
+        // tick 主核独占(ch25 ⑤):从核从不武装/停表,也不许恢复
+        if Self::hart_id() != 0 {
+            return;
+        }
+        Self::free(|_| unsafe {
+            let armed = TICKLESS_ARMED.get();
+            if armed != 0 {
+                TICKLESS_ARMED.set(0);
+                let el = Gd32vf103Porting::systick().wrapping_sub(armed) / TICK_PERIOD;
+                if el > 0 {
+                    scheduler::systick_jump(el);
+                }
+            }
+            // 无论睡眠形态(武装深睡/停表长眠),离开空闲都回恒定节拍。
+            // 先装回 cmp 再补开:停在陈旧 cmp(≤mtime)上补开会立触发
+            reset_systick();
+            ECLIC::unmask(Interrupt::INT_TMR);
+        });
+    }
+    /// 恒定节拍兜底自旋前的"节拍恢复"(自愈幂等):长眠期间应用/ISR
+    /// 关掉 tickless 后,自旋等的是被 mask 的节拍中断——不恢复就饿死。
+    /// 读 ECLIC 使能位自检:未停表时一行分支即返回
+    #[inline]
+    fn tickless_resume_periodic() {
+        if Self::hart_id() != 0 {
+            return;
+        }
+        if !ECLIC::is_enabled(Interrupt::INT_TMR) {
+            reset_systick();
+            unsafe { ECLIC::unmask(Interrupt::INT_TMR); }
         }
     }
 
@@ -261,10 +305,6 @@ fn set_mtimecmp(v: u64) {
 /// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
 #[inline]
 pub(crate) fn reset_systick() {
-    /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
-    /// RTC_CLOCK_HZ、TICK_CLOCK_HZ在env.rs里配置
-    const TICKS: usize = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ;
     let mtime = Gd32vf103Porting::systick();
-    let mtimecmp = TICKS as u64 + mtime;
-    set_mtimecmp(mtimecmp);
+    set_mtimecmp(TICK_PERIOD + mtime);
 }

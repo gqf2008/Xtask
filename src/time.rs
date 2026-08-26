@@ -14,26 +14,14 @@ static mut TICKS: VolatileCell<u64> = VolatileCell::new(0);
 /// 每TICK多少微秒
 const TICK_PREIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 
-/// 节拍自增(tick ISR 侧,主核独占调用)。
+/// 节拍推进(tick ISR 侧,主核独占调用):TICKS 直接 +delta 并驱动
+/// 软定时器堆。逐拍路径 delta=1(恒定节拍),tickless 一次性到点
+/// delta=el(实测跳账,`jump_ticks`)——两者是同一操作的批量/逐拍两档,
+/// 等价性即"绝对时刻账本对逐拍/跳账等价"(第 29 章)。
 /// 读写同锁:SMP 下读侧(tick())在临界区内读,写侧也必须持同一把锁——
 /// 否则 RV32 上 u64 两次 32 位读写可撕裂,别核读者会读到高低位错代的值
 #[inline]
-pub(crate) unsafe fn increase_tick() {
-    let tick = crate::sync::free(|_| {
-        let tick = TICKS.get() + 1;
-        TICKS.set(tick);
-        tick
-    });
-    #[cfg(feature = "timer")]
-    timer::do_tick(tick);
-}
-
-/// 节拍快进(tickless 一次性定时到点,tick ISR 侧):TICKS 直接 +delta
-/// 并驱动软定时器堆——与 increase_tick 的逐拍路径等价,只是批量。
-/// tick() 是运行时时钟,内核睡了 delta 拍就补 delta 拍账,不损失任何账目;
-/// 期间到期/新建的延时与软定时器一律按绝对拍比较,跳账后天然归位
-#[inline]
-pub(crate) unsafe fn jump_ticks(delta: u64) {
+pub(crate) unsafe fn advance_ticks(delta: u64) {
     debug_assert!(delta > 0);
     let tick = crate::sync::free(|_| {
         let tick = TICKS.get() + delta;
@@ -42,6 +30,21 @@ pub(crate) unsafe fn jump_ticks(delta: u64) {
     });
     #[cfg(feature = "timer")]
     timer::do_tick(tick);
+}
+
+/// 节拍自增(恒定节拍每拍一次)
+#[inline]
+pub(crate) unsafe fn increase_tick() {
+    advance_ticks(1)
+}
+
+/// 节拍快进(tickless 一次性定时到点,tick ISR 侧):TICKS 直接 +delta
+/// 并驱动软定时器堆——与 increase_tick 的逐拍路径等价,只是批量。
+/// tick() 是运行时时钟,内核睡了 delta 拍就补 delta 拍账,不损失任何账目;
+/// 期间到期/新建的延时与软定时器一律按绝对拍比较,跳账后天然归位
+#[inline]
+pub(crate) unsafe fn jump_ticks(delta: u64) {
+    advance_ticks(delta)
 }
 
 /// 返回任务Tick

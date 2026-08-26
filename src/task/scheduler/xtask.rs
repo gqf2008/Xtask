@@ -53,6 +53,17 @@ impl Scheduler for XTaskScheduler {
             //弹出一个就绪任务(本核无就绪则回本核 idle)
             let new = pop_ready();
             let cur = super::xworker::current_ptr();
+            // 离开本核 idle 的边界:tickless 曾把节拍定时器拨成"一次性
+            // 武装/停表",现在确有别的任务要跑——口侧按实测补账
+            // (TICKS += el)并把节拍拨回恒定。否则"睡眠中被外部中断
+            // 早醒 → 任务运行 → idle 重新武装"会把新武装锚在冻结的
+            // TICKS 上,墙钟期限被每个清醒片段整体拖后;任务运行期也
+            // 失去逐拍时间片/到期摘取。恒定节拍口/未睡眠的 idle 是
+            // 空操作
+            let me = (Porting::hart_id() as usize).min(MAX_HARTS - 1);
+            if !cur.is_null() && cur == IDLE_TASKS[me] && new != cur {
+                Porting::tickless_leave_idle();
+            }
             // current_ptr 判空:从核首调度时本核 CURRENT 尚为 null
             if new != cur {
                 // 切换判据:cur 不在跑(阻塞/退出/尚未首调度)必切;
@@ -304,10 +315,13 @@ pub(crate) unsafe fn next_delay_tick() -> Option<u64> {
 
 /// 是否有任务处于就绪态(tickless 空闲引擎在睡眠前先看这一眼——
 /// 恒定节拍下 idle 靠"第一拍"被踢出,dynamic 下必须主动让出。
-/// 仅在单核语义下被调用(tickless 门控),与 do_systick 的读同源)
+/// 调用约定:仅在 tickless 门控的单核语义下、由 tickless_idle 在其
+/// 临界区内调用——与 tick ISR 一侧的写(`push_ready`/READY_BITS)
+/// 互斥,读到的位图是决策时刻的一致快照)
 #[inline]
 pub(crate) unsafe fn has_ready() -> bool {
-    // SAFETY: 单核语义下读位图,与 do_systick 同源(无并发写者)
+    // SAFETY: 调用方持临界区,与写侧(tick ISR 的 push_ready)同锁互斥;
+    // 唯一调用点 tickless_idle 在同一临界区内先后调用,无并发写者
     unsafe { READY_BITS != 0 }
 }
 

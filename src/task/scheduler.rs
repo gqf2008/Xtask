@@ -41,14 +41,6 @@ pub(crate) unsafe fn systick_jump(delta: u64) -> bool {
     schedulee.do_systick()
 }
 
-/// 空闲引擎"期限已到"防御分支:只执行到期摘取/抢占检查,不推账。
-/// 不变式"任何到点期限都已被 do_systick 即时摘取"保证其理论不可达;
-/// 保留为守卫,同时让三态决策函数对全部输入有定义
-#[inline]
-pub(crate) unsafe fn do_systick_now() -> bool {
-    schedulee.do_systick()
-}
-
 pub(crate) unsafe fn schedule() {
     schedulee.do_schedule()
 }
