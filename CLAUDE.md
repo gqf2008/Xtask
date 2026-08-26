@@ -34,7 +34,7 @@ cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-e
 
 A default target (`thumbv7em-none-eabihf`) and per-target `runner` (probe-run / gdb+openocd / elf2uf2-rs) are set in `.cargo/config.toml`; `cargo run` uses the runner to flash. OpenOCD configs and GDB scripts live in `debug/<chip>/`. Chip HALs are mostly crates, but `gd32vf103xx-hal` is a local path dep at `hal2/gd32vf103xx-hal`.
 
-Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4`, `rp2040`, `ch32v103`/`ch32v203`/`ch32v307`, `esp32c3`, plus `qemu_riscv` (QEMU virt; **execution-verified** — `check.sh` step 4 runs it; others build-verified 2026-08-23; real-board verification pending for f4/f1 constants, h7 timeline, cm32m4/rp2040). Non-chip features: `timer` (software timers), `debug_task`, `fs` (fatfs), `net` (smoltcp), `usb`, `ble`, `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp_pico`).
+Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4`, `rp2040`, `ch32v103`/`ch32v203`/`ch32v307`, `esp32c3`, plus `qemu_riscv` (QEMU virt; **execution-verified** — `check.sh` step 4 runs it; others build-verified 2026-08-23; real-board verification pending for f4/f1 constants, h7 timeline, cm32m4/rp2040). Non-chip features: `timer` (software timers), `tlsf` (global allocator backend swap to the hand-written mini TLSF, ch28), `debug_task`, `fs` (fatfs), `net` (smoltcp), `usb`, `ble`, `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp_pico`).
 
 ## Architecture
 
@@ -47,7 +47,7 @@ Layered, bottom-up:
 - **`src/sync/`** — IPC primitives built on the task state machine: `semaphore` (binary + counting), `queue` (MPMC), `broadcast`, `notify`, `mutex`, `reentrant_mutex` (recursive lock: gate semaphore + owner/depth ledger), `arc`, `free_queue`.
 - **`src/bus.rs`** — PubSub message bus.
 - **`src/timer.rs`** (`timer` feature) — software timers.
-- **`src/allocator.rs`** — global heap allocator (`linked_list_allocator`); apps call `xtask::init_heap(start_addr, size)` before spawning. `src/logger.rs` — `log` facade over RTT or stdout.
+- **`src/allocator.rs`** — global heap allocator (`linked_list_allocator`); `pub mod allocator` re-exports the engine for examples — the `tlsf` feature swaps `XTaskAllocer`'s inner engine to the hand-written mini TLSF (`allocator/tlsf.rs`, ch28; `FirstFit` is the same-shape first-fit wrapper for A/B experiments); apps call `xtask::init_heap(start_addr, size)` before spawning. `src/logger.rs` — `log` facade over RTT or stdout.
 - **`src/bsp/<board>/`** — board support (LED, stdout/UART, LCD, sensors). **`src/fs` / `src/net`** — optional fatfs / smoltcp integration.
 
 `src/prelude.rs` re-exports the public API (`spawn`, `TaskBuilder`, `sleep_ms`, `yield_now`, sync primitives, `start`, `sprint/sprintln`, etc.) — examples and apps `use xtask::prelude::*`.

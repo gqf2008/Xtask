@@ -64,6 +64,20 @@ impl<T> Mutex<T> {
         }
     }
 
+    /// PCP 构造: 带上**优先级天花板**(取值 1..=16,数字小=优先级高,
+    /// 同调度器约定)——这把锁启用**优先级天花板协议**:拿锁即升到天花板
+    /// (规则 1);只有"当前优先级严格优于所有他人持锁天花板"的任务才许拿
+    /// 空闲锁(规则 2,哪怕锁是空的——交叉持锁的死锁由此掐断)。
+    /// ⚠️ **声明责任**:天花板必须覆盖**所有**实际使用者(任何使用者
+    /// 优先级数字 ≥ ceiling),漏标的后果是协议性质失效,引擎按声明行事。
+    /// 与 PI 锁混用时协议定理失效——按锁二选一(书稿第 26 章)。
+    pub const fn with_ceiling(data: T, ceiling: u8) -> Self {
+        Self {
+            core: UnsafeCell::new(LockCore::with_ceiling(ceiling)),
+            data: UnsafeCell::new(data),
+        }
+    }
+
     /// 加锁：空闲立即返回；被占用则任务进入 `Blocked` 挂起,由持锁者释放时唤醒。
     /// 禁止在 ISR 中调用（会走 `LockCore` 的挂起路径,与 `Semaphore::wait` 同规）。
     pub fn lock(&self) -> MutexGuard<'_, T> {
@@ -120,6 +134,8 @@ mod tests {
     /// 全仓没有"运行时构造的 static 单例"先例，不可用也不许迁就）。
     const _: Mutex<u32> = Mutex::new(0);
     const _: Mutex<Option<u8>> = Mutex::new(None);
+    /// 编译门禁：PCP 构造同样必须 const(静态天花板锁的场景与 new 一致)。
+    const _: Mutex<u32> = Mutex::with_ceiling(0, 2);
 
     /// 回归：加锁→写→解锁→再取锁 看到同一个值（信号充足路径，host 可测）。
     #[test]

@@ -20,6 +20,8 @@ xtask_executor = []
 debug_task = []
 # 软件定时器
 timer = []
+# 全局分配器后端换迷你 TLSF(书稿第 28 章;默认 first-fit 空闲链表)
+tlsf = []
 # 默认调度器
 xtask_scheduler = []
 # 芯片支持

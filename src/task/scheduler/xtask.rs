@@ -234,10 +234,18 @@ pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
                 READY_BITS.set_bit(old as usize - 1, false);
             }
         }
-        push_ready(task);
-        // 抬升后的任务若比某核当前任务更急,立刻投 IPI——否则要等下个 tick
-        // 才有调度机会,PI 的关键"尽快放锁"就打了折扣
-        request_preempt_if_higher(task);
+        // SMP 在核竞态(wakeup 的 is_current_any 同款守卫):任务可能刚被别核
+        // wakeup 置 Ready、却仍挂在某核 CURRENT 上(临界区内 block 与出区后
+        // yield 让出之间的窗口)——此刻把它推进就绪队列,第三核会把它弹出
+        // 并发执行同一个任务(>1 核下同任务双跑,整机挂死)。仍在核上的不入队:
+        // 它让出时 do_schedule 的 old 路径(submit_task,state==Ready)会按
+        // 新优先级把它补进正确的就绪桶,恰好一份
+        if !super::xworker::is_current_any(task) {
+            push_ready(task);
+            // 抬升后的任务若比某核当前任务更急,立刻投 IPI——否则要等下个 tick
+            // 才有调度机会,PI 的关键"尽快放锁"就打了折扣
+            request_preempt_if_higher(task);
+        }
     }
 }
 
@@ -286,6 +294,17 @@ pub(crate) static mut READYQ: [TaskQueue; 16] = [const { VecDeque::new() }; 16];
 
 /// 延时队列——按 wake_tick 升序（push_delay 有序插入维护）
 pub(crate) static mut DELAY: TaskQueue = VecDeque::new();
+
+/// 测试清场(仅 host 单测):wakeup 会把就绪任务推进全局 READYQ——回收
+/// 任务前必须清桶清位图,否则回收后的悬垂指针留在就绪队列里,任何后续
+/// 驱动调度器的 host 测试都会解引用已释放的 Task。
+#[cfg(test)]
+pub(crate) unsafe fn clear_readyq_for_test() {
+    for q in READYQ.iter_mut() {
+        q.clear();
+    }
+    READY_BITS = 0;
+}
 
 #[cfg(test)]
 mod tests {

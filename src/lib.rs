@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-mod allocator;
+pub mod allocator;
 pub mod arch;
 pub mod bsp;
 pub mod bus;

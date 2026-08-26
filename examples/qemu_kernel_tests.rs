@@ -25,6 +25,7 @@ use xtask::chip::qemu_riscv::stdout::{qemu_exit_fail, qemu_exit_pass, write_str}
 use xtask::prelude::*;
 use xtask::sync::mutex::Mutex;
 use xtask::sprintln;
+use core::alloc::Layout;
 
 // 覆盖 panic 处理,把 panic 位置打到串口——panic 可见而非静默复位,
 // 这本身就是执行级验证的一部分(定位过程见书稿/提交信息)
@@ -487,8 +488,11 @@ fn test_priority_inheritance_multi_hold() {
         drop(ga); // 释放 A:还剩 B——继承必须停在 3(B 的队首 WB),不许掉 6
         SEQ.lock().push(("RA", xtask::tick()));
         m_not.notify(); // 放 M 出来观察 WA 身后有多少空档
-        drop(gb); // 释放 B:再无持锁,T 才真正回落到出生值 6
+        // RL 记在释放 B 之前:T 仍被 WB 的继承托在 3,记录瞬间不可被抢;
+        // 若放完才记,T 已掉回出生值 6,落在 drop 与拿 SEQ 之间的 tick 会
+        // 让 WB(3) 抢先记录——序列偶发翻红,测的就不是 PI 而是 tick 运气
         SEQ.lock().push(("RL", xtask::tick()));
+        drop(gb); // 释放 B:再无持锁,T 才真正回落到出生值 6
         L_DONE.store(true, Ordering::SeqCst);
     });
     done.wait();
@@ -498,6 +502,311 @@ fn test_priority_inheritance_multi_hold() {
         names == ["TA", "WA0", "TB", "WB0", "M0", "RA", "RL", "WB", "WA", "M"],
         "priority_inheritance_multi_hold",
         format!("序列 {names:?}(应 TA WA0 TB WB0 M0 RA RL WB WA M——释放 A 后 T 仍持 B 的继承 3,M 不能插进第二个临界区)"),
+    );
+}
+
+// ============ 测试 16:PCP——规则 2 拦下"空闲锁",交叉持锁不死锁 ★ ============
+// 理论(书稿第 26 章):X(2)/Y(5) 都要 A、B 两把天花板锁(天花板 2),
+// 顺序相反。PI 时代 Y 会先拿到空闲的 B → X 等 B、Y 等 A → 死锁;
+// PCP 的规则 2 在 Y 试图拿 B 时拦住("A 被 X 持,天花板 2 <= Y 的 5"),
+// **哪怕 B 是空的**——X 睡醒后自己拿 B 完成,环合不拢。
+// 判别:序列 [XA, YF, XB, YB, YA]——YB 落在 XB 之后,而 YF(XB 前,
+// X 只持 A 的窗口)时刻 B 确实是空的——Y 是"空锁面前被拦",铁证。
+// 看门狗(16)兜底:万一实现错了(死锁),套件不至于吊死,判红退出。
+fn test_pcp_ceiling_blocked() {
+    static LOCK_A: Mutex<()> = Mutex::with_ceiling((), 2);
+    static LOCK_B: Mutex<()> = Mutex::with_ceiling((), 2);
+    static SEQ: Mutex<Vec<(&'static str, u64)>> = Mutex::new(Vec::new());
+    static X_DONE: AtomicBool = AtomicBool::new(false);
+    static Y_DONE: AtomicBool = AtomicBool::new(false);
+    static Y_TRIED: AtomicBool = AtomicBool::new(false);
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    SEQ.lock().clear();
+    X_DONE.store(false, Ordering::SeqCst);
+    Y_DONE.store(false, Ordering::SeqCst);
+    Y_TRIED.store(false, Ordering::SeqCst);
+    // X(2,高):A → 等 Y 尝试信号(规则 2 把 Y 拦住的时刻,保证"X 仍持 A")→
+    // B(自己持 A,规则 2 不拦自己)→ 放干净 → 完成。
+    // 不用固定睡眠窗口:那依赖"Y 必然在窗口内被调度",时序脆弱
+    // (调度器/负载下 Y 可能整窗未跑——测试就空转了)。
+    TaskBuilder::new().name("t16.x").priority(2).spawn(move || {
+        let ga = LOCK_A.lock();
+        SEQ.lock().push(("XA", xtask::tick()));
+        // Y(5):X 睡出让出 CPU 时它才跑(5>2 抢不了 X)——试图拿**空闲的** B
+        // → 规则 2 拦(他人持 A,天花板 2 ≤ 5)
+        TaskBuilder::new().name("t16.y").priority(5).spawn(move || {
+            SEQ.lock().push(("YF", xtask::tick()));
+            Y_TRIED.store(true, Ordering::SeqCst);
+            let _gb = LOCK_B.lock(); // 天花板阻塞:锁是空的,但没资格
+            SEQ.lock().push(("YB", xtask::tick()));
+            let _ga = LOCK_A.lock();
+            SEQ.lock().push(("YA", xtask::tick()));
+            Y_DONE.store(true, Ordering::SeqCst);
+        });
+        while !Y_TRIED.load(Ordering::SeqCst) {
+            xtask::sleep_ms(1); // 等 Y 出手;它的 B.lock 若被拦,此刻 X 必仍持 A
+        }
+        // 再多睡一拍:tick 若恰好落在 Y 置标志与进 LOCK_B 临界区之间,X 会
+        // 抢先把 B 拿走——规则 2 从未开火,序列照样绿(假绿洞)。让出这一拍,
+        // Y 必定已走到 B.lock 并被拦下,"空锁面前被拦"才是必然事件
+        xtask::sleep_ms(1);
+        let _gb = LOCK_B.lock();
+        SEQ.lock().push(("XB", xtask::tick()));
+        drop(_gb); // 先 B 后 A(逆声明序;B 释放即唤醒天花板阻塞者 Y)
+        drop(ga);
+        X_DONE.store(true, Ordering::SeqCst);
+    });
+    // 看门狗(16):100ms 后拍快照——实现错了(死锁)时套件判红而不是吊死。
+    // 快照在读完之后由考官直读全局标志(死锁后无人再改写,读是安全的)。
+    TaskBuilder::new().name("t16.watch").priority(16).spawn(move || {
+        xtask::sleep_ms(100);
+        d2.post();
+    });
+    done.wait();
+    let s = SEQ.lock().clone();
+    let names: Vec<&str> = s.iter().map(|(n, _)| *n).collect();
+    check(
+        names == ["XA", "YF", "XB", "YB", "YA"]
+            && X_DONE.load(Ordering::SeqCst)
+            && Y_DONE.load(Ordering::SeqCst),
+        "pcp_ceiling_blocked",
+        format!(
+            "序列 {names:?}(应 XA YF XB YB YA——YB 必须落在 XB 后:Y 在空锁 B 前被规则 2 拦) \
+             双完成 {:?}", (X_DONE.load(Ordering::SeqCst), Y_DONE.load(Ordering::SeqCst))
+        ),
+    );
+}
+
+// ============ 测试 17:阳性对照——PI 交叉持锁死锁,看门狗确认 ★ ============
+// 与测试 16 **完全相同**的场景,只是两把锁换成普通(无天花板/纯 PI)互斥锁:
+// PI 只抬人不断环——Y 先拿空闲 B,再等 A;X 睡醒等 B——两条边互指,
+// 永久死锁。这是第 26 章"缺口一"的执行级实证:PI 管"快慢",不管"相持"。
+// 判别:序列停在 [XA, YF, YB](XB/YA 永不出现)、双 done 恒假 → 死锁确认。
+// 看门狗(16)150ms 后确认——两个任务都已无进展,套件继续而不是吊死。
+fn test_pi_cross_acquire_deadlock() {
+    static LOCK_A: Mutex<()> = Mutex::new(());
+    static LOCK_B: Mutex<()> = Mutex::new(());
+    static SEQ: Mutex<Vec<(&'static str, u64)>> = Mutex::new(Vec::new());
+    static X_DONE: AtomicBool = AtomicBool::new(false);
+    static Y_DONE: AtomicBool = AtomicBool::new(false);
+    static Y_GOT_B: AtomicBool = AtomicBool::new(false);
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    SEQ.lock().clear();
+    X_DONE.store(false, Ordering::SeqCst);
+    Y_DONE.store(false, Ordering::SeqCst);
+    Y_GOT_B.store(false, Ordering::SeqCst);
+    // X(2,高):A → 等"Y 已持 B"的握手 → 再等 B——两步都**只靠事件顺序**
+    // 不靠睡眠窗口:Y 没拿到 B 之前 X 碰都不碰 B,死锁由事实保证。
+    TaskBuilder::new().name("t17.x").priority(2).spawn(move || {
+        let ga = LOCK_A.lock();
+        SEQ.lock().push(("XA", xtask::tick()));
+        TaskBuilder::new().name("t17.y").priority(5).spawn(move || {
+            SEQ.lock().push(("YF", xtask::tick()));
+            let _gb = LOCK_B.lock(); // 空闲(PI 无规则 2)——立刻拿到
+            SEQ.lock().push(("YB", xtask::tick()));
+            Y_GOT_B.store(true, Ordering::SeqCst);
+            let _ga = LOCK_A.lock(); // X 持 → 挂起;PI 只把 X 抬到 2(它已是 2)
+            SEQ.lock().push(("YA", xtask::tick())); // 永不可达
+            Y_DONE.store(true, Ordering::SeqCst);
+        });
+        while !Y_GOT_B.load(Ordering::SeqCst) {
+            xtask::sleep_ms(1);
+        }
+        let _gb = LOCK_B.lock(); // Y 持 → 挂起。X 等 B、Y 等 A:环闭合,死锁
+        SEQ.lock().push(("XB", xtask::tick())); // 永不可达
+        drop(_gb);
+        drop(ga);
+        X_DONE.store(true, Ordering::SeqCst);
+    });
+    // 看门狗(16):150ms 后两个任务都该再没有进展——死锁确认(死锁时
+    // 只有 watcher 与 idle 可运行,watcher 必然走到这里;考官直读标志)
+    TaskBuilder::new().name("t17.watch").priority(16).spawn(move || {
+        xtask::sleep_ms(150);
+        d2.post();
+    });
+    done.wait();
+    let s = SEQ.lock().clone();
+    let names: Vec<&str> = s.iter().map(|(n, _)| *n).collect();
+    check(
+        names == ["XA", "YF", "YB"]
+            && !X_DONE.load(Ordering::SeqCst)
+            && !Y_DONE.load(Ordering::SeqCst),
+        "pi_cross_acquire_deadlock",
+        format!(
+            "序列 {names:?}(应 XA YF YB——XB/YA 永不出现,双 done 恒假:PI 交叉持锁死锁确认) \
+             双完成 {:?}", (X_DONE.load(Ordering::SeqCst), Y_DONE.load(Ordering::SeqCst))
+        ),
+    );
+}
+
+// ============ 第 28 章:迷你 TLSF(两引擎直驱,与全局分配器后端选择无关) ============
+
+/// RISC-V cycle CSR(M 模式直读;QEMU virt 实现)——分配耗时的执行级量具
+#[inline]
+fn rdcycle() -> usize {
+    let v: usize;
+    unsafe { core::arch::asm!("rdcycle {0}", out(reg) v) };
+    v
+}
+
+/// 测试 18:棋盘格物理碎片——两引擎共限(第 28 章的诚实底线执行级复现)。
+/// 棋盘 + 填隙后申请 4KB:first-fit 与迷你 TLSF 都必须失败;全放合并后
+/// 双双成功。顺带钉死 TLSF 的精确记账(used/free 逐字节可算)。
+fn test_tlsf_fragmentation() {
+    use xtask::allocator::{tlsf::MiniTlsf, FirstFit};
+    static mut BACK_FF: [u8; 16384] = [0; 16384];
+    static mut BACK_TF: [u8; 16384] = [0; 16384];
+    let lay = Layout::from_size_align(128, 8).unwrap();
+    let lay4k = Layout::from_size_align(4096, 8).unwrap();
+
+    let mut ff = FirstFit::empty();
+    let mut tf = MiniTlsf::empty();
+    let (bf, bt) = unsafe {
+        (
+            core::ptr::addr_of_mut!(BACK_FF) as *mut u8 as usize,
+            core::ptr::addr_of_mut!(BACK_TF) as *mut u8 as usize,
+        )
+    };
+    unsafe {
+        ff.init(bf, BACK_FF.len());
+        tf.init(bt, BACK_TF.len());
+    }
+    // TLSF 精确记账:每块 = 128 + 块头 16(RV32 为 8)——按平台算
+    let blk = (128 + 2 * core::mem::size_of::<usize>()).max(4 * core::mem::size_of::<usize>());
+    let mut pf = [core::ptr::null_mut::<u8>(); 32];
+    let mut pt = [None; 32];
+    let used0 = tf.used();
+    for i in 0..32 {
+        pf[i] = unsafe { ff.alloc(lay) }.expect("ff 32×128 应够").as_ptr();
+        pt[i] = unsafe { tf.alloc(lay) };
+    }
+    check(
+        tf.used() - used0 == 32 * blk,
+        "tlsf_fragmentation",
+        format!("TLSF 记账:32 块后 used 增量 {} 应恰为 {}", tf.used() - used0, 32 * blk),
+    );
+    // 填隙:占掉棋盘区外的余量,碎片才成立(余量在,4KB 会被它服务)
+    let ff_fill = Layout::from_size_align(ff.free() - 64, 8).unwrap();
+    let tf_fill = Layout::from_size_align(tf.free() - 64, 8).unwrap();
+    let _gf = unsafe { ff.alloc(ff_fill) };
+    let _gt = unsafe { tf.alloc(tf_fill) };
+    // 交错释放:16 个互不相邻的洞
+    for i in (1..32).step_by(2) {
+        unsafe {
+            ff.dealloc(core::ptr::NonNull::new(pf[i]).unwrap(), lay);
+            tf.dealloc(pt[i].unwrap(), lay);
+        }
+    }
+    // 4KB:两引擎都必须诚实失败(物理碎片是共限,TLSF 不是魔法)
+    let ff_big = unsafe { ff.alloc(lay4k) };
+    let tf_big = unsafe { tf.alloc(lay4k) };
+    // 全放:合并回连续区,双双成功
+    for i in (0..32).step_by(2) {
+        unsafe {
+            ff.dealloc(core::ptr::NonNull::new(pf[i]).unwrap(), lay);
+            tf.dealloc(pt[i].unwrap(), lay);
+        }
+    }
+    let ff_big2 = unsafe { ff.alloc(lay4k) };
+    let tf_big2 = unsafe { tf.alloc(lay4k) };
+    check(
+        ff_big.is_none() && tf_big.is_none() && ff_big2.is_some() && tf_big2.is_some(),
+        "tlsf_fragmentation",
+        format!(
+            "棋盘格 4KB:两引擎应同败(共限),合并后应同胜——实际 \
+             ff 败={} tf 败={} ff 胜={} tf 胜={}",
+            ff_big.is_none(), tf_big.is_none(), ff_big2.is_some(), tf_big2.is_some()
+        ),
+    );
+}
+
+/// 测试 19:分配耗时的结构性差异——"深链行走" vs "位图直达"。
+/// 布局:K 个 32B 小洞(守卫块隔开,不合并)堵在 first-fit 链前,
+/// 唯一的 2KB 洞在链尾;请求 2KB:first-fit 必须走过 K 个小洞(O(链)),
+/// TLSF 从小洞所在的桶位图直接跳到大洞桶(O(1))。取 8 次最小周期数
+/// (滤掉 tick 落入测量窗的干扰),断言 TLSF 显著更快且方向稳定。
+fn test_tlsf_alloc_determinism() {
+    use xtask::allocator::{tlsf::MiniTlsf, FirstFit};
+    const K: usize = 256;
+    static mut BACK_FF2: [u8; 65536] = [0; 65536];
+    static mut BACK_TF2: [u8; 65536] = [0; 65536];
+    let small = Layout::from_size_align(32, 8).unwrap();
+    let guard = Layout::from_size_align(8, 8).unwrap();
+    let big = Layout::from_size_align(2048, 8).unwrap();
+
+    // 同一布局搭两遍(每引擎一遍),测量"请求 2KB"的耗时
+    let mut build = |back: *mut u8, len: usize, is_tlsf: bool, ff: &mut FirstFit, tf: &mut MiniTlsf| {
+        unsafe {
+            if is_tlsf { tf.init(back as usize, len) } else { ff.init(back as usize, len) }
+        }
+        let mut guards = [core::ptr::null_mut::<u8>(); K];
+        let mut smalls_ff = [core::ptr::null_mut::<u8>(); K];
+        let mut smalls_tf: [Option<core::ptr::NonNull<u8>>; K] = [None; K];
+        for i in 0..K {
+            unsafe {
+                if is_tlsf {
+                    smalls_tf[i] = tf.alloc(small);
+                    guards[i] = tf.alloc(guard).unwrap().as_ptr();
+                } else {
+                    smalls_ff[i] = ff.alloc(small).unwrap().as_ptr();
+                    guards[i] = ff.alloc(guard).unwrap().as_ptr();
+                }
+            }
+        }
+        // 2KB 块 + 填隙(挡住它与余量合并/被余量代劳)
+        unsafe {
+            if is_tlsf {
+                let b = tf.alloc(big).unwrap();
+                let fill = Layout::from_size_align(tf.free() - 64, 8).unwrap();
+                let _f = tf.alloc(fill);
+                for i in 0..K { tf.dealloc(smalls_tf[i].unwrap(), small); }
+                tf.dealloc(b, big); // 2KB 洞在链尾/大桶,小洞 K 个在前
+            } else {
+                let b = ff.alloc(big).unwrap();
+                let fill = Layout::from_size_align(ff.free() - 64, 8).unwrap();
+                let _f = ff.alloc(fill);
+                for i in 0..K { ff.dealloc(core::ptr::NonNull::new(smalls_ff[i]).unwrap(), small); }
+                ff.dealloc(b, big);
+            }
+        }
+        guards // 守卫块保活到测量结束(防合并)
+    };
+
+    let mut ff = FirstFit::empty();
+    let mut tf = MiniTlsf::empty();
+    let (bf, lf, bt, lt) = unsafe {
+        (
+            core::ptr::addr_of_mut!(BACK_FF2) as *mut u8,
+            BACK_FF2.len(),
+            core::ptr::addr_of_mut!(BACK_TF2) as *mut u8,
+            BACK_TF2.len(),
+        )
+    };
+    let _g1 = build(bf, lf, false, &mut ff, &mut tf);
+    let _g2 = build(bt, lt, true, &mut ff, &mut tf);
+
+    // 各测 8 轮(分配→释放→再分配,洞不变),取最小周期数
+    let mut ff_min = usize::MAX;
+    let mut tf_min = usize::MAX;
+    for _ in 0..8 {
+        let c0 = rdcycle();
+        let b1 = unsafe { ff.alloc(big) };
+        let c1 = rdcycle();
+        unsafe { ff.dealloc(b1.unwrap(), big) };
+        let c2 = rdcycle();
+        let b2 = unsafe { tf.alloc(big) };
+        let c3 = rdcycle();
+        unsafe { tf.dealloc(b2.unwrap(), big) };
+        ff_min = ff_min.min(c1 - c0);
+        tf_min = tf_min.min(c3 - c2);
+    }
+    sprintln!("  [test19] K={K} first-fit={ff_min}cyc tlsf={tf_min}cyc");
+    check(
+        tf_min < ff_min && ff_min >= 2 * tf_min,
+        "tlsf_alloc_determinism",
+        format!("K={K} 深链:TLSF({tf_min}cyc)应显著快于 first-fit({ff_min}cyc,≥2×)"),
     );
 }
 
@@ -517,7 +826,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 15/15 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 19/19 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
@@ -545,6 +854,10 @@ fn main() -> ! {
                 ("reentrant_mutex", test_reentrant_mutex),
                 ("priority_inheritance", test_priority_inheritance),
                 ("priority_inheritance_multi_hold", test_priority_inheritance_multi_hold),
+                ("pcp_ceiling_blocked", test_pcp_ceiling_blocked),
+                ("pi_cross_acquire_deadlock", test_pi_cross_acquire_deadlock),
+                ("tlsf_fragmentation", test_tlsf_fragmentation),
+                ("tlsf_alloc_determinism", test_tlsf_alloc_determinism),
             ];
             let total = tests.len();
             let mut passed = 0usize;

@@ -61,6 +61,18 @@ impl<T> ReentrantMutex<T> {
         }
     }
 
+    /// PCP 构造: 带**优先级天花板**(1..=16,数字小=优先级高)——启用
+    /// 优先级天花板协议(拿锁即升到天花板;严格优于所有他人持锁天花板
+    /// 才许拿空闲锁;声明责任在使用者,书稿第 26 章;与 PI 锁混用则协议
+    /// 定理失效)。可重入语义不变:深度账本照记,天花板只在 0→1 与 →0
+    /// 交界处生效。
+    pub const fn with_ceiling(data: T, ceiling: u8) -> Self {
+        Self {
+            core: UnsafeCell::new(LockCore::with_ceiling(ceiling)),
+            data: UnsafeCell::new(data),
+        }
+    }
+
     /// 加锁：空闲/已持有立即返回；别人持有则任务 `Blocked` 睡到被唤醒后重试。
     /// 禁止在 ISR 中调用(挂起路径,与 `Mutex::lock` 同规)。
     pub fn lock(&self) -> ReentrantMutexGuard<'_, T> {
@@ -121,6 +133,7 @@ mod tests {
 
     /// 编译门禁：`ReentrantMutex::new` 必须 const(与 Mutex 同款静态单例诉求)。
     const _: ReentrantMutex<u32> = ReentrantMutex::new(0);
+    const _: ReentrantMutex<u32> = ReentrantMutex::with_ceiling(0, 2);
 
     /// 回归：同一任务嵌套拿锁不睡死,深度随 lock/drop 逐层涨落——这是它与
     /// 普通 Mutex 的本质区别(普通 Mutex 第二次 lock 就把自己堵死)。

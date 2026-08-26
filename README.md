@@ -25,15 +25,15 @@
 
 ### 验证体系
 
-- [x] 宿主回归：`cargo test --lib`(纯逻辑单测，无需硬件)
-- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 15 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁)，全绿自退出
+- [x] 宿主回归：`cargo test --lib`(纯逻辑单测,无需硬件;当前 **143/143**,含第 28 章 TLSF 8 条)
+- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 19 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性),全绿自退出;另有 tlsf 全局后端门禁(19/19 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 8 项双核调度门禁
 - [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、esp32c3 待上板
 
 ### 移植的芯片
 
 - RISCV
   - [x] GD32VF103xx
-  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——15 项自测 ×10 连稳定;**SMP 多核执行验证** 2026-08-26——`smp::enable()` 显式开启,从核参与调度,qemu_smp 8 项在 -smp 2/3/4/8 全绿;`TaskBuilder::affinity` 绑核确定性放置)
+  - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——15 项自测 ×10 连稳定,2026-08-26 扩至 19 项(新增 PCP 天花板阻塞、PI 交叉持锁死锁确认、TLSF 碎片共限、TLSF 分配确定性);**SMP 多核执行验证** 2026-08-26——`smp::enable()` 显式开启,从核参与调度,qemu_smp 8 项在 -smp 2/3/4/8 全绿;`TaskBuilder::affinity` 绑核确定性放置)
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
   - [x] ESP32C3: esp32c3(PAC 直依赖;构建级验证 2026-08-23,真机待验——启动需 direct boot/镜像头)
   - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
@@ -58,7 +58,11 @@
 cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
 qemu-system-riscv32 -M virt -nographic -bios none -kernel \
   target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
-# 期望输出 15/15 passed,进程以退出码 0 自行结束
+# 期望输出 19/19 passed,进程以退出码 0 自行结束
+
+# 全局分配器换引擎(tlsf feature:整个内核的堆分配走手写迷你 TLSF):
+cargo build --example qemu_kernel_tests --features qemu_riscv,timer,tlsf --target riscv32imac-unknown-none-elf --release
+# 期望仍是 19/19 passed——分配器后端对内核透明(第 28 章)
 
 # SMP 多核执行验证(应用 smp::enable() 后从核参与调度):
 cargo build --example qemu_smp --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release

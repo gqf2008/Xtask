@@ -27,9 +27,19 @@
 //!    链的边由 `Task.blocked_lock` 记录——只在互斥锁阻塞时设置,普通
 //!    信号量不设(信号量无持有者,PI 链止于此,与 FreeRTOS/Zephyr 一致)。
 //!
+//! 4. **可选 PCP(优先级天花板)**。`LockCore` 带一个 `ceiling` 字段:
+//!    0 = PI 模式(默认),非 0 = 启用天花板协议——拿锁即升到天花板
+//!    (规则 1,与第 3 点的重算框架合流:重算对天花板锁只看天花板)、
+//!    只有"当前优先级严格优于所有**他人持锁**天花板"的任务才许拿
+//!    空闲锁(规则 2,靠全局登记表 `PCP_HELD` 实现"别人手里"的视野;
+//!    被拦者挂全局 `PCP_BLOCKED`, 任何天花板锁完全释放时唤醒重试)。
+//!    按锁选择:同一把锁要么 PI 要么 PCP,混用则两套定理都不成立
+//!    ——声明责任(天花板必须覆盖所有使用者)在调用方,书稿第 26 章。
+//!
 //! 已知局限只剩一个:持锁集合溢出(单任务同时持锁 > [`HELD_MAX`](crate::task::HELD_MAX),
 //! 现实中不存在)时,溢出部分按"等待者重试补抬"的经典行为退化;
-//! 另与 FreeRTOS/Zephyr 一致地不提供 PCP(优先级天花板),那是另一个协议。
+//! PCP 同款纪律:天花板锁同时被持超过 [`PCP_REG_CAP`] 把时规则 2 退化为
+//! "查不到就不拦"(debug_assert 报警,现实中不存在)。
 
 use crate::sync;
 use crate::task::scheduler::xworker;
@@ -49,7 +59,7 @@ pub(crate) enum Claim {
     Busy,
 }
 
-/// 互斥内核:持有者 + 递归深度 + 优先级序等待队列。
+/// 互斥内核:持有者 + 递归深度 + 优先级序等待队列(+ 可选优先级天花板)。
 /// 所有方法都必须在 `sync::free` 临界区内调用(见各方法注释;包装方负责)。
 pub(crate) struct LockCore {
     /// 当前持有者;`None` = 空闲。host 单上下文身份是 null,
@@ -60,16 +70,40 @@ pub(crate) struct LockCore {
     /// 等待者队列:**优先级降序(数字升序),同级 FIFO**——释放时队首即最高
     /// 优先级等待者,新持有者的优先级必然不低于余下等待者
     waiters: TaskQueue,
+    /// 优先级天花板(PCP):会用本锁的任务的最高优先级(数字最小),
+    /// 声明期钉死、运行期只读——PCP 规则 1 与规则 2 的唯一输入。
+    /// `0` = 未启用(纯 PI 模式);非 0 = 启用 PCP:拿锁即升到天花板,
+    /// 且"当前优先级严格优于(数字严格小于)所有他人持锁的天花板"
+    /// 才许拿空闲锁(见 [`pcp_ceiling_blocked`])。
+    ceiling: u8,
 }
 
 impl LockCore {
     /// 常量构造:`VecDeque::new` 是 const,引擎零运行时初始化、零堆分配
-    /// (信号量门闩方案的 Arc+分配被结构性消除)
+    /// (信号量门闩方案的 Arc+分配被结构性消除)。PCP 未启用(纯 PI)。
     pub(crate) const fn new() -> Self {
         Self {
             owner: None,
             depth: 0,
             waiters: VecDeque::new(),
+            ceiling: 0,
+        }
+    }
+
+    /// PCP 构造:`ceiling` 是本锁的天花板(取值 1..=16,优先级 1 最高)——
+    /// 必须**覆盖所有实际使用者**(任何使用者优先级数字 ≥ ceiling),
+    /// 漏标的后果是协议两条定理失效,引擎按声明行事、不纠正声明
+    /// (书稿第 26 章"声明责任")。0 用 [`new`](Self::new)(纯 PI)。
+    pub(crate) const fn with_ceiling(ceiling: u8) -> Self {
+        assert!(
+            ceiling >= 1 && ceiling <= 16,
+            "PCP 天花板取值域 1..=16(数字小=优先级高,与调度器一致)"
+        );
+        Self {
+            owner: None,
+            depth: 0,
+            waiters: VecDeque::new(),
+            ceiling,
         }
     }
 
@@ -79,7 +113,6 @@ impl LockCore {
         unsafe { xworker::current_ptr() }
     }
 
-    /// 认领/加深(调用方在 `sync::free` 内)。
     fn claim_locked(&mut self, me: *mut Task, reentrant: bool) -> Claim {
         match self.owner {
             None => {
@@ -90,6 +123,11 @@ impl LockCore {
                     // SAFETY: 认领成功的 me 是当前执行身份,持有者语义有效
                     unsafe { (*me).held_push(self as *mut LockCore) };
                 }
+                // PCP 规则 1 的登记:天花板锁进全局登记表(规则 2 的"别人手里"
+                // 视野);PI 锁内部判断 ceiling==0 直接跳过——不触碰全局
+                // SAFETY: 本函数运行在 sync::free 临界区内(调方契约),
+                // 登记表的一切访问都在同一临界区,无并发借用
+                unsafe { pcp_register(self as *mut LockCore, me) };
                 Claim::Held
             }
             Some(o) if o == me && reentrant => {
@@ -120,10 +158,15 @@ impl LockCore {
     }
 
     /// 释放一层(调用方在 `sync::free` 内):深度 -1;减到 0 才真正释放——
-    /// 从持锁集合摘掉这把锁、账本清空、唤醒队首(最高优先级等待者),
-    /// 再由**全链重算**决定旧持有者的继承优先级——不是"释放即回落到
-    /// 出生值":若它还持有别的锁且那锁有更高优先级的等待者,
-    /// 这笔继承由重算从剩余持锁的队首等待者里取回(完整 PI)。
+    /// 从持锁集合摘掉这把锁、账本清空(若是天花板锁,同步注销 PCP 登记表),
+    /// 再由**全链重算**让旧持有者的继承优先级落位,最后唤醒队首(最高优先级
+    /// 等待者)。**先落位再唤醒**:唤醒动作里的抢占请求(`submit_task` →
+    /// `request_preempt_if_higher`)拿"当下优先级"做比较——若先唤醒再落位,
+    /// 旧持有者还带着继承来的高优先级,请求被误判为"不必抢"而吞掉,
+    /// 醒来的高优先级等待者要干等下个 tick(submit_task 的抢占纪律正是为
+    /// 消灭这种"unlock 换手干等"而设)。重算不是"释放即回落到出生值":
+    /// 若它还持有别的锁且那锁有更高优先级的等待者,这笔继承由重算从剩余
+    /// 持锁的队首等待者里取回(完整 PI)。
     /// 返回是否彻底释放(可重入锁据此决定是否唤醒)。
     unsafe fn release_locked(&mut self, me: *mut Task) -> bool {
         let Some(owner) = self.owner else {
@@ -138,13 +181,22 @@ impl LockCore {
             (*owner).held_remove(self as *mut LockCore);
         }
         self.owner = None;
+        if self.ceiling != 0 {
+            pcp_deregister(self as *mut LockCore);
+        }
+        // 重算先于唤醒:旧持有者的优先级按"剩余持锁"落位(是否仍有更高
+        // 等待者取决于别的锁)——落位后唤醒动作里的抢占比较才是准的
+        if !owner.is_null() {
+            recompute_inheritance(owner);
+        }
         if let Some(waiter) = self.waiters.pop_front() {
             (*waiter).wakeup();
         }
-        // 唤醒之后重算:被唤醒的队首此刻尚未回临界区认领,而旧持有者的
-        // 优先级要按"剩余持锁"落位(是否仍有更高等待者取决于别的锁)
-        if !owner.is_null() {
-            recompute_inheritance(owner);
+        // PCP 规则 3:天花板锁的完全释放可能清除"天花板阻塞"条件(规则 2
+        // 只随"某把已持锁被释放"改善)——唤醒全部被规则 2 拦住的任务,
+        // 它们重试时由 acquire 重新裁决(可能转正/转常规等锁/再被拦)。
+        if self.ceiling != 0 {
+            pcp_wake_blocked();
         }
         true
     }
@@ -163,15 +215,26 @@ pub(crate) fn acquire(core: &UnsafeCell<LockCore>, reentrant: bool) -> bool {
     let me = LockCore::me();
     sync::free(|_| unsafe {
         let c = &mut *core.get();
+        // PCP 规则 2:锁空闲时也要先过资格检查——"别人手里"的天花板锁比
+        // 我还紧(数字更小或相等)就拦住,哪怕 L 是空的(PCP 与 PI 的分水岭;
+        // 书稿第 26 章)。拦住的任务挂全局天花板阻塞队列,等任何天花板锁
+        // 完全释放时被唤醒重试。host 单身份(null)恒放行(与单身份恒可重入同约)。
+        if pcp_admission_denied(c, me) {
+            // me 必非空:null 身份在 pcp_ceiling_blocked 入口即放行,走不到这里
+            (*me).blocked_lock = core.get();
+            PCP_BLOCKED.push_back(me);
+            (*me).block();
+            return false;
+        }
         match c.claim_locked(me, reentrant) {
             Claim::Held | Claim::Nested => {
                 // 拿到锁 = 不再等任何人:清掉 PI 链的边。host(null)无任务可清
                 if !me.is_null() {
                     (*me).blocked_lock = ptr::null_mut();
-                    // 完整 PI:认领可能发生在"释放唤醒队首、队首还没认领"
-                    // 的挥舞窗口(barging)——此时队列里可能还压着更高优先级
-                    // 的等待者,新持有者必须被抬到队首的级别,否则反转从
-                    // 换手缝钻回。重算以持锁集合为输入,其余场景是幂等空转
+                    // 完整 PI + PCP 规则 1:认领可能发生在"释放唤醒队首、队首
+                    // 还没认领"的挥舞窗口(barging)——新持有者必须被抬到队首的
+                    // 级别,否则反转从换手缝钻回。重算以持锁集合为输入
+                    // (PI 锁看队首等待者、天花板锁看天花板),其余场景幂等空转
                     recompute_inheritance(me);
                 }
                 true
@@ -189,6 +252,10 @@ pub(crate) fn try_acquire(core: &UnsafeCell<LockCore>, reentrant: bool) -> bool 
     let me = LockCore::me();
     sync::free(|_| unsafe {
         let c = &mut *core.get();
+        // PCP 规则 2 的非阻塞版:资格不够即失败(不登记、不挂起——try 语义)
+        if pcp_admission_denied(c, me) {
+            return false;
+        }
         if let Claim::Held | Claim::Nested = c.claim_locked(me, reentrant) {
             if !me.is_null() {
                 (*me).blocked_lock = ptr::null_mut();
@@ -209,6 +276,98 @@ pub(crate) fn release(core: &UnsafeCell<LockCore>) {
     });
 }
 
+// ==================== PCP(优先级天花板协议)基础设施 ====================
+// 规则 2 需要"别人手里"的全球视野:每把锁只看自己,看不到别的锁——
+// 于是天花板锁在认领成功时进全局登记表、彻底释放时注销;规则 2 的
+// 判定与"天花板阻塞者"的唤醒都围绕它。全部访问都在 `sync::free` 内。
+
+/// 登记表容量:同时被持有的天花板锁上限。32 把同步临界区在现实内核里
+/// 极其罕见;溢出时 debug_assert 并放弃登记(规则 2 退化为"查不到就不拦"
+/// ——与"持锁集合溢出"同一纪律:不可能发生,发生即声明纪律被破坏)。
+const PCP_REG_CAP: usize = 32;
+
+/// 登记项:锁 + 当前持有者。持有者用于"排除自己的锁"——规则 2 只查
+/// 别人持有的锁(自己刚拿的锁不算,否则每把锁都把自己拦死)。
+#[derive(Clone, Copy)]
+struct PcpEntry {
+    core: *mut LockCore,
+    owner: *mut Task,
+}
+
+/// 当前被持有的天花板锁(ceiling != 0)登记表
+static mut PCP_HELD: [PcpEntry; PCP_REG_CAP] =
+    [PcpEntry { core: ptr::null_mut(), owner: ptr::null_mut() }; PCP_REG_CAP];
+/// 登记表已用格数
+static mut PCP_HELD_COUNT: usize = 0;
+
+/// 天花板阻塞者队列:被规则 2 拦住的任务(锁空闲但资格不够)挂这里,
+/// **不属于任何锁的等待队列**——它等的条件在别人的锁上。"唤醒点":
+/// 任何天花板锁被完全释放时清空本队列(见 `release_locked`)。
+static mut PCP_BLOCKED: TaskQueue = VecDeque::new();
+
+/// 登记:认领成功(深度 0→1)的天花板锁入表——规则 2 视野的"写"。
+unsafe fn pcp_register(core: *mut LockCore, owner: *mut Task) {
+    if (*core).ceiling == 0 {
+        return; // PI 锁不参与 PCP:不碰全局(host 并发跑的既有测试零影响)
+    }
+    if PCP_HELD_COUNT >= PCP_REG_CAP {
+        debug_assert!(false, "PCP 登记表溢出(> {PCP_REG_CAP} 把天花板锁同时被持有)");
+        return;
+    }
+    PCP_HELD[PCP_HELD_COUNT] = PcpEntry { core, owner };
+    PCP_HELD_COUNT += 1;
+}
+
+/// 注销:彻底释放(深度减到 0)的天花板锁出表。swap_remove,顺序无关。
+unsafe fn pcp_deregister(core: *mut LockCore) {
+    for i in 0..PCP_HELD_COUNT {
+        if ptr::eq(PCP_HELD[i].core, core) {
+            PCP_HELD_COUNT -= 1;
+            PCP_HELD[i] = PCP_HELD[PCP_HELD_COUNT];
+            PCP_HELD[PCP_HELD_COUNT] = PcpEntry { core: ptr::null_mut(), owner: ptr::null_mut() };
+            return;
+        }
+    }
+}
+
+/// 规则 2 判定:`me` 想拿一把**空闲的**天花板锁,此刻是否存在"别的任务
+/// 持有"的天花板锁,其天花板**严格优于**(数字 **小于或等于**,严格版规则:
+/// "必须低于所有他人持锁天花板"的否定形式 = 存在 ≤)me 的当前优先级。
+/// 存在 → 拦住(天花板阻塞,哪怕目标锁是空的)。只数天花板锁(ceiling != 0);
+/// 自己持的锁不算;host 单身份(null)恒放行。
+/// 登记表不变式:`0..PCP_HELD_COUNT` 内恒为"非空锁 + ceiling != 0"的
+/// 登记项(register 只写天花板锁且先写格后计数;deregister swap_remove
+/// 只清尾格)——判定扫描不再逐项复核空值与天花板取值。
+unsafe fn pcp_ceiling_blocked(me: *mut Task) -> bool {
+    if me.is_null() {
+        return false;
+    }
+    let p = (*me).priority;
+    for i in 0..PCP_HELD_COUNT {
+        let e = &PCP_HELD[i];
+        if !ptr::eq(e.owner, me) && (*e.core).ceiling <= p {
+            return true;
+        }
+    }
+    false
+}
+
+/// 规则 2 的准入裁决(acquire 的挂起版与 try_acquire 的失败版共用同一道闸):
+/// 目标锁空闲、启用天花板、且规则 2 判定被拦——三个条件缺一不可。
+/// (锁非空闲走常规等锁;未启用天花板是纯 PI;资格够则放行。)
+unsafe fn pcp_admission_denied(c: &LockCore, me: *mut Task) -> bool {
+    c.owner.is_none() && c.ceiling != 0 && unsafe { pcp_ceiling_blocked(me) }
+}
+
+/// 规则 3 的唤醒点:任何天花板锁完全释放都可能清除天花板阻塞条件——
+/// 清空全局阻塞队列、全员唤醒;重试时由 acquire 重新裁决
+/// (转正/转常规等锁/再被拦,三种结局由重试天然消化)。
+unsafe fn pcp_wake_blocked() {
+    while let Some(t) = PCP_BLOCKED.pop_front() {
+        (*t).wakeup();
+    }
+}
+
 /// 按优先级降序(数字升序)插入:插到第一个**更低**(数字更大)的等待者
 /// 前面——队首恒为最高;没有更低者则排尾。同级保持 FIFO(后到者排已有之后)。
 unsafe fn push_priority(q: &mut TaskQueue, t: *mut Task) {
@@ -226,15 +385,24 @@ unsafe fn push_priority(q: &mut TaskQueue, t: *mut Task) {
 const MAX_INHERIT_STEPS: usize = 256;
 
 /// 一个任务此刻的**有效优先级** = max(出生优先级, 仍持有的每一把锁的
-/// 队首等待者优先级)。队首 = 最高优先级等待者(等待队列按优先级降序),
-/// 等待者的 `priority` 字段由不变式保证等于它自己的有效优先级
-/// ——传递继承(H→M→L)因此自动折叠进"队首扫描",不需要单独走链。
+/// 抬升来源)。PI 锁:队首等待者优先级(队首 = 最高优先级等待者,
+/// 等待队列按优先级降序,等待者的 `priority` 字段由不变式保证等于它自己
+/// 的有效优先级——传递继承因此自动折叠进"队首扫描",不需要单独走链);
+/// **PCP 锁:只看天花板,不看谁在等**——任何使用者的优先级都不会优于
+/// 天花板(声明责任,书稿第 26 章),规则 1 的"拿锁即升"由此与 PI 的
+/// 重算框架合流:认领成功/释放时同一条 `recompute_inheritance` 路径
+/// 按持锁集合逐把取来源。两种来源取"更优"(数字更小)者。
 unsafe fn compute_effective(t: *mut Task) -> u8 {
     let mut p = (*t).base_priority;
     let n = ((*t).held_count as usize).min((*t).held_locks.len());
     for i in 0..n {
         let lc = &*(*t).held_locks[i];
-        if let Some(&head) = lc.waiters.front() {
+        if lc.ceiling != 0 {
+            let c = lc.ceiling;
+            if c < p {
+                p = c;
+            }
+        } else if let Some(&head) = lc.waiters.front() {
             let hp = (*head).priority;
             if hp < p {
                 p = hp;
@@ -291,6 +459,7 @@ unsafe fn recompute_inheritance(start: *mut Task) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::scheduler::xtask::clear_readyq_for_test;
     use crate::task::{State, Task};
     use alloc::boxed::Box;
     use core::ffi::c_void;
@@ -307,6 +476,11 @@ mod tests {
             drop(Box::from_raw(p));
         }
     }
+
+    /// READYQ/READY_BITS 全局就绪态的测试串行化:会唤醒等待者的 PI 测试
+    /// 共享全局就绪队列,cargo test 并行跑会并发推队列(与 PCP_TEST_GUARD
+    /// 同款纪律;中毒容忍——一条测试失败不级联到兄弟测试)。
+    static READYQ_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// 回归:等待队列按"优先级降序(数字升序)、同级 FIFO"排——这是 PI 的
     /// 前提(释放时队首 = 最高优先级等待者;若 FIFO 先进先出,换手后新持有者
@@ -401,6 +575,7 @@ mod tests {
     /// (经典实现在此处暂时丢掉 B 上的继承——书稿专述的已知局限)。
     #[test]
     fn release_keeps_inheritance_from_remaining_holds() {
+        let _guard = READYQ_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let t = make_task(6);
         let wa = make_task(2);
         let wb = make_task(3);
@@ -435,6 +610,9 @@ mod tests {
             (*wa).blocked_lock = ptr::null_mut();
             (*wb).blocked_lock = ptr::null_mut();
         }
+        // release_locked 唤醒的 WA/WB 在 host 上被推进了全局 READYQ——
+        // 回收前清桶,别把悬垂指针留给后续驱动调度器的测试
+        unsafe { clear_readyq_for_test() };
         unsafe { reclaim(&[t, wa, wb]) };
     }
 
@@ -445,6 +623,7 @@ mod tests {
     /// 会滞留到下一次假事件)。
     #[test]
     fn demote_cascades_up_blocked_chain() {
+        let _guard = READYQ_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let t = make_task(5);
         let y = make_task(6);
         let wb = make_task(3);
@@ -477,6 +656,94 @@ mod tests {
             (*t).blocked_lock = ptr::null_mut();
             (*wb).blocked_lock = ptr::null_mut();
         }
+        // 同上:release_locked 唤醒的 WB 在 host 上进了全局 READYQ——先清桶再回收
+        unsafe { clear_readyq_for_test() };
         unsafe { reclaim(&[t, y, wb]) };
+    }
+
+    // ---------- PCP(优先级天花板协议) ----------
+
+    /// PCP 全局状态(登记表 PCP_HELD / 阻塞队列 PCP_BLOCKED)的测试串行化:
+    /// 两条触碰登记表的测试共享全局,cargo test 并行跑必然互相干扰。
+    /// (既有 PI 测试不触碰:ceiling == 0 的锁在 register/判定处即返回。)
+    static PCP_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 回归(规则 2):"别人持有"的天花板锁比我还紧(数字 ≤)就拦住——
+    /// 哪怕目标锁是空的;自己持的锁不算(规则 2 只查别人);我更优时放行;
+    /// 注销(彻底释放)后放行。语义依据:严格版规则"当前优先级必须严格
+    /// 低于所有他人持锁天花板",其否定形式 = 存在一把他人持锁的
+    /// 天花板 ≤ 我的优先级。
+    #[test]
+    fn pcp_rule2_blocks_when_other_ceiling_tighter() {
+        // 上一条 PCP 测试若中途 panic,登记表会残留悬垂项(守卫也因此中毒)——
+        // 容忍中毒、清空登记表再开始:一条失败不级联成两条
+        let _guard = PCP_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { PCP_HELD_COUNT = 0 };
+        let t = make_task(5);
+        let holder = make_task(2);
+        let mut s = LockCore::with_ceiling(2);
+        unsafe {
+            (*t).state = State::Running;
+            s.owner = Some(holder);
+            s.depth = 1;
+            pcp_register(&mut s as *mut LockCore, holder);
+            assert!(
+                pcp_ceiling_blocked(t),
+                "他人持天花板 2、我在 5:2 ≤ 5 → 必须拦(目标锁是空的也一样)"
+            );
+            assert!(
+                !pcp_ceiling_blocked(holder),
+                "持有者本人不受自己锁的天花板约束(规则 2 只查别人)"
+            );
+            (*t).priority = 1; // 我更优(数字 1 < 2)
+            assert!(!pcp_ceiling_blocked(t), "我严格优于他人天花板 → 放行");
+            (*t).priority = 5;
+            pcp_deregister(&mut s as *mut LockCore);
+            assert!(!pcp_ceiling_blocked(t), "无人持天花板锁 → 放行");
+        }
+        unsafe { reclaim(&[t, holder]) };
+    }
+
+    /// 回归(规则 1 + 登记往返):认领天花板锁 → 有效优先级 = 天花板;
+    /// 彻底释放 → 回落到出生值,登记同步注销。走真实 claim/release 路径。
+    #[test]
+    fn pcp_claim_raises_release_falls() {
+        // 同上:中毒容忍 + 进测试前清空登记表
+        let _guard = PCP_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { PCP_HELD_COUNT = 0 };
+        let t = make_task(6);
+        let mut c = LockCore::with_ceiling(3);
+        unsafe {
+            (*t).state = State::Running;
+            assert_eq!(c.claim_locked(t, false), Claim::Held);
+            recompute_inheritance(t);
+            assert_eq!((*t).priority, 3, "规则 1:拿锁即升到天花板 3");
+            assert!(c.release_locked(t), "彻底释放");
+            assert_eq!((*t).priority, 6, "释放后回落到出生值 6");
+            assert!(!pcp_ceiling_blocked(t), "登记已注销:无人持天花板锁");
+        }
+        unsafe { reclaim(&[t]) };
+    }
+
+    /// 回归(规则 1 语义):天花板锁的有效优先级**只看天花板**——等待者
+    /// 不参与(声明责任:任何使用者优先级数字 ≥ 天花板;漏标 = 协议前提
+    /// 失守,引擎按声明行事、不纠正声明——书稿第 26 章"声明责任")。
+    #[test]
+    fn compute_effective_prefers_ceiling_over_waiters() {
+        let t = make_task(6);
+        let w = make_task(4);
+        let mut c = LockCore::with_ceiling(3);
+        unsafe {
+            (*t).state = State::Running;
+            (*w).state = State::Suspended;
+            c.owner = Some(t);
+            c.depth = 1;
+            (*t).held_push(&mut c);
+            (*w).blocked_lock = &mut c;
+            push_priority(&mut c.waiters, w);
+            assert_eq!(compute_effective(t), 3, "天花板(3)比队首等待者(4)更优——取天花板");
+            (*w).blocked_lock = ptr::null_mut();
+        }
+        unsafe { reclaim(&[t, w]) };
     }
 }
