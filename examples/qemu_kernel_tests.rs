@@ -334,6 +334,50 @@ fn test_task_exit() {
     );
 }
 
+// ============ 测试 13:可重入锁(嵌套 + 跨任务互斥)★ ============
+// host 单上下文测不到的两条:①同一任务嵌套 lock 不睡死(普通 Mutex 会);
+// ②别的高优先级任务必须等到"两层都放完"才能进——host 只有一个执行身份,
+// 永远可重入,跨任务互斥只能在真核上验证。
+fn test_reentrant_mutex() {
+    static LOCK: ReentrantMutex<u32> = ReentrantMutex::new(0);
+    static SEQ2: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    SEQ2.lock().clear();
+    TaskBuilder::new().name("t13.a").priority(6).spawn(move || {
+        {
+            let mut g1 = LOCK.lock(); // 深度 1
+            SEQ2.lock().push("A1");
+            *g1 += 1;
+            let mut g2 = LOCK.lock(); // 嵌套:深度 2——普通 Mutex 在此永久阻塞
+            SEQ2.lock().push("A2");
+            *g2 += 1;
+            // 持两层锁期间 spawn 更高优先级的 B——B 必须挂起直到两层都放完
+            let d3 = d2.clone();
+            TaskBuilder::new().name("t13.b").priority(3).spawn(move || {
+                let mut g = LOCK.lock(); // 挂起,直到 A 彻底释放
+                SEQ2.lock().push("B");
+                *g += 1;
+                d3.post();
+            });
+            xtask::sleep_ms(30); // 持两层锁睡——B 不能进
+            drop(g2); // 深度 2→1:仍持有,B 仍不能进
+            SEQ2.lock().push("A3");
+            xtask::sleep_ms(20);
+        } // g1 析构:深度 1→0,真正释放 → 唤醒 B(高优先级,立即抢占)
+    });
+    done.wait();
+    let s = SEQ2.lock().clone();
+    // A1<A2<A3 由程序序保证;A3 必在 B 前(A3 时 A 仍持一层,B 进不来)
+    let ok = s == ["A1", "A2", "A3", "B"];
+    let val = *LOCK.lock(); // 此刻锁空闲:1(A)+1(A嵌套)+1(B)=3
+    check(
+        ok && val == 3,
+        "reentrant_mutex",
+        format!("序列 {s:?}(应 A1 A2 A3 B) val={val}(应 3)"),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -375,6 +419,7 @@ fn main() -> ! {
                 ("heap_alloc", test_heap_alloc),
                 ("bus_pubsub", test_bus),
                 ("task_exit", test_task_exit),
+                ("reentrant_mutex", test_reentrant_mutex),
             ];
             let total = tests.len();
             let mut passed = 0usize;

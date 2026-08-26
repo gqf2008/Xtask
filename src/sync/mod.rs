@@ -44,6 +44,7 @@ pub mod free_queue;
 pub mod mutex;
 pub mod notify;
 pub mod queue;
+pub mod reentrant_mutex;
 pub mod semaphore;
 
 pub use critical::free;

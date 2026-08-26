@@ -31,11 +31,11 @@ pub struct Mutex<T> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: 单核抢占模型下 ——
+// SAFETY: 单核抢占模型下（SMP 经⑥全局自旋扩展,论证同构)——
 // 1) MutexGuard 只发给"把信号量 1→0 成功"的任务（wait/try_wait 的 fetch_update
 //    原子保证互斥），data 的任何时刻最多一个任务在读写；
-// 2) sem 的队列访问全在 sync::free 临界区内（Semaphore 自身纪律），临界区屏蔽
-//    中断，ISR 不会与任务并发借用 RefCell；post_isr 只碰原子计数；
+// 2) sem 的队列访问全在 sync::free 临界区内（Semaphore 自身纪律）:任务侧关中断
+//    串行、ISR 侧 post_isr 的借用也已收进同一把锁(ch25 ⑥),不存在裸并发借用;
 // 3) "取信号+登记+挂起"在同一临界区（信号量纪律），不存在丢失唤醒窗口。
 // 因此 Mutex<T: Send> 的 Send/Sync 是 sound 的——与 semaphore.rs、drv.rs 的
 // unsafe impl 同一论证，只是把"队列"换成了"数据"。

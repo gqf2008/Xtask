@@ -44,7 +44,7 @@ Layered, bottom-up:
 - **`src/chip/<chip>/`** — per-chip `Portable` impl. `port.rs` (interrupt/systick glue), `port.S` + `restore_ctx.S` (assembly context save/restore), `stdout.rs`, `memory.x`. The context switch is in assembly — read the in-code comments and `Xtask.md`.
 - **`src/arch/`** — re-exports of the Rust embedded-wg runtime crates (`riscv-rt`, `cortex-m-rt`, etc.) chosen by `target_arch`. Examples get their `#[entry]` and interrupt macros from here.
 - **`src/task/`** — the kernel core. `task.rs` defines `Task` (state machine: `Ready/Running/Suspended/Blocked/Terminated`), `TaskBuilder`/`spawn`, `sleep_ms`, `yield_now`. `task/scheduler.rs` defines the `Scheduler` trait and a global `schedulee`; `task/scheduler/xtask.rs` is the default scheduler. `task/executor.rs` (`xworker`) runs the current task. Tasks, stacks, and closures are heap-allocated then deliberately `mem::forget`-ed to escape ownership (freed manually on exit); each stack has a `STACK_FENCE` canary checked at context-switch time for overflow.
-- **`src/sync/`** — IPC primitives built on the task state machine: `semaphore` (binary + counting), `queue` (MPMC), `broadcast`, `notify`, `mutex`, `arc`, `free_queue`.
+- **`src/sync/`** — IPC primitives built on the task state machine: `semaphore` (binary + counting), `queue` (MPMC), `broadcast`, `notify`, `mutex`, `reentrant_mutex` (recursive lock: gate semaphore + owner/depth ledger), `arc`, `free_queue`.
 - **`src/bus.rs`** — PubSub message bus.
 - **`src/timer.rs`** (`timer` feature) — software timers.
 - **`src/allocator.rs`** — global heap allocator (`linked_list_allocator`); apps call `xtask::init_heap(start_addr, size)` before spawning. `src/logger.rs` — `log` facade over RTT or stdout.
