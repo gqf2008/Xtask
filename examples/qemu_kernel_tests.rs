@@ -936,9 +936,9 @@ fn test_tickless_far_deadline() {
     let fires_tl = isr1 - isr0;
     let fires_per = isr3 - isr2;
     check(
-        // 拍账下限不早于期限;上限 +2 拍 = 中断投递迟到余量(同上)
+        // 拍账下限不早于期限;上限 +2 拍 = 中断投递迟到余量(两档同踩坑 3)
         d_tl >= exp && d_tl <= exp + 2
-            && d_per == exp
+            && d_per >= exp && d_per <= exp + 2
             && fires_tl <= 2
             && fires_per >= 100
             && fires_per > 10 * fires_tl,
