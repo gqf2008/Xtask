@@ -394,7 +394,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 12/12 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 13/13 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
