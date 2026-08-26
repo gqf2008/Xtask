@@ -73,9 +73,14 @@ pub(crate) fn start_timer_task() {
 /// 有则唤醒工作任务，触发软中断
 #[inline]
 pub(crate) fn do_tick(ticks: u64) {
-    unsafe {
+    // SMP(ch25 ⑥):ISR 侧的堆操作也必须进全局锁——任务侧(after/period/
+    // Drop/timer_task 的 READY 消费)全部在 sync::free 内,ISR 裸操作堆会
+    // 与别核任务侧并发撕 BinaryHeap 内部数组。trap 上下文持锁安全:持区者
+    // 所在核的中断已关(ISR 不会在同核与其并发),别核持区者短临界区有界
+    // 自旋即得——与 do_systick/do_schedule 整段进锁同款纪律(假设三)。
+    let ready = sync::free(|_| unsafe {
+        let mut ready = false;
         if let Some(heap) = &mut HEAP {
-            let mut ready = false;
             //同一个 tick 可能到期多个定时器，必须全部挪进 READY，
             //只弹堆顶一个会让其余到期定时器各多延迟一个 tick
             while let Some(timer) = heap.peek() {
@@ -97,9 +102,13 @@ pub(crate) fn do_tick(ticks: u64) {
                 if let Some(task) = TIMER_TASK.as_mut() {
                     task.wakeup();
                 }
-                yield_now();
             }
         }
+        ready
+    });
+    if ready {
+        //让出须在临界区外:pending 的软中断出区(mret)后生效,语义不变
+        yield_now();
     }
 }
 

@@ -1456,11 +1456,18 @@ pub trait Portable {
 > 停泊中被放行参与调度:`CURRENT_TASK`/临界区深度/idle 任务全部
 > 每核化(mhartid 索引,单核口槽 0 语义逐字不变),每核 4K 中断栈
 > (mscratch 按 hartid 分址),`submit` 的抢占请求遍历在线核定向投递
-> IPI,tick 主核独占(从核只开 MSIE)。执行验证:`examples/qemu_smp.rs`
-> 6 项全绿(双核并行/跨核唤醒/8×1000 跨核锁精确/并发堆压力/节拍推进),
-> check.sh 第 4 步门禁;`qemu_kernel_tests` 在 -smp 1/-smp 2 下仍各
-> 12/12(未开启 SMP 时 hart1 永久停泊,单核语义不变)。设计分析与
-> 改造路线见 book/src/ch25-smp.md。
+> IPI,tick 主核独占(从核只开 MSIE)。同日第二批:>2 核两坑修复
+> (中断栈区让位 16 个启动栈;wakeup 在核竞态——"挂起-让出"窗口内
+> 任务仍在 CPU 上,别核入队会被第三核并发执行,wakeup 分叉为
+> 在核不入队)、⑥ 原语 ISR 侧收编(软定时器堆 do_tick / semaphore
+> post_isr / queue push_*_isr / broadcast notify_isr 全部显式进同一把
+> 全局锁)、`hwid` 预留位激活为 `TaskBuilder::affinity(hart)` 绑核
+> (确定性放置;绑到不在线的核=任务饥饿,应用契约)。执行验证:
+> `examples/qemu_smp.rs` 扩为 8 项,-smp 2/3/4/8 全绿(新增绑核
+> 放置断言、定时器堆跨核并发),check.sh 第 4 步门禁;
+> `qemu_kernel_tests` 在 -smp 1/-smp 2 下仍各 12/12(未开启 SMP 时
+> hart1 永久停泊,单核语义不变)。设计分析与改造路线见
+> book/src/ch25-smp.md。
 
 ## RISC-V
 

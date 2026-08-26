@@ -81,25 +81,34 @@ impl<T> Queue<T> {
         self.sem.post();
     }
 
+    /// 中断侧入队。SMP(ch25 ⑥):入队+post+失败回滚整体进全局锁——
+    /// 任务侧 push/pop 的借用全在 sync::free 内,ISR 裸借用 VecDeque 会与
+    /// 别核并发(借位标志非原子,UB);三段合一还消掉"已入队未 post"的
+    /// 跨核可见窗口。post_isr 内层走嵌套临界区,深度配平
     pub fn push_front_isr(&self, item: T) -> nb::Result<(), sync::Error> {
-        self.list.borrow_mut().push_front(item);
-        match self.sem.post_isr() {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                self.list.borrow_mut().pop_front();
-                Err(nb::Error::Other(sync::Error::QueueFull))
+        sync::free(|_| {
+            self.list.borrow_mut().push_front(item);
+            match self.sem.post_isr() {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    self.list.borrow_mut().pop_front();
+                    Err(nb::Error::Other(sync::Error::QueueFull))
+                }
             }
-        }
+        })
     }
+    /// 同 push_front_isr,尾部入队
     pub fn push_back_isr(&self, item: T) -> nb::Result<(), sync::Error> {
-        self.list.borrow_mut().push_back(item);
-        match self.sem.post_isr() {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                self.list.borrow_mut().pop_back();
-                Err(nb::Error::Other(sync::Error::QueueFull))
+        sync::free(|_| {
+            self.list.borrow_mut().push_back(item);
+            match self.sem.post_isr() {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    self.list.borrow_mut().pop_back();
+                    Err(nb::Error::Other(sync::Error::QueueFull))
+                }
             }
-        }
+        })
     }
 }
 

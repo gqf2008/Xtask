@@ -28,9 +28,9 @@ pub struct Semaphore {
 unsafe impl Send for Semaphore {}
 
 // SAFETY: 与 Send 同构——waiters/notifiers 两个队列的访问全部发生在 sync::free
-// 临界区内（单核关中断，任务侧与 ISR 侧不可能并发借用同一 RefCell），post_isr
-// 只碰原子计数与 wakeup（不动借用）；共享引用 &Semaphore 经"临界区串行化"后
-// 的可变访问是单核安全模型的既定纪律（与 bus.rs/REGISTRY 同构）。
+// 临界区内（任务侧关中断串行;SMP 下全局自旋保证跨核互斥,ISR 侧 post_isr 的
+// 借用也已收进同一把锁,ch25 ⑥）；共享引用 &Semaphore 经"临界区串行化"后
+// 的可变访问是本内核的既定纪律（与 bus.rs/REGISTRY 同构）。
 // 现状必要：Mutex<T> 要能进 static（OnceCell<Mutex<T>> 要求 T: Sync）。
 unsafe impl Sync for Semaphore {}
 
@@ -73,13 +73,17 @@ impl Semaphore {
                 }
             }) {
             Ok(_) => {
-                unsafe {
+                // SMP(ch25 ⑥):ISR 侧的队列借用同样进全局锁——任务侧 wait/post
+                // 的 borrow_mut 全在 sync::free 内,ISR 裸借用会与别核并发
+                // (RefCell 借位标志非原子,并发借用即 UB)。trap 上下文持锁
+                // 安全:同核持区者中断已关,别核持区者短临界区有界自旋即得
+                sync::free(|_| unsafe {
                     if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
                         if let Some(waiter) = waiter.as_mut() {
                             waiter.wakeup();
                         }
                     }
-                };
+                });
                 Ok(())
             }
             Err(_) => Err(nb::Error::Other(Error::SemaphoreFull)),

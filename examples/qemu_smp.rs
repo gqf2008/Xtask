@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-// QEMU SMP 双核执行验证——`-smp 2` 下从核真正参与调度的执行级证据。
+// QEMU SMP 多核执行验证——`-smp 2` 下从核真正参与调度的执行级证据。
 // 应用显式 `xtask::smp::enable()` 后,hart1 才从 _mp_hook 停泊中被放行
 // (qemu_kernel_tests 不开启,保持单核语义逐字不变——次序断言仍成立)。
 //
@@ -17,6 +17,10 @@ extern crate alloc;
 //   4. lock_stress    —— 8 任务 × 1000 次 Mutex 递增,总数必须精确
 //   5. heap_stress    —— 4 任务并发分配/释放,分配器跨核自旋不坏
 //   6. tick_alive     —— 双核都忙时主核节拍照常推进
+//   7. affinity       —— 绑核任务必须且只能落在绑定核(确定性放置;
+//                       pop_ready 若不跳过别核绑定的任务,位图必混位)
+//   8. timer_xcore    —— tick ISR(hart0)搬定时器堆与任务侧(hart1)增删
+//                       定时器高并发:⑥ 修复前 ISR 裸操作堆,此处必坏
 //
 // 运行:qemu-system-riscv32 -M virt -smp 2 -nographic -bios none -kernel \
 //       target/riscv32imac-unknown-none-elf/release/examples/qemu_smp
@@ -35,12 +39,33 @@ use xtask::sync::mutex::Mutex;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    // 零分配 handler(不 format!):本套件含堆压力项,OOM/堆状态下 panic 时
+    // 再分配会二次 panic 吞掉第一现场——位置与消息全部按字节直写串口
     write_str("\r\n!!! PANIC at ");
     if let Some(l) = info.location() {
-        let full = format!("{}:{}:{}", l.file(), l.line(), l.column());
-        for b in full.bytes() {
+        for b in l.file().bytes() {
             xtask::chip::qemu_riscv::stdout::putc(b);
         }
+        let mut n = l.line() as usize;
+        let mut buf = [0u8; 10];
+        let mut i = buf.len();
+        if n == 0 {
+            i -= 1;
+            buf[i] = b'0';
+        }
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+        xtask::chip::qemu_riscv::stdout::putc(b':');
+        for &b in &buf[i..] {
+            xtask::chip::qemu_riscv::stdout::putc(b);
+        }
+    }
+    if let Some(m) = info.message().as_str() {
+        write_str(" msg=");
+        write_str(m);
     }
     write_str("\r\n");
     qemu_exit_fail();
@@ -109,7 +134,7 @@ fn main() -> ! {
         static _sheap: u8;
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
-    xtask::init_heap(start_addr, 1 * 1024 * 1024);
+    xtask::init_heap(start_addr, 4 * 1024 * 1024);
     xtask::init_logger();
     write_str("qemu_smp: suite starting\r\n");
 
@@ -249,16 +274,88 @@ fn main() -> ! {
             );
             sprintln!("test tick_alive ... done ({dt} ticks)");
 
+            // ---- 7. 绑核:pinned 任务必须且只能落在绑定核 ----
+            static SEEN_P0: AtomicUsize = AtomicUsize::new(0);
+            static SEEN_P1: AtomicUsize = AtomicUsize::new(0);
+            SEEN_P0.store(0, Ordering::Release);
+            SEEN_P1.store(0, Ordering::Release);
+            begin_phase();
+            TaskBuilder::new()
+                .name("smp.pin0")
+                .priority(8)
+                .affinity(0)
+                .spawn(|| spin_task(&SEEN_P0, 2));
+            TaskBuilder::new()
+                .name("smp.pin1")
+                .priority(8)
+                .affinity(1)
+                .spawn(|| spin_task(&SEEN_P1, 2));
+            wait_phase();
+            let (p0, p1) = (
+                SEEN_P0.load(Ordering::Acquire),
+                SEEN_P1.load(Ordering::Acquire),
+            );
+            check(
+                p0 == 0b1,
+                "affinity",
+                format!("绑 hart0 的任务见过核 {p0:#b}(应恰为 0b1)"),
+            );
+            check(
+                p1 == 0b10,
+                "affinity",
+                format!("绑 hart1 的任务见过核 {p1:#b}(应恰为 0b10)"),
+            );
+            sprintln!("test affinity ... done (pin0={p0:#b} pin1={p1:#b})");
+
+            // ---- 8. 定时器堆跨核:tick ISR 搬堆 × 任务侧增删定时器 ----
+            // 周期定时器(2 tick)持续触发——do_tick 在 hart0 的 tick ISR 里
+            // 搬 HEAP→READY;与此同时 3 个任务并发创建/丢弃定时器(任务侧
+            // push/Drop)。⑥ 修复前 ISR 侧裸操作堆,此场景跨核必撕;
+            // 修复后两侧同一把全局锁,窗口期触发次数必须有界可断言。
+            // 【踩坑】压力必须配速:满速空转造定时器会让"已创建未触发"的
+            // 一次性定时器在一个 tick 内堆积到 OOM(1MB 堆);OOM panic 落
+            // 在临界区路径上还会把分配器借位标志/大锁毒化,症状表现为莫名
+            // 的 BorrowMutError 级联——每轮让出 CPU,让触发与回收跟上
+            static TIMER_HITS: AtomicUsize = AtomicUsize::new(0);
+            TIMER_HITS.store(0, Ordering::Release);
+            let keep = xtask::timer::Timer::period(2, || {
+                TIMER_HITS.fetch_add(1, Ordering::Relaxed);
+            });
+            begin_phase();
+            for _ in 0..3 {
+                TaskBuilder::new().name("smp.tm").priority(7).spawn(|| {
+                    for i in 0..400 {
+                        let t = xtask::timer::Timer::period(2, || {});
+                        xtask::timer::Timer::after(1, || {});
+                        drop(t);
+                        yield_now(); // 配速:让 tick ISR 与 timer 任务跟上回收
+                        if i % 40 == 39 {
+                            xtask::sleep_ms(1); // 拉开阶段长度,周期定时器才有触发窗口
+                        }
+                    }
+                    finish(3);
+                });
+            }
+            wait_phase();
+            let hits = TIMER_HITS.load(Ordering::Acquire);
+            drop(keep);
+            check(
+                hits >= 5,
+                "timer_xcore",
+                format!("压测窗口内周期定时器仅触发 {hits} 次(应 >=5)"),
+            );
+            sprintln!("test timer_xcore ... done ({hits} hits)");
+
             // ---- 汇总 ----
             let fails = FAILED.lock().clone();
             if fails.is_empty() {
-                sprintln!("smp PASS: 6/6");
+                sprintln!("smp PASS: 8/8");
                 qemu_exit_pass();
             } else {
                 for m in fails.iter() {
                     sprintln!("FAILED: {m}");
                 }
-                sprintln!("smp FAIL: {}/6", 6 - fails.len());
+                sprintln!("smp FAIL: {}/8", 8 - fails.len());
                 qemu_exit_fail();
             }
         });

@@ -25,8 +25,12 @@ impl Broadcast {
 
 impl Broadcast {
     /// 可以在中断服务里调用
+    /// SMP(ch25 ⑥):ISR 侧借用同样进全局锁——wait/notify 的 borrow_mut
+    /// 全在 sync::free 内,ISR 裸借用会与别核并发(RefCell 借位标志非原子,
+    /// 并发借用即 panic/UB)。trap 上下文持锁安全:同核持区者中断已关,
+    /// 别核持区者短临界区有界自旋即得
     pub fn notify_isr(&self) -> nb::Result<(), nb::Error<()>> {
-        unsafe {
+        sync::free(|_| unsafe {
             let mut have = false;
             loop {
                 if let Some(waiter) = self.waiters.borrow_mut().pop_front() {
@@ -40,7 +44,7 @@ impl Broadcast {
                     return Err(nb::Error::WouldBlock);
                 }
             }
-        }
+        })
     }
 
     /// 不能在中断服务里调用

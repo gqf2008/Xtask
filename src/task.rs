@@ -47,6 +47,7 @@ pub struct TaskBuilder<'a> {
     stack_size: usize,
     name: &'a str,
     priority: u8,
+    hwid: Option<u16>,
 }
 
 impl<'a> TaskBuilder<'a> {
@@ -55,6 +56,7 @@ impl<'a> TaskBuilder<'a> {
             stack_size: 256,
             name: "",
             priority: 8,
+            hwid: None,
         }
     }
     pub fn stack_size(mut self, size: usize) -> Self {
@@ -71,6 +73,13 @@ impl<'a> TaskBuilder<'a> {
         self.name = name;
         self
     }
+    /// 绑核(亲和性):任务只在指定 hart 上被调度,SMP 下获得确定性放置。
+    /// 单核口只有 hart 0。绑到不在线的核 = 任务永远饥饿(调度器不代为纠正)
+    pub fn affinity(mut self, hart: u16) -> Self {
+        assert!((hart as usize) < crate::port::MAX_HARTS);
+        self.hwid = Some(hart);
+        self
+    }
 
     pub fn spawn<F: FnOnce() + Send + 'static>(self, f: F) {
         fn entry(args: *mut c_void) {
@@ -82,6 +91,15 @@ impl<'a> TaskBuilder<'a> {
         let f: Box<Box<dyn FnOnce() + Send + 'static>> = Box::new(Box::new(f));
         let args = &*f as *const _ as *mut c_void;
         let task = Task::new(self.name, self.stack_size, self.priority, entry, args);
+        unsafe {
+            (*task).hwid = self.hwid;
+            debug_assert!(
+                self.hwid.map_or(true, |h| h < Porting::core_count()),
+                "绑核目标 {} 不在线(在线核数 {})——任务将永远饥饿",
+                self.hwid.unwrap_or(0),
+                Porting::core_count()
+            );
+        }
         core::mem::forget(f);
         schedulee.submit(task);
     }

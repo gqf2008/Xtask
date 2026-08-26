@@ -157,27 +157,34 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
 /// 如果任务队列里没有就绪任务，则返回本核 IDLE 任务
 /// 不变式：`READY_BITS` 位 i 置位 ⟺ `READYQ[i]` 非空（push/pop 双侧维护，
 /// 不一致时 pop 侧自清位并在 debug 下断言——F4：修前一致性纯靠约定）
+/// 亲和性(SMP):本核只取"未绑核"或"绑到本核"的任务;队首绑往别核时
+/// 跳过它继续扫同队,整队都绑往别核则留给对应核,本核降档试下一优先级
+/// ——绑核任务不会被错核抢走,也不会堵死本核的更低优先级就绪任务
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    let idle = IDLE_TASKS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)];
-    let tz = READY_BITS.trailing_zeros() as usize;
-    if tz >= 16 {
-        return idle;
-    }
-    let q = &mut READYQ[tz];
-    match q.pop_front() {
-        Some(task) => {
+    let me = Porting::hart_id();
+    let idle = IDLE_TASKS[(me as usize).min(MAX_HARTS - 1)];
+    let mut bits = READY_BITS;
+    while bits != 0 {
+        let tz = bits.trailing_zeros() as usize;
+        bits &= bits - 1; //本档取不到可跑任务时,降档试下一优先级
+        let q = &mut READYQ[tz];
+        if q.is_empty() {
+            debug_assert!(false, "READY_BITS 位{tz}置位但队列为空——不变式被破坏");
+            READY_BITS.set_bit(tz, false);
+            continue;
+        }
+        let pos = q.iter().position(|&t| (*t).hwid.map_or(true, |h| h == me));
+        if let Some(i) = pos {
+            //position 已确认存在,remove 必成功
+            let task = q.remove(i).expect("READYQ 元素在 position 后消失");
             if q.is_empty() {
                 READY_BITS.set_bit(tz, false);
             }
-            task
-        }
-        None => {
-            debug_assert!(false, "READY_BITS 位{tz}置位但队列为空——不变式被破坏");
-            READY_BITS.set_bit(tz, false);
-            idle
+            return task;
         }
     }
+    idle
 }
 
 /// 推入就绪队列
@@ -186,10 +193,16 @@ unsafe fn pop_ready() -> *mut Task {
 /// 调度器未启动(该核 CURRENT=null)的核跳过——任务已入队,
 /// 该核 start()/首调度自然会调度到它。
 /// SMP:遍历全部在线核选核投递(ch25 路线③)——idle 核(优先级 16)
-/// 天然被任意任务"抢占",跨核唤醒由此闭环
+/// 天然被任意任务"抢占",跨核唤醒由此闭环。
+/// 亲和性:绑核任务只投给绑定核(pop_ready 在别核也会跳过它,
+/// 投给别核只是空转一次调度)
 unsafe fn request_preempt_if_higher(task: *mut Task) {
     let n = Porting::core_count().min(MAX_HARTS as u16);
+    let pinned = (*task).hwid;
     for h in 0..n {
+        if pinned.map_or(false, |p| p != h) {
+            continue;
+        }
         let cur = super::xworker::current_ptr_at(h);
         if cur.is_null() {
             continue;
