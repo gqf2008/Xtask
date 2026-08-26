@@ -196,7 +196,7 @@ unsafe fn pop_ready() -> *mut Task {
 /// 天然被任意任务"抢占",跨核唤醒由此闭环。
 /// 亲和性:绑核任务只投给绑定核(pop_ready 在别核也会跳过它,
 /// 投给别核只是空转一次调度)
-unsafe fn request_preempt_if_higher(task: *mut Task) {
+pub(crate) unsafe fn request_preempt_if_higher(task: *mut Task) {
     let n = Porting::core_count().min(MAX_HARTS as u16);
     let pinned = (*task).hwid;
     for h in 0..n {
@@ -210,6 +210,34 @@ unsafe fn request_preempt_if_higher(task: *mut Task) {
         if (*task).priority < (*cur).priority {
             Porting::irq_to(h);
         }
+    }
+}
+
+/// 运行期改任务优先级(必须在 `sync::free` 内):把"优先级字段"和
+/// "任务此刻所处队列"两个事实一起搬走——`READYQ` 的下标 = 优先级-1,
+/// 只改字段不改桶会破坏"READY_BITS ⟺ 队列非空"不变式(pop 侧 debug 断言)。
+/// 其余状态(Blocked 在延时队列/DELAY 按 wake_tick 排、Suspended 由
+/// lock_core 按新优先级重排其锁等待队列)只改字段。
+pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
+    let t = &mut *task;
+    debug_assert!((1..=16).contains(&new_prio), "非法优先级 {new_prio}");
+    if t.priority == new_prio {
+        return;
+    }
+    let old = t.priority;
+    t.priority = new_prio;
+    if t.state == State::Ready {
+        let ptr = task;
+        if let Some(from) = &mut t.queue {
+            (*from).retain(|&x| x != ptr);
+            if (*from).is_empty() && (old as usize) <= 16 {
+                READY_BITS.set_bit(old as usize - 1, false);
+            }
+        }
+        push_ready(task);
+        // 抬升后的任务若比某核当前任务更急,立刻投 IPI——否则要等下个 tick
+        // 才有调度机会,PI 的关键"尽快放锁"就打了折扣
+        request_preempt_if_higher(task);
     }
 }
 

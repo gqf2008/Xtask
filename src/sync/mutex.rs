@@ -1,4 +1,4 @@
-//! 互斥锁（任务阻塞版）
+//! 互斥锁(任务阻塞版)
 //!
 //! 本文件回答"互斥"的两种粒度：
 //! - [`free`](crate::sync::free)：**不放弃 CPU 的互斥**——可重入临界区
@@ -12,72 +12,72 @@
 //! Rust 的 `MutexGuard` 让**解锁只能由 guard 析构发生**——"另一个任务的锁"在
 //! 安全代码里根本无法表达（guard 不被共享），双释放/他者释放的整类 bug 被类型系统
 //! 直接排除；C 版本需要运行时检查（错误码 EPERM/EBUSY）兜底同样的场景。
+//!
+//! 实现 = [`LockCore`](crate::sync::lock_core)（持有者账本 + 优先级序等待队列 +
+//! 优先级继承 PI）+ 受它保护的 `T`。**为什么不是 max=1 的信号量**:计数模型
+//! 没有"持有者",也就没有 PI——高优先级任务 H 等锁时把持锁的低优先级任务 L
+//! 临时抬到 H 的优先级,否则中优先级任务 M 会一直跑在 L 前面(火星探路者事故)。
+//! 设计推导与已知局限见 `lock_core.rs` 模块文档与书稿第 8 章。
 
-use crate::sync;
-use crate::sync::semaphore::Semaphore;
-use core::cell::{OnceCell, UnsafeCell};
+use crate::sync::lock_core::{self, LockCore};
+use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 
 /// 任务阻塞互斥锁。
 ///
-/// 实现即"一个二值信号量 + 一个受它保护的引用"：信号量计数 1 = 未锁、0 = 已锁，
-/// `lock` = `wait`（空则任务 Blocked），guard 析构 = `post`（唤醒排队者）。
-/// 与 [`Semaphore`] 的差别只在形式上多一层"谁拿了 guard 谁拥有数据"的所有权——
-/// 拿不到锁的失败路径、等待队列、丢失唤醒防护全部复用信号量已验证的机制。
+/// 内核是 [`LockCore`]：锁空闲 → 认领为持有者；别人持有 → 本任务 `Blocked`
+/// 排队睡到被唤醒(等待队列**按优先级排序**,队首先醒);guard 析构 = 释放,
+/// 唤醒队首并**把持有者的继承优先级回落到出生值**。
+/// 不可重入:同一任务嵌套拿同一把锁会把自己睡死(那是 [`ReentrantMutex`] 的
+/// 领域,见 `src/sync/reentrant_mutex.rs`——可重入锁在账本上多记一层递归深度)。
+/// [`ReentrantMutex`]: crate::sync::reentrant_mutex::ReentrantMutex
 pub struct Mutex<T> {
-    /// 信号量；构造要分配（Arc），不能进 const，用 `OnceCell` 推迟到首次加锁
-    sem: OnceCell<Semaphore>,
+    /// 互斥内核:零堆分配、const 构造(信号量的惰性初始化随之退役)
+    core: UnsafeCell<LockCore>,
     /// 被保护数据：只允许"持锁者"（拿到 `MutexGuard` 的任务）访问
     data: UnsafeCell<T>,
 }
 
 // SAFETY: 单核抢占模型下（SMP 经⑥全局自旋扩展,论证同构)——
-// 1) MutexGuard 只发给"把信号量 1→0 成功"的任务（wait/try_wait 的 fetch_update
-//    原子保证互斥），data 的任何时刻最多一个任务在读写；
-// 2) sem 的队列访问全在 sync::free 临界区内（Semaphore 自身纪律）:任务侧关中断
-//    串行、ISR 侧 post_isr 的借用也已收进同一把锁(ch25 ⑥),不存在裸并发借用;
-// 3) "取信号+登记+挂起"在同一临界区（信号量纪律），不存在丢失唤醒窗口。
-// 因此 Mutex<T: Send> 的 Send/Sync 是 sound 的——与 semaphore.rs、drv.rs 的
-// unsafe impl 同一论证，只是把"队列"换成了"数据"。
+// 1) MutexGuard 只发给"认领成功"的任务(acquire 在 sync::free 内判定 owner,
+//    原子互斥;等待队列按优先级序、释放只唤醒队首,任何时刻至多一个持有者),
+//    data 的任何时刻最多一个任务在读写;
+// 2) LockCore 的账本/队列访问全在 sync::free 临界区内:任务侧关中断串行、
+//    SMP 下全局自旋跨核互斥,不存在裸并发借用(rw 不变量与 critical.rs 同构);
+// 3) "认领失败+入队挂起"在同一临界区(lock_core::acquire),不存在丢失唤醒窗口;
+// 4) 优先级继承的一切优先级字段修改(lock_core::inherit_chain / set_priority)
+//    都在同一临界区内,与调度器的就绪队列换桶构成一个不可分割的事实。
+// 因此 Mutex<T: Send> 的 Send/Sync 是 sound 的——与 semaphore.rs 同一论证
+// 家族,只是把"队列"换成了"数据"、把"计数"换成了"持有者"。
 unsafe impl<T: Send> Send for Mutex<T> {}
 unsafe impl<T: Send> Sync for Mutex<T> {}
 
 impl<T> Mutex<T> {
-    /// 常量构造：信号量惰性初始化（见 [`Mutex::sem`]）。
-    /// 注意 `OnceCell` 里的分配发生在首次 `lock`/`try_lock`——**那时堆必须已 init**。
+    /// 常量构造：内核 `VecDeque::new` 是 const——**零分配、零惰性初始化**,
+    /// 不必再等堆 init 后的首次加锁(信号量门闩方案的 OnceCell 随之退役)。
     pub const fn new(data: T) -> Self {
         Self {
-            sem: OnceCell::new(),
+            core: UnsafeCell::new(LockCore::new()),
             data: UnsafeCell::new(data),
         }
     }
 
-    /// 惰性初始化信号量（计数 1 = 未锁）。**必须整体在 `sync::free` 内**：
-    /// `OnceCell::get_or_init` 不是线程安全的——并发/重入 initialize 会 panic，
-    /// 而内核是抢占式的，两个任务在 get_or_init 中途切换就会踩中；临界区屏蔽
-    /// 中断后单核上不存在第二个执行上下文能观察到 InProgress。分配走全局
-    /// allocator（自带自旋锁），临界区内分配不会自锁（见 allocator.rs）。
-    fn sem(&self) -> &Semaphore {
-        sync::free(|_| self.sem.get_or_init(|| Semaphore::with_signal(1)))
-    }
-
-    /// 加锁：空闲立即返回；被占用则任务进入 `Blocked` 挂起，由持锁者释放时唤醒。
-    /// 禁止在 ISR 中调用（与 `Semaphore::wait` 同规）。
+    /// 加锁：空闲立即返回；被占用则任务进入 `Blocked` 挂起,由持锁者释放时唤醒。
+    /// 禁止在 ISR 中调用（会走 `LockCore` 的挂起路径,与 `Semaphore::wait` 同规）。
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        self.sem().wait();
-        MutexGuard { mutex: self }
+        loop {
+            if lock_core::acquire(&self.core, false) {
+                return MutexGuard { mutex: self };
+            }
+            // 没拿到锁:已挂起入队(按优先级)。醒后回来重试认领——可能被抢先
+            // (barging),一律重试,这是"挂起-唤醒"模型的标准写法
+            crate::task::yield_now();
+        }
     }
 
     /// 尝试加锁：非阻塞，拿不到返回 `None`（宿主回归与"不愿等"的场景）。
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        self.sem().try_wait().then(|| MutexGuard { mutex: self })
-    }
-
-    /// 解锁（仅 guard 析构调用）：计数 0→1 并唤醒一个排队的等待者。
-    /// **不公开**——安全代码里手动调它意味着"guard 还在手上就解锁"，
-    /// 会让第二个任务闯进数据（C 版的 EPERM 场景，Rust 版直接不提供）。
-    fn unlock(&self) {
-        self.sem().post();
+        lock_core::try_acquire(&self.core, false).then(|| MutexGuard { mutex: self })
     }
 }
 
@@ -91,8 +91,8 @@ pub struct MutexGuard<'a, T> {
 impl<T> Deref for MutexGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        // SAFETY: 持锁者（信号量 1→0 成功）独占访问；&self 引用共享期
-        // 同样以持锁为前提，没有任何并发读者——见 Mutex 的 unsafe impl 论证。
+        // SAFETY: 持锁者独占访问；&self 引用共享期同样以持锁为前提，
+        // 没有任何并发读者——见 Mutex 的 unsafe impl 论证。
         unsafe { &*self.mutex.data.get() }
     }
 }
@@ -106,7 +106,7 @@ impl<T> DerefMut for MutexGuard<'_, T> {
 
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
-        self.mutex.unlock();
+        lock_core::release(&self.mutex.core);
     }
 }
 
@@ -114,7 +114,7 @@ impl<T> Drop for MutexGuard<'_, T> {
 mod tests {
     use super::Mutex;
 
-    /// 编译门禁：`Mutex::new` 必须 const（静态 `OnceCell<Mutex<T>>` 依赖它；
+    /// 编译门禁：`Mutex::new` 必须 const（静态 `Mutex<T>` 依赖它；
     /// 全仓没有"运行时构造的 static 单例"先例，不可用也不许迁就）。
     const _: Mutex<u32> = Mutex::new(0);
     const _: Mutex<Option<u8>> = Mutex::new(None);
@@ -134,6 +134,8 @@ mod tests {
 
     /// 阳性对照：已锁时 try_lock 必须失败——漏掉"已锁检查"（如直接放行）
     /// 这条测试即红；双任务同时进临界区是互斥锁最致命的错误。
+    /// host 是单上下文(null 身份),同身份再认领走的是"普通锁不许重入"
+    /// 分支(与真实"别人持锁"同一结论)。
     #[test]
     fn try_lock_while_locked_fails() {
         let m = Mutex::new(1);
@@ -145,12 +147,24 @@ mod tests {
 
     /// 回归：guard 离开作用域即解锁（Drop 忘了解锁这条测试即红——
     /// 忘解锁 = 第二次 lock 永久阻塞，在真机上表现为任务饿死）。
+    /// 深度探针直读账本:host 上"再取锁成功"不足以区分"已释放"与"可重入"
+    /// (同一个 null 身份)。
     #[test]
     fn guard_drop_releases() {
         let m = Mutex::new(());
         {
             let _g = m.lock();
+            assert_eq!(
+                unsafe { (&*m.core.get()).test_depth() },
+                1,
+                "加锁后持有深度应为 1"
+            );
         }
+        assert_eq!(
+            unsafe { (&*m.core.get()).test_depth() },
+            0,
+            "guard 析构后必须彻底释放"
+        );
         assert!(m.try_lock().is_some());
     }
 

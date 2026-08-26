@@ -41,6 +41,8 @@ pub mod critical;
 // crossbeam epoch 依赖原子 CAS——no-CAS 目标(thumbv6m)不可用,门控掉
 #[cfg(target_has_atomic = "ptr")]
 pub mod free_queue;
+/// 互斥内核(Mutex/ReentrantMutex 共用):持有者账本 + 优先级序等待队列 + PI
+pub(crate) mod lock_core;
 pub mod mutex;
 pub mod notify;
 pub mod queue;

@@ -378,6 +378,63 @@ fn test_reentrant_mutex() {
     );
 }
 
+// ============ 测试 14:优先级继承(火星探路者剧场)★ ============
+// 经典反转三人组:L(低 5)持锁 → M(中 3)长跑占满 CPU → H(高 2)等锁。
+// 无 PI:H 被 M 无限期压制——L 优先级低于 M,永远轮不到放锁,这是 1997
+// 火星探路者事故的形态;有 PI:H 阻塞的瞬间把 L 抬到 2,L 立即抢占 M
+// 跑完临界区放锁,H 在 M 的长跑还没结束时就已经进去。
+// 断言双侧:事件序列精确 + tick 不等式(tL2/tH 必须早于 tMdone——
+// M 的长跑被 PI"切开"了;阳性对照:去掉 PI,这个不等式在 100 个 tick
+// 的余量下必然翻红)。
+fn test_priority_inheritance() {
+    static LOCK: Mutex<()> = Mutex::new(());
+    static SEQ4: Mutex<Vec<(&'static str, u64)>> = Mutex::new(Vec::new());
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    SEQ4.lock().clear();
+    // L:拿锁 → 记录 → 把舞台交给 M(L 被 M 抢占,持锁睡在就绪队列)
+    TaskBuilder::new().name("t14.low").priority(5).spawn(move || {
+        let g = LOCK.lock(); // 空闲,立即持有
+        SEQ4.lock().push(("L1", xtask::tick()));
+        // spawn M(3 < 5):立即抢占 L。L 在此处被顶下,持着锁停在就绪队列
+        TaskBuilder::new().name("t14.med").priority(3).spawn(move || {
+            let t0 = xtask::tick();
+            SEQ4.lock().push(("M0", t0));
+            // 长跑 100 tick:PI 若失效,H 要等它跑完才轮到 L
+            TaskBuilder::new().name("t14.high").priority(2).spawn(move || {
+                let _h = LOCK.lock(); // 被 L 持有 → 挂起,并触发 PI 抬 L
+                SEQ4.lock().push(("H", xtask::tick()));
+                // guard 在此析构:释放并唤醒下一个等待者(无人)——H 退场
+            });
+            while xtask::tick() - t0 < 100 {
+                core::hint::spin_loop();
+            }
+            SEQ4.lock().push(("Mdone", xtask::tick()));
+            d2.post();
+        });
+        // PI 抬升后 L 在此恢复(仍是持有者,优先级已是 2):
+        // 记录"临界区内"的 L2,然后才 drop —— L2 时刻必然仍在 M 的长跑中
+        SEQ4.lock().push(("L2", xtask::tick()));
+        drop(g); // 释放:醒来 H(2),立即抢占
+    });
+    done.wait();
+    let s = SEQ4.lock().clone();
+    let names: Vec<&str> = s.iter().map(|(n, _)| *n).collect();
+    let get = |name: &str| s.iter().find(|(n, _)| *n == name).map(|(_, t)| *t);
+    // 序列:L1 → (L 被 M 抢占) → M0 → (M spawn H → H 阻塞 → PI 抬 L →
+    // L 抢占 M) → L2 → (H 被唤醒,高优先级抢先) → H → (M 恢复跑完长跑) → Mdone
+    let ok_seq = names == ["L1", "M0", "L2", "H", "Mdone"];
+    let ok_pi = match (get("L2"), get("H"), get("Mdone"), get("M0")) {
+        (Some(l2), Some(h), Some(md), Some(m0)) => l2 < md && h < md && h < m0 + 100,
+        _ => false,
+    };
+    check(
+        ok_seq && ok_pi,
+        "priority_inheritance",
+        format!("序列 {names:?}(应 L1 M0 L2 H Mdone) PI 判据: L2/H 须早于 Mdone 且 H 在 M 长跑内进入"),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -394,7 +451,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 13/13 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 14/14 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
@@ -420,6 +477,7 @@ fn main() -> ! {
                 ("bus_pubsub", test_bus),
                 ("task_exit", test_task_exit),
                 ("reentrant_mutex", test_reentrant_mutex),
+                ("priority_inheritance", test_priority_inheritance),
             ];
             let total = tests.len();
             let mut passed = 0usize;

@@ -147,6 +147,13 @@ pub struct Task {
     pub(crate) wake_tick: u64,
     pub(crate) id: u16,
     pub(crate) priority: u8,
+    /// **出生优先级**(spawn 时的值)。优先级继承(PI)把本任务临时抬高后,
+    /// 释放锁时回落的目标——"继承的要还"。
+    pub(crate) base_priority: u8,
+    /// 我在等的互斥锁内核(仅互斥类锁的阻塞路径设置,认领成功清除)。
+    /// 优先级继承链靠它上传:"等锁 → 谁在持锁 → 持锁者又在等谁"。
+    /// 普通信号量阻塞不设(PI 链止于非互斥原语,与 FreeRTOS/Zephyr 一致)。
+    pub(crate) blocked_lock: *mut crate::sync::lock_core::LockCore,
     pub(crate) hwid: Option<u16>,
     pub(crate) state: State,
 }
@@ -196,6 +203,8 @@ impl Task {
             name: name.to_string(),
             id: 1,
             priority,
+            base_priority: priority,
+            blocked_lock: ptr::null_mut(),
             hwid: None,
             state: State::Ready,
         });
