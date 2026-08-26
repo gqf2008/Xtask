@@ -369,17 +369,22 @@ SECTIONS
 > 上面这套"周期 1ms 一次不落"的模型在空闲时是纯开销。tickless 让
 > idle 不再原地等中断,而是三态决策:无期限 → `stop_timer`+`wfi`
 > 长眠(tick() 冻结);有期限 → 一次性武装睡到最近期限;已到期 →
-> 先处理再睡。两个期限源=延时队列队首+软定时器堆顶取近;到点 ISR
-> 实测睡了多久(`el = (now-armed)/PERIOD`),`TICKS += el` 一次跳账
-> (与逐拍加一等价——前提是账本全用绝对时刻,见上文 wake_tick)。
-> 忙碌期改回恒定节拍:armed 标记为 0 时中断走周期老路,时间片照转。
-> 侧门:`Portable` 四个带默认的方法(`tickless_supported`/
-> `tickless_arm_delta`/`tickless_stop_timer`/`tickless_wait`),
-> 12 口零改动,仅 qemu_riscv/gd32vf103 覆盖;门控=口支持+单核+
-> `xtask::tickless::set_enabled`。两个被推演拦下的坑:启动期无拍可踢
-> (idle 先查就绪队列,非空立即 `yield_now` 而非睡死)与电平源到点
-> 重装义务(到点后补写 `now+PERIOD`,否则 mret 立刻再中)。执行级
-> 验证:qemu_kernel_tests 套件 21/21 的第 20/21 项。
+> 按到点处理走一次完整 tick。两个期限源=延时队列队首+软定时器堆顶
+> 取近;到点 ISR 实测睡了多久(`el = (now-armed)/PERIOD`),`TICKS += el`
+> 一次跳账(与逐拍加一等价——前提是账本全用绝对时刻,见上文 wake_tick)。
+> 忙碌期改回恒定节拍:离开空闲的边界钩子(`tickless_leave_idle`)
+> 补账并把定时器拨回恒定,armed 标记为 0 时中断走周期老路,时间片
+> 照转。侧门:`Portable` 六个带默认的方法(`tickless_supported`/
+> `tickless_arm_delta`/`tickless_stop_timer`/`tickless_wait` 加
+> 空闲边界钩子 `tickless_leave_idle`、自旋兜底前的
+> `tickless_resume_periodic`),10 口零改动,仅 qemu_riscv/gd32vf103
+> 覆盖;门控=口支持+单核+`xtask::tickless::set_enabled`。三个被推演
+> 拦下的坑:启动期无拍可踢(idle 先查就绪队列,非空立即 `yield_now`
+> 而非睡死)、电平源到点重装义务(到点后补写 `now+PERIOD`,否则
+> mret 立刻再中)与早醒重武装漂移(睡中被外部中断唤醒 → 任务运行
+> → 重新武装锚在冻结的 TICKS 上,墙钟期限被拖后——空闲边界钩子
+> 按实测补账+拨回恒定)。执行级验证:qemu_kernel_tests 套件 21/21
+> 的第 20/21 项。
 
 佛祖早就看清了世界的本质，无欲无求。
 
