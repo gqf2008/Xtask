@@ -863,22 +863,20 @@ fn test_tickless_staggered_wakes() {
     let w_per = WINS.lock().clone();
     xtask::tickless::set_enabled(true);
 
-    let wins_ok =
-        |w: &[(usize, u64, u64)]| w.len() == 3
+    let wins_ok = |w: &[(usize, u64, u64)]| {
+        w.len() == 3
             && w.iter()
                 .enumerate()
                 .all(|(i, (ms, pre, post))| {
-                    // 错峰排序:30/50/100 依次唤醒
-                    let (m0, m1, m2) = (xtask::time::ms2ticks(30) as u64,
-                        xtask::time::ms2ticks(50) as u64,
-                        xtask::time::ms2ticks(100) as u64);
-                    let exp = [m0, m1, m2][i];
+                    // 错峰排序:30/50/100 依次唤醒,下标即窗长
+                    let exp = xtask::time::ms2ticks([30, 50, 100][i]) as u64;
                     let delta = *post - *pre;
                     // 拍账下限保证"不早于期限"(sleep 语义);上限 +2 拍
                     // 是中断投递迟到的余量(多核 TCG 下可 ≥1 拍——到点
                     // 记账按实测拍数进位,绝无窗口丢失,见 ch29 踩坑)
                     *ms == [30, 50, 100][i] && delta >= exp && delta <= exp + 2
-                });
+                })
+    };
     let ok_tl = wins_ok(&w_tl);
     let ok_per = wins_ok(&w_per);
     let fires_tl = isr1 - isr0;
