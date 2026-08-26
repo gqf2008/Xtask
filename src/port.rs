@@ -112,6 +112,32 @@ pub trait Portable {
     /// (在 `start_scheduler` 之前由调度器调用,此刻就绪队列/每核 idle 已就绪)
     #[inline]
     fn start_secondary_cores() {}
+
+    // ---- tickless 动态节拍扩展面(第 29 章)----
+    // 四个方法全部带"恒定节拍"默认实现:现有各口零改动、行为逐字不变
+    // (idle 会自旋等中断,与旧 `loop {}` 等价);要省电的口按需覆盖。
+    // 见 book/src/ch29-tickless.md。
+
+    /// 本口是否支持 tickless 动态节拍(一次性节拍定时器 + wfi 等待)
+    #[inline]
+    fn tickless_supported() -> bool {
+        false
+    }
+    /// 把节拍定时器重装为"delta 拍后触发一次"的一次性模式:
+    /// 到时产生一次节拍中断(与恒定节拍的重装相对),由中断路径实测
+    /// 时长跳账(`scheduler::systick_jump`)。默认实现按恒定节拍语义
+    /// 忽略——节拍恒在,无"武装"概念
+    #[inline]
+    fn tickless_arm_delta(_delta_ticks: u64) {}
+    /// 停掉节拍定时器(无期限可睡时):冻结 tick 计数——tick() 是运行时
+    /// 时钟,冻结是正确的语义(墙钟仍走 `systick()`);被外部中断唤醒
+    /// 后由 idle 重新决策并再次武装
+    #[inline]
+    fn tickless_stop_timer() {}
+    /// 睡眠等待中断(实现 wfi/wfe):被任意已使能中断唤醒即返回。
+    /// 默认实现空操作——调用方(恒定节拍口)不会走到这里
+    #[inline]
+    fn tickless_wait() {}
 }
 
 /// host 测试用移植层 mock。

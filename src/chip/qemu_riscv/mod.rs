@@ -116,6 +116,23 @@ pub(crate) fn setup_intrrupt() {
     }
 }
 
+// ---- tickless 动态节拍(ch29)----
+
+/// 一次性武装时刻(= 0 未武装/恒定节拍模式)。单核独占(tickless 门控在
+/// 单核语义):volatile 而非原子——RV32 无 64 位原子指令,与 TICKS 同款
+/// 处理(写在武装临界区、读在 ISR,单核无并发)
+static mut TICKLESS_ARMED: vcell::VolatileCell<u64> = vcell::VolatileCell::new(0);
+
+/// tick 中断进入次数——测试/调试差分计数器:tickless 下 ≈ 到点数,
+/// 恒定节拍下 ≈ 墙钟拍数(examples/qemu_kernel_tests.rs 第 20/21 项
+/// 以两者之比做阳性对照)。取差分使用,无需清零
+static TICK_ISR_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// 读 tick 中断计数(测试/调试用)
+pub fn debug_tick_isr_count() -> u32 {
+    TICK_ISR_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// QEMU virt 机移植层实现
 pub struct QemuRiscvPorting;
 
@@ -207,6 +224,50 @@ impl Portable for QemuRiscvPorting {
         let msip = (CLINT_BASE + CLINT_MSIP + 4 * hart as usize) as *mut u32;
         unsafe {
             msip.write_volatile(1);
+        }
+    }
+
+    // ---- tickless 动态节拍(ch29,见 book/src/ch29-tickless.md)----
+
+    #[inline]
+    fn tickless_supported() -> bool {
+        true
+    }
+    /// 一次性武装:cmp = 当前 mtime + delta×PERIOD;TICKLESS_ARMED 记武装
+    /// 时刻,到点 ISR 实测 el = 距离(mtime-armed)/PERIOD 跳账。
+    /// 整段在临界区内(单核 ISR 不可插入,武装窗口无竞态);先记 flag
+    /// 再写 cmp——任何时刻进入的 ISR 看到的状态都自洽
+    #[inline]
+    fn tickless_arm_delta(delta_ticks: u64) {
+        Self::free(|_| unsafe {
+            // 局部 const:PERIOD = 每拍 mtime 计数 = 10MHz/1000 = 10000
+            const PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
+            let now = QemuRiscvPorting::systick();
+            TICKLESS_ARMED.set(now);
+            let v = now + delta_ticks * PERIOD;
+            let cmp = (CLINT_BASE + CLINT_MTIMECMP + 8 * Self::hart_id() as usize) as *mut u32;
+            cmp.add(1).write_volatile(((v >> 32) as u32) & 0xffff_ffff); // hi 先
+            cmp.write_volatile(v as u32); // lo 后(防中途匹配)
+            // 停表可能已清 MTIE,补开
+            core::arch::asm!("csrs mie, {0}", in(reg) 1u32 << 7);
+        });
+    }
+    /// 停表:清 MTIE + cmp 推到 64 位上限——CLINT 无显式 enable/disable,
+    /// 双保险(清使能位防新触发,推 cmp 防陈旧电平残留导致 wfi 立返)
+    #[inline]
+    fn tickless_stop_timer() {
+        unsafe {
+            core::arch::asm!("csrc mie, {0}", in(reg) 1u32 << 7);
+            let cmp = (CLINT_BASE + CLINT_MTIMECMP + 8 * Self::hart_id() as usize) as *mut u32;
+            cmp.add(1).write_volatile(u32::MAX);
+            cmp.write_volatile(u32::MAX);
+        }
+    }
+    /// 睡眠等待中断(wfi:任意已使能中断 pending 即返回)
+    #[inline]
+    fn tickless_wait() {
+        unsafe {
+            core::arch::asm!("wfi");
         }
     }
 

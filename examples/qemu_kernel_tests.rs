@@ -810,6 +810,148 @@ fn test_tlsf_alloc_determinism() {
     );
 }
 
+// ============ 第 29 章:tickless 动态节拍 ============
+
+/// 测试 20:tickless 错峰睡眠——精确唤醒 + 节拍中断计数差分 ★
+/// 三个任务错峰睡 30/50/100ms;各自记录 (pre, post) tick——跳账到点
+/// 账目精确:post-pre 恰为 3/5/10…拍(按 TICK_CLOCK_HZ=1000 即 30/50/100)。
+/// 判别器是节拍中断计数:恒定节拍每拍一次(窗口 ≈ 100 次),tickless
+/// 只到点才中(错峰 3 次)——"到点之外零中断"就是动态节拍的定义。
+/// 同场景关掉 tickless 作为阳性对照:计数暴涨,拍账仍精确
+/// (绝对时刻账本与逐拍账在"拍数"上等价,差的是墙钟相位与中断次数)。
+fn test_tickless_staggered_wakes() {
+    use xtask::chip::qemu_riscv::debug_tick_isr_count;
+    static WINS: Mutex<Vec<(usize, u64, u64)>> = Mutex::new(Vec::new());
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    let d3 = done.clone();
+    let d4 = done.clone();
+    WINS.lock().clear();
+
+    fn spawn_sleeper(ms: usize, done_arc: XArc<Semaphore>) {
+        TaskBuilder::new().name("t20.slp").priority(9).spawn(move || {
+            let pre = xtask::tick();
+            xtask::sleep_ms(ms);
+            let post = xtask::tick();
+            WINS.lock().push((ms, pre, post));
+            done_arc.post();
+        });
+    }
+
+    // —— tickless 档(默认开)——
+    let isr0 = debug_tick_isr_count();
+    spawn_sleeper(30, done.clone());
+    spawn_sleeper(50, d2);
+    spawn_sleeper(100, d3);
+    for _ in 0..3 {
+        done.wait();
+    }
+    let isr1 = debug_tick_isr_count();
+    let w_tl = WINS.lock().clone();
+
+    // —— 恒定节拍对照(同场景,阳性对照)——
+    WINS.lock().clear();
+    xtask::tickless::set_enabled(false);
+    let isr2 = debug_tick_isr_count();
+    spawn_sleeper(30, done.clone());
+    spawn_sleeper(50, done.clone());
+    spawn_sleeper(100, d4);
+    for _ in 0..3 {
+        done.wait();
+    }
+    let isr3 = debug_tick_isr_count();
+    let w_per = WINS.lock().clone();
+    xtask::tickless::set_enabled(true);
+
+    let wins_ok =
+        |w: &[(usize, u64, u64)]| w.len() == 3
+            && w.iter()
+                .enumerate()
+                .all(|(i, (ms, pre, post))| {
+                    // 错峰排序:30/50/100 依次唤醒
+                    let (m0, m1, m2) = (xtask::time::ms2ticks(30) as u64,
+                        xtask::time::ms2ticks(50) as u64,
+                        xtask::time::ms2ticks(100) as u64);
+                    let exp = [m0, m1, m2][i];
+                    let delta = *post - *pre;
+                    // 拍账下限保证"不早于期限"(sleep 语义);上限 +2 拍
+                    // 是中断投递迟到的余量(多核 TCG 下可 ≥1 拍——到点
+                    // 记账按实测拍数进位,绝无窗口丢失,见 ch29 踩坑)
+                    *ms == [30, 50, 100][i] && delta >= exp && delta <= exp + 2
+                });
+    let ok_tl = wins_ok(&w_tl);
+    let ok_per = wins_ok(&w_per);
+    let fires_tl = isr1 - isr0;
+    let fires_per = isr3 - isr2;
+    check(
+        ok_tl && ok_per && fires_tl <= 4 && fires_per >= 100 && fires_per > 10 * fires_tl,
+        "tickless_staggered_wakes",
+        format!(
+            "拍账 tl={ok_tl} per={ok_per}(应精确 30/50/100);中次数 tl={fires_tl} per={fires_per}\
+             (应 tl≤4 且 per≥100——到点之外零中断) tl数据={w_tl:?}",
+        ),
+    );
+}
+
+/// 测试 21:单个远期期限——150ms 只到点一次 ★
+/// 睡眠窗口内只有一个期限:节拍中断次数 tickless ≈ 1(武装一次、到点一次),
+/// 恒定节拍 ≈ 150(每毫秒一拍)。拍账两档都精确(150)。让"中间零拍"
+/// 成为可断言的定量事实:tl ≤ 2 且 per ≥ 100。
+fn test_tickless_far_deadline() {
+    use xtask::chip::qemu_riscv::debug_tick_isr_count;
+    static WIN: Mutex<(u64, u64)> = Mutex::new((0, 0));
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+
+    // —— tickless 档(默认开)——
+    let isr0 = debug_tick_isr_count();
+    TaskBuilder::new().name("t21.far").priority(9).spawn(move || {
+        let pre = xtask::tick();
+        xtask::sleep_ms(150);
+        let post = xtask::tick();
+        *WIN.lock() = (pre, post);
+        d2.post();
+    });
+    done.wait();
+    let isr1 = debug_tick_isr_count();
+    let (pre_tl, post_tl) = *WIN.lock();
+
+    // —— 恒定节拍对照(阳性对照)——
+    xtask::tickless::set_enabled(false);
+    let isr2 = debug_tick_isr_count();
+    let d3 = done.clone();
+    TaskBuilder::new().name("t21.far2").priority(9).spawn(move || {
+        let pre = xtask::tick();
+        xtask::sleep_ms(150);
+        let post = xtask::tick();
+        *WIN.lock() = (pre, post);
+        d3.post();
+    });
+    done.wait();
+    let isr3 = debug_tick_isr_count();
+    let (pre_per, post_per) = *WIN.lock();
+    xtask::tickless::set_enabled(true);
+
+    let exp = xtask::time::ms2ticks(150) as u64;
+    let d_tl = post_tl - pre_tl;
+    let d_per = post_per - pre_per;
+    let fires_tl = isr1 - isr0;
+    let fires_per = isr3 - isr2;
+    check(
+        // 拍账下限不早于期限;上限 +2 拍 = 中断投递迟到余量(同上)
+        d_tl >= exp && d_tl <= exp + 2
+            && d_per == exp
+            && fires_tl <= 2
+            && fires_per >= 100
+            && fires_per > 10 * fires_tl,
+        "tickless_far_deadline",
+        format!(
+            "拍账 tl={d_tl} per={d_per}(应精确 {exp});中次数 tl={fires_tl} per={fires_per}\
+             (应 tl≤2:远期期限只到点一次)",
+        ),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -826,7 +968,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 19/19 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 21/21 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
@@ -858,6 +1000,8 @@ fn main() -> ! {
                 ("pi_cross_acquire_deadlock", test_pi_cross_acquire_deadlock),
                 ("tlsf_fragmentation", test_tlsf_fragmentation),
                 ("tlsf_alloc_determinism", test_tlsf_alloc_determinism),
+                ("tickless_staggered_wakes", test_tickless_staggered_wakes),
+                ("tickless_far_deadline", test_tickless_far_deadline),
             ];
             let total = tests.len();
             let mut passed = 0usize;

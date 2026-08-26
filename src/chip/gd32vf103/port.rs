@@ -39,10 +39,28 @@ global_asm!(include_str!("port.S"), options(raw));
 #[export_name = "INT_TMR"]
 unsafe extern "C" fn mtimer_irq_isr() {
     //isr_sprintln!("mtimer_irq_isr");
-    //设置下一次中断时间
-    super::reset_systick();
-    if scheduler::systick() {
-        super::Gd32vf103Porting::irq();
+    // tickless 一次性到点:实测本次睡眠拍数跳账(TICKS += el)后照常摘到期;
+    // 恒定节拍 = 重装 mtimecmp + 逐拍账(与 qemu 口同构,见 ch29)
+    let armed = super::TICKLESS_ARMED.get();
+    if armed != 0 {
+        // 一次性到点:el = 距武装时刻的整拍数(≥ delta——定时器不会
+        // 早于 cmp 触发;ISR 延迟超过一拍时 el 会进位,语义仍正确)
+        super::TICKLESS_ARMED.set(0);
+        let now = super::Gd32vf103Porting::systick();
+        const PERIOD: u64 = (super::SYSTICK_CLOCK_HZ / super::TICK_CLOCK_HZ) as u64;
+        let el = now.wrapping_sub(armed) / PERIOD;
+        if scheduler::systick_jump(el.max(1)) {
+            super::Gd32vf103Porting::irq();
+        }
+        // 补一击"下一拍":电平/比较源若停在陈旧 cmp 上,出中断后条件
+        // 仍成立会立刻重入——重装即消
+        super::reset_systick();
+    } else {
+        //设置下一次中断时间
+        super::reset_systick();
+        if scheduler::systick() {
+            super::Gd32vf103Porting::irq();
+        }
     }
 }
 

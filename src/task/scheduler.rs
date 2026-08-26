@@ -32,6 +32,23 @@ pub(crate) unsafe fn systick() -> bool {
     schedulee.do_systick()
 }
 
+/// tickless 一次性定时到点(tick ISR 侧):跳拍补账后执行与逐拍 tick
+/// 相同的到期处理。delta 由移植层实测(醒来 mtime 与武装时刻之差 ÷
+/// 周期)——一次性定时器不会早于武装时刻触发,故 delta ≥ 1
+#[inline]
+pub(crate) unsafe fn systick_jump(delta: u64) -> bool {
+    time::jump_ticks(delta);
+    schedulee.do_systick()
+}
+
+/// 空闲引擎"期限已到"防御分支:只执行到期摘取/抢占检查,不推账。
+/// 不变式"任何到点期限都已被 do_systick 即时摘取"保证其理论不可达;
+/// 保留为守卫,同时让三态决策函数对全部输入有定义
+#[inline]
+pub(crate) unsafe fn do_systick_now() -> bool {
+    schedulee.do_systick()
+}
+
 pub(crate) unsafe fn schedule() {
     schedulee.do_schedule()
 }

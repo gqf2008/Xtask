@@ -28,6 +28,22 @@ pub(crate) unsafe fn increase_tick() {
     timer::do_tick(tick);
 }
 
+/// 节拍快进(tickless 一次性定时到点,tick ISR 侧):TICKS 直接 +delta
+/// 并驱动软定时器堆——与 increase_tick 的逐拍路径等价,只是批量。
+/// tick() 是运行时时钟,内核睡了 delta 拍就补 delta 拍账,不损失任何账目;
+/// 期间到期/新建的延时与软定时器一律按绝对拍比较,跳账后天然归位
+#[inline]
+pub(crate) unsafe fn jump_ticks(delta: u64) {
+    debug_assert!(delta > 0);
+    let tick = crate::sync::free(|_| {
+        let tick = TICKS.get() + delta;
+        TICKS.set(tick);
+        tick
+    });
+    #[cfg(feature = "timer")]
+    timer::do_tick(tick);
+}
+
 /// 返回任务Tick
 /// 32 位目标上 u64 读非原子，进临界区防止与 ISR 里的 increase_tick 并发撕裂
 #[inline]
@@ -116,5 +132,29 @@ impl DelayUs<u16> for Delay {
 impl DelayUs<u8> for Delay {
     fn delay_us(&mut self, us: u8) {
         Porting::delay_us(u64(us))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{jump_ticks, tick, TICKS};
+
+    /// 跳账:直接 +delta——与逐拍 +1 的逐拍路径等价(第 29 章 tickless
+    /// 到点补账)。唯一触碰 TICKS 全局的测试:其余 host 测试不读 tick 值,
+    /// 无共享状态;末行还原现场
+    #[test]
+    fn jump_ticks_advances_exactly() {
+        unsafe {
+            let t0 = TICKS.get();
+            jump_ticks(3);
+            assert_eq!(tick(), t0 + 3, "跳 3 拍应到 t0+3");
+            jump_ticks(5);
+            assert_eq!(tick(), t0 + 8, "再跳 5 拍应到 t0+8");
+            // 大跳:读写都在锁内,32 位目标上 u64 不撕裂
+            jump_ticks(1u64 << 33);
+            assert_eq!(tick(), t0 + 8 + (1u64 << 33));
+            // 还原现场,避免影响其他测试
+            TICKS.set(t0);
+        }
     }
 }

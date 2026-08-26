@@ -178,6 +178,16 @@ impl TimerInner {
     }
 }
 
+/// 软定时器堆顶的下次触发拍(堆空/未启动 = None)。
+/// 供 tickless 空闲引擎汇集期限——deadline 必须来自堆顶,新建的
+/// `Timer::after/period` 已在任务侧入堆,无需唤醒 timer 任务即可被
+/// 武装到点。调用方(空闲引擎)在 sync::free 内读取,与任务侧提交同锁
+#[inline]
+pub(crate) fn next_timer_tick() -> Option<u64> {
+    // SAFETY: 调用方持全局锁;读取堆顶只借不可变引用
+    unsafe { HEAP.as_ref().and_then(|h| h.peek().map(|t| t.next_tick)) }
+}
+
 unsafe fn submit(timer: Box<TimerInner>) {
     if let Some(heap) = &mut HEAP {
         heap.push(timer);

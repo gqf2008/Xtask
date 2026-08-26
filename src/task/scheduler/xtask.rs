@@ -295,6 +295,22 @@ pub(crate) static mut READYQ: [TaskQueue; 16] = [const { VecDeque::new() }; 16];
 /// 延时队列——按 wake_tick 升序（push_delay 有序插入维护）
 pub(crate) static mut DELAY: TaskQueue = VecDeque::new();
 
+/// 延时队列队首的到期拍(tickless 空闲引擎取期限用;与 do_systick 同锁读)
+#[inline]
+pub(crate) unsafe fn next_delay_tick() -> Option<u64> {
+    // SAFETY: 与 take_expired 同款访问约定——队内指针均有效,调用方持锁
+    DELAY.front().map(|t| unsafe { (**t).wake_tick })
+}
+
+/// 是否有任务处于就绪态(tickless 空闲引擎在睡眠前先看这一眼——
+/// 恒定节拍下 idle 靠"第一拍"被踢出,dynamic 下必须主动让出。
+/// 仅在单核语义下被调用(tickless 门控),与 do_systick 的读同源)
+#[inline]
+pub(crate) unsafe fn has_ready() -> bool {
+    // SAFETY: 单核语义下读位图,与 do_systick 同源(无并发写者)
+    unsafe { READY_BITS != 0 }
+}
+
 /// 测试清场(仅 host 单测):wakeup 会把就绪任务推进全局 READYQ——回收
 /// 任务前必须清桶清位图,否则回收后的悬垂指针留在就绪队列里,任何后续
 /// 驱动调度器的 host 测试都会解引用已释放的 Task。

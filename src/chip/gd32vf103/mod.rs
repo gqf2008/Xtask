@@ -55,6 +55,13 @@ pub(crate) fn setup_intrrupt() {
     }
 }
 
+// ---- tickless 动态节拍(ch29)----
+// 与 qemu_riscv 口同构:一次性武装 mtimecmp,tick ISR 实测拍数跳账。
+
+/// 一次性武装时刻(= 0 未武装/恒定节拍模式)。单核独占(tickless
+/// 门控在单核语义):volatile 而非原子——与 TICKS 同款处理
+static mut TICKLESS_ARMED: vcell::VolatileCell<u64> = vcell::VolatileCell::new(0);
+
 /// gd32芯片移植层实现
 pub struct Gd32vf103Porting;
 
@@ -124,6 +131,40 @@ impl Portable for Gd32vf103Porting {
         let ptr = (TIMER_CTRL_ADDR + TIMER_MSIP) as *mut u8;
         unsafe {
             ptr.write_volatile(*ptr & !0x01);
+        }
+    }
+
+    // ---- tickless 动态节拍(ch29,见 book/src/ch29-tickless.md)----
+
+    #[inline]
+    fn tickless_supported() -> bool {
+        true
+    }
+    /// 一次性武装:cmp = 当前 mtime + delta×PERIOD(走 set_mtimecmp 的
+    /// lo=0xffffffff 先行防中途匹配);TICKLESS_ARMED 记武装时刻,到点
+    /// ISR 实测 el 跳账。整段在临界区内(单核 ISR 不可插入,无竞态);
+    /// 停表可能已 mask 掉定时器中断,顺带补开
+    #[inline]
+    fn tickless_arm_delta(delta_ticks: u64) {
+        Self::free(|_| unsafe {
+            const PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
+            let now = Gd32vf103Porting::systick();
+            TICKLESS_ARMED.set(now);
+            set_mtimecmp(now + delta_ticks * PERIOD);
+            ECLIC::unmask(Interrupt::INT_TMR);
+        });
+    }
+    /// 停表:mask 定时器中断 + cmp 推到 64 位上限(双保险,理由同 qemu 口)
+    #[inline]
+    fn tickless_stop_timer() {
+        ECLIC::mask(Interrupt::INT_TMR);
+        set_mtimecmp(u64::MAX);
+    }
+    /// 睡眠等待中断(wfi:任意已使能中断 pending 即返回)
+    #[inline]
+    fn tickless_wait() {
+        unsafe {
+            core::arch::asm!("wfi");
         }
     }
 
@@ -201,6 +242,21 @@ impl Portable for Gd32vf103Porting {
     }
 }
 
+/// 设置 mtimecmp 比较寄存器(lo=0xffffffff 先写防中途匹配,标准 64 位
+/// 写序;tickless 一次性武装与周期重装共用)
+#[inline]
+fn set_mtimecmp(v: u64) {
+    let hi = ((v >> 32) as u32) & 0xffffffff;
+    let lo = (v as u32) & 0xffffffff;
+    let mtimecmp_lo = (TIMER_CTRL_ADDR + TIMER_MTIMECMP) as *mut u32;
+    let mtimecmp_hi = (TIMER_CTRL_ADDR + TIMER_MTIMECMP + 4) as *mut u32;
+    unsafe {
+        mtimecmp_lo.write_volatile(0xffffffff);
+        mtimecmp_hi.write_volatile(hi);
+        mtimecmp_lo.write_volatile(lo);
+    }
+}
+
 /// 重新设置mtimecmp寄存器
 /// mtimecmp=TICKS+mtime的值，当mtimecmp的值大于等于mtime时触发定时器中断
 #[inline]
@@ -208,18 +264,6 @@ pub(crate) fn reset_systick() {
     /// TICKS=RTC_CLOCK_HZ（RTC时钟频率）/ TICK_CLOCK_HZ（TICK频率）
     /// RTC_CLOCK_HZ、TICK_CLOCK_HZ在env.rs里配置
     const TICKS: usize = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ;
-    /// 设置mtimecmp比较寄存器
-    fn set_mtimecmp(v: u64) {
-        let hi = ((v >> 32) as u32) & 0xffffffff;
-        let lo = (v as u32) & 0xffffffff;
-        let mtimecmp_lo = (TIMER_CTRL_ADDR + TIMER_MTIMECMP) as *mut u32;
-        let mtimecmp_hi = (TIMER_CTRL_ADDR + TIMER_MTIMECMP + 4) as *mut u32;
-        unsafe {
-            mtimecmp_lo.write_volatile(0xffffffff);
-            mtimecmp_hi.write_volatile(hi);
-            mtimecmp_lo.write_volatile(lo);
-        }
-    }
     let mtime = Gd32vf103Porting::systick();
     let mtimecmp = TICKS as u64 + mtime;
     set_mtimecmp(mtimecmp);
