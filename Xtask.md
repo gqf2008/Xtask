@@ -365,6 +365,22 @@ SECTIONS
 
 如何配置那个固定值呢？固定值=CPU（RTC）频率/中断频率，例如：我们希望CPU每隔1毫秒调用一次SYSTICK_ISR函数，也就是1秒调用1000次=1000Hz，假如CPU（RTC）的频率是1800000Hz，那么这个固定值=1800000/1000=1800
 
+> **演进注记(2026-08-26):节拍从"恒定"进到"动态"——tickless(第 29 章)。**
+> 上面这套"周期 1ms 一次不落"的模型在空闲时是纯开销。tickless 让
+> idle 不再原地等中断,而是三态决策:无期限 → `stop_timer`+`wfi`
+> 长眠(tick() 冻结);有期限 → 一次性武装睡到最近期限;已到期 →
+> 先处理再睡。两个期限源=延时队列队首+软定时器堆顶取近;到点 ISR
+> 实测睡了多久(`el = (now-armed)/PERIOD`),`TICKS += el` 一次跳账
+> (与逐拍加一等价——前提是账本全用绝对时刻,见上文 wake_tick)。
+> 忙碌期改回恒定节拍:armed 标记为 0 时中断走周期老路,时间片照转。
+> 侧门:`Portable` 四个带默认的方法(`tickless_supported`/
+> `tickless_arm_delta`/`tickless_stop_timer`/`tickless_wait`),
+> 12 口零改动,仅 qemu_riscv/gd32vf103 覆盖;门控=口支持+单核+
+> `xtask::tickless::set_enabled`。两个被推演拦下的坑:启动期无拍可踢
+> (idle 先查就绪队列,非空立即 `yield_now` 而非睡死)与电平源到点
+> 重装义务(到点后补写 `now+PERIOD`,否则 mret 立刻再中)。执行级
+> 验证:qemu_kernel_tests 套件 21/21 的第 20/21 项。
+
 佛祖早就看清了世界的本质，无欲无求。
 
 ## 时间片
