@@ -1,3 +1,8 @@
 # 链接器脚本必须固定 LF：Windows 检出若变成 CRLF，rust-lld 解析会报
 # "expected filename pattern"（见 README 工具链注意事项）
 *.x text eol=lf
+
+# 手册 PDF 走 LFS(docs/ 二进制体量 ~166MB,普通历史会永久变重;文字索引
+# docs/README.md 仍是普通文件)。"imported_binary" 内建 diff driver 避免在
+# PR 里渲染乱码指针。
+docs/**/*.pdf filter=lfs diff=imported_binary merge=lfs -text
