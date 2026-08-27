@@ -12,7 +12,7 @@ use vcell::VolatileCell;
 static mut TICKS: VolatileCell<u64> = VolatileCell::new(0);
 
 /// 每TICK多少微秒
-const TICK_PREIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
+const TICK_PERIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 
 /// 节拍推进(tick ISR 侧,主核独占调用):TICKS 直接 +delta 并驱动
 /// 软定时器堆。逐拍路径 delta=1(恒定节拍),tickless 一次性到点
@@ -57,7 +57,7 @@ pub fn tick() -> u64 {
 /// 毫秒转tick
 #[inline(always)]
 pub fn ms2ticks(ms: usize) -> usize {
-    ms * 1000 / TICK_PREIOD_US
+    ms * 1000 / TICK_PERIOD_US
 }
 
 /// 返回tick时长，单位毫秒
@@ -69,7 +69,7 @@ pub fn tick_ms() -> u64 {
 /// 返回tick时长，单位微秒
 #[inline]
 pub fn tick_us() -> u64 {
-    tick() * TICK_PREIOD_US as u64
+    tick() * TICK_PERIOD_US as u64
 }
 
 /// 返回rtc tick
