@@ -729,7 +729,11 @@ fn test_tlsf_fragmentation() {
 /// (滤掉 tick 落入测量窗的干扰),断言 TLSF 显著更快且方向稳定。
 fn test_tlsf_alloc_determinism() {
     use xtask::allocator::{tlsf::MiniTlsf, FirstFit};
-    const K: usize = 256;
+    // K=512(初版 256):深链加长把 first-fit 的 O(K) 行走与大洞
+    // 位图直达的差距放大——比例对 TCG 翻译块布局/整体 LTO 重排的
+    // 灵敏度随之下降(2026-08-26:口侧新增 ISR 后 LTO 重排,256 时
+    // 比例从 ~3× 掉到 1.70× 区间,512 后恢复稳定 ~2.5×+)
+    const K: usize = 512;
     static mut BACK_FF2: [u8; 65536] = [0; 65536];
     static mut BACK_TF2: [u8; 65536] = [0; 65536];
     let small = Layout::from_size_align(32, 8).unwrap();
@@ -950,6 +954,136 @@ fn test_tickless_far_deadline() {
     );
 }
 
+// ============ 第 29 章(练习 1 兑现):外部中断——冻眠与早醒 ============
+
+/// 测试 22/23 的 ISR→任务 唤醒槽。ISR 回调是裸 fn 指针(无捕获),信号量
+/// 经 `Arc::into_raw` 泄漏后把裸指针存进这个原子槽(借用即可,ISR 不碰
+/// 引用计数;泄漏一个 Arc 是测试可接受的代价)。0 = 尚未登记。
+/// 两次测试共用同一实例:信号量计数语义,先后消费互不干扰
+static UART_WAKE_SEM: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// UART RX 中断回调(ISR 上下文):post_isr 唤醒槽里的考官
+fn uart_rx_wake_cb() {
+    let p = UART_WAKE_SEM.load(Ordering::Relaxed);
+    if p != 0 {
+        // SAFETY: 槽里只存过 Arc::into_raw 泄漏的 Semaphore,存活期 = 测试
+        // 全程(泄漏),此处只借 &Semaphore 调用 post_isr
+        let s: &Semaphore = unsafe { &*(p as *const Semaphore) };
+        let _ = s.post_isr();
+    }
+}
+
+/// 测试 22:冻眠(SleepForever)→ 外部中断唤醒 → 恢复调度 ★
+/// 书稿 ch29 踩坑 4 的诚实边界由此关闭:考官挂起后全系统零就绪、零期限,
+/// idle 走到 SleepForever 停表+wfi 深睡——**能叫醒它的只剩外部中断**。
+/// 验证器从串口读到 T22-FROZEN 标记后向 qemu stdin 喂一个字节(握手,
+/// 无任何时序假设),UART RX 中断(PLIC,mext)正是那个"外部"。
+/// 断言三连:①冻眠期节拍中断为零(时钟真停了,不是空转——这是与
+/// "tickless 关掉后自旋等拍"的判别器);
+/// ②睡眠跨度 > 0(真睡过、唤醒者只能是外部中断;跨度长短取决于验证器
+/// 反应,冻眠没有最短时长);③唤醒后 30ms 睡眠拍账精确(节拍链
+/// 完好,一轮完整"睡→外部打断→恢复"闭环)。
+fn test_tickless_frozen_wake() {
+    use xtask::chip::qemu_riscv::{
+        debug_tick_isr_count, uart_disable_rx_irq, uart_enable_rx_irq, uart_set_rx_callback,
+        TICK_PERIOD,
+    };
+    use xtask::port::{Portable, Porting};
+    let wake = XArc::new(Semaphore::new());
+    UART_WAKE_SEM.store(XArc::into_raw(wake.clone()) as usize, Ordering::Relaxed);
+    uart_set_rx_callback(Some(uart_rx_wake_cb));
+    uart_enable_rx_irq();
+    let isr0 = debug_tick_isr_count();
+    let w0 = Porting::systick();
+    // 握手标记:验证器读到才喂字节——字节必然落在冻眠之后
+    write_str("T22-FROZEN: zero-deadline frozen, feed byte\r\n");
+    wake.wait(); // 考官挂起 → 唯一任务全阻塞 → SleepForever 停表 + wfi
+    let w1 = Porting::systick();
+    let isr1 = debug_tick_isr_count();
+    uart_disable_rx_irq();
+    uart_set_rx_callback(None);
+    // ① 冻眠期零节拍:没有到期期限、定时器已停表,wfi 只会被外部中断唤醒
+    check(
+        isr1 == isr0,
+        "tickless_frozen_wake",
+        format!("冻眠期节拍中断 {} 次(应 ==0——时钟真停了)", isr1 - isr0),
+    );
+    // ② 真睡过:唤醒者只可能是外部字节(零节拍中断期间,没有别的
+    // 唤醒源);跨度长短 = 验证器反应速度 + 字节到达,冻眠没有最短时长
+    let span = w1 - w0;
+    check(
+        span > 0,
+        "tickless_frozen_wake",
+        format!("冻眠跨度 {span} mtime 拍(应 >0——真睡过,唤醒者=外部中断)"),
+    );
+    // ③ 唤醒后节拍链完好:30ms 睡眠拍账精确(+≤2 拍投递余量)
+    let t0 = xtask::tick();
+    xtask::sleep_ms(30);
+    let dt = xtask::tick() - t0;
+    check(
+        (30..=32).contains(&dt),
+        "tickless_frozen_wake",
+        format!("唤醒后 30ms 睡眠拍账 {dt}(应 [30,32]——外部唤醒后节拍链仍精确)"),
+    );
+}
+
+/// 测试 23:睡眠中被外部中断早醒——墙钟期限不得被拖后 ★
+/// 书稿踩坑 5(早醒重武装漂移)的现行修复本无回归守卫,这里补上:
+/// 任务睡 2000ms,中途被 UART RX 外部中断早醒(验证器读 T23-SLEEPING
+/// 标记后喂字节)。判别用**墙钟**(systick)而非 TICKS——TICKS 账本
+/// 自洽(跳账把早醒段一并记上),漂移只对墙钟可见:
+///   有 leave_idle 补账:重新武装按"期限 - 已过拍"算 → 墙钟 2000ms 到点;
+///   无(踩坑 5 初稿):新武装锚在冻结的 TICKS 上 → 墙钟拖后 ≈ el(+早醒
+///   到补账点之间的全段),断言 [exp, exp+40ms] 必红。
+///   阈值说明:上界是**环境**容差不是语义——TCG -smp 2 下到期 ISR 投递
+///   有重尾(实测 2.1ms/16.9ms——多 vCPU 轮转推迟 trap),墙钟拍账把
+///   投递延迟一并量进"迟到"。判别力:无补账时墙钟拖后 = 喂字节前置延迟
+///   150ms(≈ 3.75× 上界);有补账时实测迟到 ≤16.9ms(≈ 0.42× 上界)。
+/// 顺带:考官被早醒唤醒运行的那一刻正是 leave_idle 边界钩子的执行现场。
+fn test_tickless_early_wake_drift() {
+    use xtask::chip::qemu_riscv::{
+        uart_disable_rx_irq, uart_enable_rx_irq, uart_set_rx_callback, TICK_PERIOD,
+    };
+    use xtask::port::{Portable, Porting};
+    static WIN: Mutex<(u64, u64)> = Mutex::new((0, 0));
+    const MS: usize = 2000;
+    let wake = {
+        // 槽里是测试 22 泄漏的 Arc 裸指针:补一次强引用计数再取回(ISR 的
+        // 槽不消费计数,这里补的是"取回"这一份)
+        let raw = UART_WAKE_SEM.load(Ordering::Relaxed) as *const Semaphore;
+        unsafe { XArc::increment_strong_count(raw) };
+        unsafe { XArc::from_raw(raw) }
+    };
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    *WIN.lock() = (0, 0);
+    uart_set_rx_callback(Some(uart_rx_wake_cb));
+    uart_enable_rx_irq();
+    TaskBuilder::new().name("t23.slp").priority(9).spawn(move || {
+        let pre = Porting::systick();
+        write_str("T23-SLEEPING: early IRQ will interrupt 2000ms sleep\r\n");
+        xtask::sleep_ms(MS);
+        let post = Porting::systick();
+        *WIN.lock() = (pre, post);
+        d2.post();
+    });
+    wake.wait(); // 睡眠中被外部中断早醒(考官运行 = leave_idle 补账现场)
+    done.wait(); // 等任务真正到点(墙钟 2000ms)
+    let (pre, post) = *WIN.lock();
+    uart_disable_rx_irq();
+    uart_set_rx_callback(None);
+    let exp = MS as u64 * TICK_PERIOD;
+    let d = post - pre;
+    check(
+        d >= exp && d <= exp + 40 * TICK_PERIOD,
+        "tickless_early_wake_drift",
+        format!(
+            "墙钟拍账 {d}(应 [{}, {}]——早醒不早醒墙钟期限都得到点,\
+             拖后意味着早醒段没人记账)", exp, exp + 40 * TICK_PERIOD
+        ),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -966,7 +1100,7 @@ fn main() -> ! {
     // 双核起跑契约(-smp 2):hart1 由 riscv-rt 默认 _mp_hook 停泊(wfi),
     // 只有 hart0 进 main。若停泊失效,hart1 会并发执行到这里——
     // 堆已初始化则下面断言可能双双通过,但随后双考官并发跑套件,
-    // 输出与计数必乱(check.sh 的 21/21 与 -smp 2 门禁会抓到)
+    // 输出与计数必乱(check.sh 的 23/23 与 -smp 2 门禁会抓到)
     use xtask::port::{Portable, Porting};
     sprintln!("boot hart: {}", Porting::hart_id());
     assert!(Porting::hart_id() == 0, "只有 hart0 应进入 main");
@@ -1000,6 +1134,8 @@ fn main() -> ! {
                 ("tlsf_alloc_determinism", test_tlsf_alloc_determinism),
                 ("tickless_staggered_wakes", test_tickless_staggered_wakes),
                 ("tickless_far_deadline", test_tickless_far_deadline),
+                ("tickless_frozen_wake", test_tickless_frozen_wake),
+                ("tickless_early_wake_drift", test_tickless_early_wake_drift),
             ];
             let total = tests.len();
             let mut passed = 0usize;
