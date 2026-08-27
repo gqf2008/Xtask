@@ -32,6 +32,32 @@ unsafe extern "C" fn TickHandler() {
     // 需要切换时不必显式请求——trap 出口统一走切换路径
 }
 
+/// 机器外部中断(mcause=11):PLIC 门控的全部外部中断走这里。
+/// 现状只接 UART RX(ch29 章末练习 1):claim 后按源 id 分派,完成后
+/// 写回 claim(PLIC 握手)。UART 侧清空接收 FIFO(RBR 读即出栈),再调
+/// 例程回调(唤醒/通知——回调必须绝不停留)
+#[no_mangle]
+unsafe extern "C" fn ExternalIrqHandler() {
+    let claim = (super::PLIC_HART0_CLAIM as *mut u32).read_volatile();
+    if claim != 0 {
+        if claim == super::UART0_IRQ_ID {
+            let rbr = (super::UART0_BASE + 0) as *mut u8;
+            let lsr = (super::UART0_BASE + 5) as *const u8;
+            while lsr.read_volatile() & 1 != 0 {
+                rbr.read_volatile();
+            }
+            let cb = super::UART_RX_CALLBACK.load(core::sync::atomic::Ordering::Relaxed);
+            if cb != 0 {
+                // SAFETY: 槽里只存过经 uart_set_rx_callback 写入的 fn() 指针,
+                // 存/取都以 usize 作位模式搬运(fn 指针与 usize 同宽)
+                let cb: fn() = core::mem::transmute(cb);
+                cb();
+            }
+        }
+        (super::PLIC_HART0_CLAIM as *mut u32).write_volatile(claim);
+    }
+}
+
 /// yield 处理:清 MSIP(电平源,防 mret 后立刻重入);
 /// 调度统一走 port.S 公共出口的 switch_context
 #[no_mangle]

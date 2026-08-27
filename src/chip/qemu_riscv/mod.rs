@@ -40,11 +40,65 @@ const CLINT_MTIME: usize = 0xBFF8;
 
 /// 每拍 mtime 计数 = SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ = 10000。
 /// reset_systick 重装、一次性武装(tickless_arm_delta)、tick ISR
-/// 实测 el 三处共用(修前各写各的局部 const,名称也不一致)
-pub(crate) const TICK_PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
+/// 实测 el 三处共用(修前各写各的局部 const,名称也不一致)。
+/// pub:墙钟拍账断言(如 tickless 早醒漂移测试)与书稿引用共用的换算单位
+pub const TICK_PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
 
 /// SiFive test 设备(测试自退出)
 pub(crate) const SIFIVE_TEST: usize = 0x0010_0000;
+
+// ---- 外部中断:PLIC + NS16550 RX(ch29 章末练习 1 的落地)----
+// 机器外部中断 mcause=11。布局换算自 QEMU virt.h/sifive_plic:
+// 优先级表@+0x00(id n 优先级 = 4n)、pending@+0x1000、**hart0 使能
+// @+0x2000**(每核 stride 0x80——0x2080 是 hart1 的使能,写错会双核
+// 同时开中断)、hart0 上下文 threshold/claim @+0x200000/+0x200004。
+// hart0 enable 字:位 10 = UART(serial@10000000 的 DTB interrupts=<10>)。
+
+/// PLIC 基址(virt 机 sifive_plic)
+pub(crate) const PLIC_BASE: usize = 0x0C00_0000;
+const PLIC_IRQ_PRIO_BASE: usize = PLIC_BASE + 0x000;
+const PLIC_HART0_ENABLE: usize = PLIC_BASE + 0x2000;
+const PLIC_HART0_THRESHOLD: usize = PLIC_BASE + 0x200000;
+const PLIC_HART0_CLAIM: usize = PLIC_BASE + 0x200004;
+/// NS16550A 基址(virt 机;TX 轮询在 stdout.rs,RX 中断路径在这里)
+pub(crate) const UART0_BASE: usize = 0x1000_0000;
+/// UART 中断号(PLIC 源 id;DTB serial@10000000 的 interrupts=<10>)
+pub(crate) const UART0_IRQ_ID: u32 = 10;
+
+/// UART RX 回调槽(例程经 uart_set_rx_callback 注册;ISR 上下文调用,
+/// 必须绝不停留——只做唤醒/通知)。0 = 未注册(ISR 只清 FIFO)
+static UART_RX_CALLBACK: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// 注册/注销 UART RX 中断回调(示例/测试用)
+pub fn uart_set_rx_callback(cb: Option<fn()>) {
+    UART_RX_CALLBACK.store(
+        cb.map_or(0, |f| f as usize),
+        core::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// 打开 UART RX 中断:PLIC 优先级/使能 + 16550 IER(RDR)+ 机器外部
+/// 中断位(mie bit11 = MEIE)。外部中断是本章"冻眠/早醒"的唤醒源,
+/// 默认全关——只有显式调用才产生外部中断,对既有行为零扰动
+pub fn uart_enable_rx_irq() {
+    unsafe {
+        ((PLIC_IRQ_PRIO_BASE + 4 * UART0_IRQ_ID as usize) as *mut u32)
+            .write_volatile(1); // 优先级 1(>0 才可投递)
+        (PLIC_HART0_THRESHOLD as *mut u32).write_volatile(0);
+        (PLIC_HART0_ENABLE as *mut u32).write_volatile(1u32 << UART0_IRQ_ID);
+        ((UART0_BASE + 1) as *mut u8).write_volatile(1); // IER bit0: 接收数据可用
+        core::arch::asm!("csrs mie, {0}", in(reg) 1u32 << 11);
+    }
+}
+
+/// 关掉 UART RX 中断(镜像 uart_enable_rx_irq;测试收尾用)
+pub fn uart_disable_rx_irq() {
+    unsafe {
+        core::arch::asm!("csrc mie, {0}", in(reg) 1u32 << 11);
+        ((UART0_BASE + 1) as *mut u8).write_volatile(0);
+        (PLIC_HART0_ENABLE as *mut u32).write_volatile(0);
+    }
+}
 
 // ---- SMP bring-up(ch25 改造路线②)----
 // 从核在 riscv-rt 的 `_mp_hook` 里停泊;应用 `smp::enable()` 后,

@@ -1,7 +1,8 @@
 /*
   QEMU RISC-V virt 机上下文切换与中断分发——**标准 CLINT,零厂商层**:
   mtvec=Direct 单入口,mcause 7=机器定时中断(MTIMECMP)、3=机器软件
-  中断(MSIP,yield)。36 字帧与 gd32/ch32/esp 各口同一约定。
+  中断(MSIP,yield)、11=机器外部中断(PLIC:UART RX,ch29 练习 1)。
+  36 字帧与 gd32/ch32/esp 各口同一约定。
 
   帧布局(36 字,与 mod.rs 的 save_context 互为镜像):
     [0]  x0 保留      [1]  ra          [2..4] x2-x4 保留
@@ -101,6 +102,8 @@
 .extern TickHandler
 // RUST 侧 yield 处理(mcause=3:清 MSIP 后调度)
 .extern YieldHandler
+// RUST 侧机器外部中断处理(mcause=11:PLIC——现接 UART RX,ch29)
+.extern ExternalIrqHandler
 // 未处理异常/中断的默认处理(riscv-rt 提供,弱符号——应用可强定义覆盖)
 .extern DefaultHandler
 
@@ -150,11 +153,17 @@ _int_dispatch:
   beq t0, t1, _isr_tick
   li t1, 3              // 机器软件中断(CLint MSIP)
   beq t0, t1, _isr_yield
+  li t1, 11             // 机器外部中断(PLIC:UART RX 等,ch29 练习 1)
+  beq t0, t1, _isr_external
   jal ra, DefaultHandler
   j _switch_and_restore
 
 _isr_tick:
   jal ra, TickHandler   // RUST:重装 MTIMECMP + 时间账(scheduler::systick)
+  j _switch_and_restore
+
+_isr_external:
+  jal ra, ExternalIrqHandler  // RUST:claim/分派/完成(PLIC 握手)
   j _switch_and_restore
 
 _isr_yield:
