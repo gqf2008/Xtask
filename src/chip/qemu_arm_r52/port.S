@@ -150,6 +150,11 @@ irq_no_preempt:
 .section .text.switch_and_schedule, "ax"
 .global switch_and_schedule
 switch_and_schedule:
+  // 中断层到此结束:调度循环恢复的任务在 I=0 下运行,嵌套计数必须归零
+  // (irq 抢占路径经此进入;不清则后续中断全走嵌套路径,调度死锁)
+  ldr r0, =IRQ_NESTING
+  mov r1, #0
+  str r1, [r0]
   bl switch_context          // Rust: do_schedule —— execute(new) 换 CURRENT 槽
 .global scheduler_loop       // restore_ctx.S(启动首调度)跳入此恢复点
 scheduler_loop:
