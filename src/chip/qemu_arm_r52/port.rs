@@ -23,6 +23,11 @@ unsafe extern "C" fn irq_preempt_check() -> u32 {
     if cur.is_null() {
         return 0;
     }
+    // DEBUG: current 的 sp 落在堆区之外 = 帧归属已坏,打印现场
+    let sp = (*cur).sp;
+    if !(0x0010_7000usize..0x0010_a000).contains(&sp) {
+        crate::sprint!("<BADSP cur={:p} sp={:#x}>", cur, sp);
+    }
     let tz = crate::task::scheduler::xtask::highest_ready_prio();
     if tz < 16 && (tz as u32 + 1) < (*cur).priority as u32 {
         1
