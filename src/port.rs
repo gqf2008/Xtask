@@ -28,6 +28,9 @@ pub use crate::chip::esp32c3::Esp32c3Porting as Porting;
 #[cfg(all(feature = "qemu_riscv", not(test)))]
 pub use crate::chip::qemu_riscv::QemuRiscvPorting as Porting;
 
+#[cfg(all(feature = "qemu_arm_r52", not(test)))]
+pub use crate::chip::qemu_arm_r52::QemuArmR52Porting as Porting;
+
 #[cfg(all(
     not(test),
     not(any(
@@ -41,7 +44,8 @@ pub use crate::chip::qemu_riscv::QemuRiscvPorting as Porting;
         feature = "ch32v203",
         feature = "ch32v103",
         feature = "esp32c3",
-        feature = "qemu_riscv"
+        feature = "qemu_riscv",
+        feature = "qemu_arm_r52"
     ))
 ))]
 pub use DefaultPorting as Porting;

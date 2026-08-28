@@ -29,15 +29,15 @@ xtask_scheduler = []
 # rp2040(2026-08-23 复活):曾经的阻断是 rp2040-hal 0.5.0 依赖被 yank 的
 # critical-section 0.2.x;0.9 起已换 1.x,现用 0.12。BSP 用仓库自带的
 # bsp_pins!(bsp/rp_pico/mod.rs),不依赖 rp-pico 官方 BSP crate。
-rp2040 = ["rp2040-hal", "rp2040-boot2"]
+rp2040 = ["rp2040-hal", "rp2040-boot2", "panic-probe"]
 # gd32vf103
 gd32vf103 = ["gd32vf103xx-hal", "longan_nano", "riscv-rt"]
 # stm32f1xx
-stm32f1 = ["stm32f1xx-hal", "bluepill"]
+stm32f1 = ["stm32f1xx-hal", "bluepill", "panic-probe"]
 # stm32f4xx
-stm32f4 = ["stm32f4xx-hal", "greenpill"]
+stm32f4 = ["stm32f4xx-hal", "greenpill", "panic-probe"]
 # stm32h7xx
-stm32h7 = ["stm32h7xx-hal"]
+stm32h7 = ["stm32h7xx-hal", "panic-probe"]
 # cm32m4
 cm32m4=["riscv-rt"]  # 空依赖激活:chip 代码用内嵌 ECLIC 抽象,不需要 HAL(示例纯内核 API)
 
@@ -61,6 +61,7 @@ usb=["usb-device","usbd-serial"]
 ch32v103 = ["ch32v1", "riscv-rt"]
 esp32c3 = ["dep:esp32c3", "riscv-rt"]
 qemu_riscv = ["riscv-rt"]  # 零 PAC:标准 CLINT/UART 直址
+qemu_arm_r52 = []  # 零 PAC、零运行时:R5 无 cortex-r-rt,启动/链接脚本自备(chip 内)
 ch32v203 = ["ch32v2", "riscv-rt"]
 ch32v307 = ["ch32v3", "riscv-rt"]
 #ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
@@ -115,7 +116,9 @@ cortex-m = { version = "0.7.4", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7.1"
 rtt-target = {version = "0.3.1", features = ["cortex-m"]}
 panic-rtt-target = { version = "0.1.0", features = ["cortex-m"] }
-panic-probe = {version = "0.3", features = ["print-rtt"]}
+# panic-probe 只支持 Cortex-M(thumb)目标:armv7r(R5)编不过,故 optional,
+# 由各 M 核芯片 feature 显式拉起(qemu_arm_r52 不拉,例程自带 panic handler)
+panic-probe = {version = "0.3", features = ["print-rtt"], optional = true}
 
 [target.'cfg(target_arch = "aarch64")'.dependencies]
 cortex-a = "7.2.0"

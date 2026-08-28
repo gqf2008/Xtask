@@ -38,9 +38,18 @@ pub mod time;
 #[cfg(feature = "timer")]
 pub mod timer;
 
-#[cfg(all(not(test), not(target_arch = "arm"), not(feature = "qemu_riscv")))]
+#[cfg(all(
+    not(test),
+    not(target_arch = "arm"),
+    not(feature = "qemu_riscv"),
+    not(feature = "qemu_arm_r52")
+))]
 use panic_halt as _;
-#[cfg(all(not(test), target_arch = "arm"))]
+#[cfg(all(
+    not(test),
+    target_arch = "arm",
+    not(feature = "qemu_arm_r52")
+))]
 use panic_probe as _;
 pub use prelude::*;
 

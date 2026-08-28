@@ -47,3 +47,11 @@ rustflags = [
   "-Cinline-threshold=5",
   "-Cno-vectorize-loops",
 ]
+
+# Cortex-R5(QEMU zcu102):自备链接脚本(memory.x + link.x,无 runtime crate)。
+# 不加 runner——QEMU 由 check.sh / 手动命令跑,见 book/src/ch31-*.md
+[target.armv7r-none-eabi]
+rustflags = [
+  "-Clink-arg=-Tmemory.x",
+  "-Clink-arg=-Tlink.x",
+]

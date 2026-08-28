@@ -30,6 +30,12 @@ fn main() {
     fs::copy("src/chip/esp32c3/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "qemu_riscv")]
     fs::copy("src/chip/qemu_riscv/memory.x", out_dir.join("memory.x")).unwrap();
+    #[cfg(feature = "qemu_arm_r52")]
+    {
+        fs::copy("src/chip/qemu_arm_r52/memory.x", out_dir.join("memory.x")).unwrap();
+        // R5 无 runtime crate,链接脚本自备(RISC-V 口用 riscv-rt 的 link.x)
+        fs::copy("src/chip/qemu_arm_r52/link.x", out_dir.join("link.x")).unwrap();
+    }
     #[cfg(feature = "cm32m4")]
     fs::copy("src/chip/cm32m4/memory.x", out_dir.join("memory.x")).unwrap();
 
@@ -45,4 +51,6 @@ fn main() {
     println!("cargo:rerun-if-changed=src/chip/ch32v103/memory.x");
     println!("cargo:rerun-if-changed=src/chip/esp32c3/memory.x");
     println!("cargo:rerun-if-changed=src/chip/qemu_riscv/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/qemu_arm_r52/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/qemu_arm_r52/link.x");
 }

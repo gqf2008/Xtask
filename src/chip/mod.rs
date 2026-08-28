@@ -13,6 +13,8 @@ pub mod ch32v103;
 pub mod esp32c3;
 #[cfg(feature = "qemu_riscv")]
 pub mod qemu_riscv;
+#[cfg(feature = "qemu_arm_r52")]
+pub mod qemu_arm_r52;
 #[cfg(feature = "gd32vf103")]
 pub mod gd32vf103;
 #[cfg(feature = "rp2040")]

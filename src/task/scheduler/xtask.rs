@@ -37,7 +37,14 @@ impl Scheduler for XTaskScheduler {
             //摘到期任务（队首起 wake_tick <= now 的连续段）重新提交调度。
             //队列按 wake_tick 升序，tick 开销 = O(到期数)，不再全队列扫描
             let now = crate::time::tick();
-            take_expired(&mut DELAY, now, |task| submit_task(task));
+            let mut n_wake = 0usize;
+            take_expired(&mut DELAY, now, |task| {
+                n_wake += 1;
+                submit_task(task)
+            });
+            if n_wake > 0 {
+                crate::sprint!("W{}@{} ", n_wake, now); // DEBUG: 到期唤醒探针
+            }
 
             // 检查尾零数，是否有比当前任务相等或更高优先级的任务
             // 如果想等优先级则时间片调度，否则就一直抢占着，直到任务主动挂起
@@ -80,7 +87,19 @@ impl Scheduler for XTaskScheduler {
                 };
                 if switch {
                     if let Some(new) = new.as_mut() {
+                        crate::sprint!("P{:p}", new); // DEBUG: pop 到的任务指针
+                        // DEBUG: 打印将恢复帧的控制槽 [13]spsr [14]lr [15]sp_svc
+                        let fr = (*new).sp as *const u32;
+                        if !fr.is_null() {
+                            crate::sprint!(
+                                "[{:x}|{:x}|{:x}]",
+                                unsafe { fr.add(13).read_volatile() },
+                                unsafe { fr.add(14).read_volatile() },
+                                unsafe { fr.add(15).read_volatile() }
+                            );
+                        }
                         if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
+                            crate::sprint!("S"); // DEBUG: execute 返回(切换语义完成)
                             //检查是否栈溢出
                             old.stack_overflow();
                             submit_task(old);
@@ -269,6 +288,14 @@ unsafe fn push_ready(task: *mut Task) {
             READY_BITS.set_bit(idx, true);
         }
     } else {
+        // DEBUG: 指认调用点(LR 在 panic! 展开前 = 调用者返回地址)
+        let mut sp: usize = 0;
+        let mut lr: usize = 0;
+        unsafe {
+            core::arch::asm!("mov {0}, sp", out(reg) sp);
+            core::arch::asm!("mov {0}, lr", out(reg) lr);
+        }
+        crate::sprintln!("PUSH_READY(NULL) sp={:#x} lr={:#x}", sp, lr);
         panic!("put_task, illegal task {:p}", task);
     }
 }

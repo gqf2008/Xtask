@@ -3,8 +3,11 @@
 #[cfg(all(any(target_arch = "riscv32", target_arch = "riscv64")))]
 pub mod riscv;
 
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "qemu_arm_r52")))]
 pub mod cortex_m;
+
+#[cfg(all(target_arch = "arm", feature = "qemu_arm_r52"))]
+pub mod cortex_ar;
 
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64;
