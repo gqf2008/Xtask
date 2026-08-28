@@ -83,6 +83,10 @@ irq_entry:
   bne irq_nested             // 嵌套:绝不触碰任务帧
   mov r3, #1
   str r3, [r2]
+  ldr r1, =SCHED_STARTED     // ★ 调度器门控:启动阶段(main/start_scheduler
+  ldrb r1, [r1]              //   的 Rust 代码)即使 CURRENT 已指向未首跑的
+  cmp r1, #0                 //   idle,真实上下文也是启动栈——存帧即污染
+  beq irq_in_kernel
   ldr r1, =CURRENT_TASK_PTR
   ldr r1, [r1]
   cmp r1, #0

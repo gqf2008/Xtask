@@ -87,19 +87,31 @@ impl Scheduler for XTaskScheduler {
                 };
                 if switch {
                     if let Some(new) = new.as_mut() {
-                        crate::sprint!("P{:p}", new); // DEBUG: pop 到的任务指针
-                        // DEBUG: 打印将恢复帧的控制槽 [13]spsr [14]lr [15]sp_svc
+                        // DEBUG: 帧完整性校验——spsr 槽([13])低 5 位必须 =SVC(0x13),
+                        // 否则 Task 结构已被踩,dump 结构前后内存定位写入者
                         let fr = (*new).sp as *const u32;
-                        if !fr.is_null() {
-                            crate::sprint!(
-                                "[{:x}|{:x}|{:x}]",
-                                unsafe { fr.add(13).read_volatile() },
-                                unsafe { fr.add(14).read_volatile() },
-                                unsafe { fr.add(15).read_volatile() }
-                            );
+                        let spsr = if fr.is_null() {
+                            0xFFFF_FFFF
+                        } else {
+                            unsafe { fr.add(13).read_volatile() }
+                        };
+                        if spsr & 0x1F != 0x13 {
+                            crate::sprint!("\r\nBADFRAME new={:p} sp={:#x} spsr={:x}\r\n",
+                                new, (*new).sp, spsr);
+                            if !fr.is_null() {
+                                for i in 0..16usize {
+                                    if i % 8 == 0 {
+                                        crate::sprint!("\r\n  f{:02}: ", i);
+                                    }
+                                    crate::sprint!("{:08x} ", unsafe {
+                                        fr.add(i).read_volatile()
+                                    });
+                                }
+                            }
+                            crate::sprint!("\r\n");
+                            panic!("frame corrupt");
                         }
                         if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
-                            crate::sprint!("S"); // DEBUG: execute 返回(切换语义完成)
                             //检查是否栈溢出
                             old.stack_overflow();
                             submit_task(old);

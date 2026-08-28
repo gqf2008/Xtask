@@ -15,6 +15,13 @@ global_asm!(include_str!("port.S"), options(raw));
 #[no_mangle]
 static mut IRQ_NESTING: u32 = 0;
 
+/// 调度器已启动门控(irq_entry 判别用):0=启动阶段(CURRENT 可能已指向
+/// 未首跑的 idle,但真实上下文是 main/Task::new 的启动栈——中断不得存帧);
+/// 1=首任务已由 scheduler_loop 恢复,current!=NULL ⟺ 线程真实在跑。
+/// ThreadX 不变式:current!=NULL 才允许补帧,本标志补齐它的启动半边
+#[no_mangle]
+static mut SCHED_STARTED: u8 = 0;
+
 /// 中断抢占判定(irq_dispatch 调用):被打断任务(current 槽)是否仍是
 /// 最高优先级就绪?r0=1 需要抢占(走补全存帧+调度循环),r0=0 原子弹回
 #[no_mangle]

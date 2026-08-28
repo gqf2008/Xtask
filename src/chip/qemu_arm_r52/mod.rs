@@ -121,10 +121,24 @@ impl Portable for QemuArmR52Porting {
         }
     }
 
-    /// 启动调度器:TTC/GIC 就绪 → 恢复第一个任务(idle 初始帧),不返回
+    /// 启动调度器:TTC/GIC 就绪 → 恢复第一个任务(idle 初始帧),不返回。
+    /// GIC 使能后必须立即关中断直到首任务被恢复——此窗口内 CPU 仍在
+    /// "启动上下文"(main/start_scheduler 的调用栈),而 CURRENT 已被
+    /// start_idle_task 指向未首跑的 idle;若此刻 tick 中断插入,
+    /// irq_entry 会把启动栈现场补成帧存进 idle.sp(lr=Task::new 内部
+    /// 地址,实测),僵尸 Task::new 从中间恢复执行,后续帧全污染。
+    /// 首任务的中断开启由帧内 spsr(0x13)在 movs pc 时一次性完成
     fn start_scheduler() -> ! {
+        // 先关中断再使能外设:TTC 的 CNT_CTRL 一写入就开始计数,1ms 后
+        // 中断即来,必须保证那时 CPU 已在"只可能打断真实任务"的状态
+        unsafe { asm!("cpsid i") };
         setup_irqs();
         log::info!("Start scheduler");
+        // 调度循环恢复首任务前置位门控(此刻 I=1,无被打断窗口):
+        // 之后 current!=NULL ⟺ 线程真实在跑,irq_entry 补帧才合法
+        unsafe {
+            asm!("ldr r0, =SCHED_STARTED", "mov r1, #1", "strb r1, [r0]");
+        }
         unsafe { asm!(include_str!("restore_ctx.S"), options(noreturn, raw)) };
     }
 
