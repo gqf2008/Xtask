@@ -67,7 +67,7 @@ pub(crate) fn start_idle_task() {
 
     let n = Porting::core_count().min(MAX_HARTS as u16);
     for h in 0..n {
-        let task = Task::new(IDLE_TASK_NAME, 128, 16, idle_task, core::ptr::null_mut());
+        let task = Task::new(IDLE_TASK_NAME, 512, 16, idle_task, core::ptr::null_mut());
         unsafe {
             IDLE_TASKS[h as usize] = task;
         }

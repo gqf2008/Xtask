@@ -352,6 +352,13 @@ pub(crate) unsafe fn has_ready() -> bool {
     unsafe { READY_BITS != 0 }
 }
 
+/// 最高优先级就绪桶下标(R5 口 irq_preempt_check 用:READY_BITS 尾零
+/// 即最高优先级桶;空队列返回 16)。调用方需处于关中断上下文
+#[inline]
+pub(crate) unsafe fn highest_ready_prio() -> u32 {
+    unsafe { READY_BITS.trailing_zeros() }
+}
+
 /// 测试清场(仅 host 单测):wakeup 会把就绪任务推进全局 READYQ——回收
 /// 任务前必须清桶清位图,否则回收后的悬垂指针留在就绪队列里,任何后续
 /// 驱动调度器的 host 测试都会解引用已释放的 Task。

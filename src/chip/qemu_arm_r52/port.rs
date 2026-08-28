@@ -4,10 +4,32 @@
 use core::arch::global_asm;
 
 use super::{GICC, TTC, TTC_SPI_INTID};
+use crate::port::Portable;
 use crate::task::scheduler;
 use crate::task::Task;
 
 global_asm!(include_str!("port.S"), options(raw));
+
+/// 中断嵌套计数(port.S irq_entry 三路判别用;ThreadX
+/// _tx_thread_system_state 同款)——非零表示嵌套中断,绝不触碰任务帧
+#[no_mangle]
+static mut IRQ_NESTING: u32 = 0;
+
+/// 中断抢占判定(irq_dispatch 调用):被打断任务(current 槽)是否仍是
+/// 最高优先级就绪?r0=1 需要抢占(走补全存帧+调度循环),r0=0 原子弹回
+#[no_mangle]
+unsafe extern "C" fn irq_preempt_check() -> u32 {
+    let cur = crate::task::scheduler::xworker::current_ptr();
+    if cur.is_null() {
+        return 0;
+    }
+    let tz = crate::task::scheduler::xtask::highest_ready_prio();
+    if tz < 16 && (tz as u32 + 1) < (*cur).priority as u32 {
+        1
+    } else {
+        0
+    }
+}
 
 /// IRQ 入口统一 handler(port.S switch_and_restore 调用):
 /// - 真中断(IRQ 入口):IAR 取号 → TTC 清中断 + 记拍 → EOI;
