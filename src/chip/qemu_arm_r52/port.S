@@ -155,10 +155,14 @@ irq_dispatch:
   orr r0, r0, #0x12
   msr cpsr_c, r0             // 切回 IRQ 取 scratch(SP_irq 仍指暂存区)
   ldmia sp!, {r0-r3, r12}    // 任务现场 r0-r3/r12
-  mrs r1, cpsr
-  bic r1, r1, #0x1F
-  orr r1, r1, #0x13
-  msr cpsr_c, r1             // 切回 SVC
+  // 切回 SVC:用 lr 暂存模式位——不能用 r0-r12(它们都是要入帧的任务值,
+  // 曾用 r1 导致帧 [1] = CPSR 值,任务恢复后 r1 错——与调度循环的
+  // movs pc, r1 缺陷同族:跳转暂存不得占用任务寄存器)。lr_svc 不参与帧
+  // (帧 lr 槽 = 中断点已压),覆盖无妨
+  mrs lr, cpsr
+  bic lr, lr, #0x1F
+  orr lr, lr, #0x13
+  msr cpsr_c, lr             // 切回 SVC
   stmdb sp!, {r4-r12}        // [4..12](stmdb 最低编号落块内最低地址:r4@[4] ✓)
   stmdb sp!, {r0-r3}         // [0..3](r0@[0] ✓)—— 16 字现场完成
   // VFP 块(33 字)压在现场之下——与 svc_entry 同布局,恢复路径统一
@@ -198,12 +202,16 @@ scheduler_loop:
   ldr r1, [sp]               // FPSCR(VFP 块顶)
   vmsr fpscr, r1             // 写回 FPSCR(VFP 系统寄存器须用 VMSR)
   add sp, sp, #4             // 越过 FPSCR 槽 → 现场帧底
-  ldmia sp!, {r0-r12}        // [0..12] 现场
-  ldmia sp!, {r1}            // [13] spsr
-  msr spsr_cxsf, r1
-  ldmia sp!, {r1}            // [14] lr(返回地址)
+  ldmia sp!, {r0-r12}        // [0..12] 现场(r1 = 任务 r1)
+  ldmia sp!, {lr}            // [13] spsr → lr
+  msr spsr_cxsf, lr
+  ldmia sp!, {lr}            // [14] lr(返回地址)→ lr
   ldr sp, [sp]               // [15] sp_svc = 任务栈指针
-  movs pc, r1                // 进任务(CPSR ← SPSR,I 随帧恢复)
+  movs pc, lr                // 进任务(CPSR ← SPSR,I 随帧恢复)
+  // 【修复】跳转用 lr 而非 r1——曾用 movs pc, r1:lr 槽(中断点/返回地址)
+  // 弹进 r1 后跳转,r1 保持 = 中断点,任务的 r1 从未被恢复——跨中断依赖
+  // r1 的代码(tick 的 u64 高 32 位)偶发拿到中断点地址,打印巨数。
+  // ThreadX 同款:恢复跳转用 lr / ldmia {.., pc}^,不占用 r0-r12
 
 // ============ 任务首调蹦床(save_context 帧的 lr 槽指向这里) ============
 .section .text.trampoline, "ax"
