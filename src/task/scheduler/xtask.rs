@@ -87,13 +87,15 @@ impl Scheduler for XTaskScheduler {
                 };
                 if switch {
                     if let Some(new) = new.as_mut() {
-                        // DEBUG: 帧完整性校验——spsr 槽([13])低 5 位必须 =SVC(0x13),
+                        // DEBUG: 帧完整性校验——spsr 槽低 5 位必须 =SVC(0x13),
                         // 否则 Task 结构已被踩,dump 结构前后内存定位写入者
+                        // 注意:R5 口的 49 字帧 = VFP 块 33 字(D0-D15+FPSCR)
+                        // + 现场 16 字,Task.sp = VFP 块底,spsr 槽在偏移 46
                         let fr = (*new).sp as *const u32;
                         let spsr = if fr.is_null() {
                             0xFFFF_FFFF
                         } else {
-                            unsafe { fr.add(13).read_volatile() }
+                            unsafe { fr.add(46).read_volatile() }
                         };
                         if spsr & 0x1F != 0x13 {
                             let name = (*new).name();

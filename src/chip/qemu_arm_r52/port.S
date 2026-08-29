@@ -24,6 +24,8 @@
   与 mod.rs save_context 互为镜像。SP_irq 只做 ≤20B 草稿暂存。
 */
 .syntax unified
+.fpu vfpv3-d16          // global_asm(raw) 不继承 -Ctarget-feature,汇编器特性
+                        // 必须在此声明(与 config.toml 的 +vfp3 一致)
 
 // ============ 向量表 @0xFFFF0000(SCTLR.V=1 → 高向量,OCM) ============
 .section .vectors, "ax"
@@ -42,6 +44,19 @@
 .section .text._start, "ax"
 .global _start
 _start:
+  // 开 FPU 访问(Cortex-R5F 的 VFPv3-D16),两道门:
+  // 1. CPACR.FPEN=3——A-profile 的 VFP 访问权限(QEMU 复位后=0,
+  //    所有 VFP 指令包括 VMRS FPEXC 都会 trap)
+  // 2. FPEXC.EN + FP2V——FPU 使能(ARMv7 访问 FPEXC 用 VMRS/VMSR 系统
+  //    寄存器指令,mrc p10 已弃用,LLVM 会对 cp10 协处理器访问告警)
+  // 之后全部代码(含 save_context/帧构建)可用 VFP 指令;任务浮点状态
+  // 由帧中 VFP 块随切换保存/恢复
+  mrc p15, 0, r0, c1, c0, 2   // 读 CPACR
+  orr r0, r0, #0x00300000     // FPEN = 3(bits[21:20])
+  mcr p15, 0, r0, c1, c0, 2   // 写回 CPACR
+  vmrs r0, fpexc
+  orr r0, r0, #0x50000000     // EN(bit30) + FP2V(bit28)
+  vmsr fpexc, r0
   ldr sp, =__stack_top       // SP_svc = DDR 顶(8 对齐,link.x)
   mrs r0, cpsr
   bic r0, r0, #0x1F
@@ -72,9 +87,14 @@ svc_entry:
   str lr, [sp, #56]          // [14] lr(svc 返回地址)
   add r3, sp, #64
   str r3, [sp, #60]          // [15] sp_svc = 入口 SP(任务让出时的栈指针)
+  // VFP 块(33 字)压在现场之下:总帧 = 49 字,Task.sp = VFP 帧底
+  sub sp, sp, #132           // 预分配 VFP 块(D0-D15 32 字 + FPSCR 1 字)
+  vstmia sp, {d0-d15}
+  vmrs r3, fpscr
+  str r3, [sp, #128]
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
-  str sp, [r0]               // Task.sp = 帧底
+  str sp, [r0]               // Task.sp = 帧底(VFP 块底)
   ldr sp, =__stack_irq       // 调度路径跑 IRQ 栈
   b switch_and_schedule
 
@@ -140,10 +160,15 @@ irq_dispatch:
   orr r1, r1, #0x13
   msr cpsr_c, r1             // 切回 SVC
   stmdb sp!, {r4-r12}        // [4..12](stmdb 最低编号落块内最低地址:r4@[4] ✓)
-  stmdb sp!, {r0-r3}         // [0..3](r0@[0] ✓)—— 帧完成,sp=帧底
+  stmdb sp!, {r0-r3}         // [0..3](r0@[0] ✓)—— 16 字现场完成
+  // VFP 块(33 字)压在现场之下——与 svc_entry 同布局,恢复路径统一
+  sub sp, sp, #132
+  vstmia sp, {d0-d15}
+  vmrs r3, fpscr
+  str r3, [sp, #128]
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
-  str sp, [r0]               // Task.sp = 帧底
+  str sp, [r0]               // Task.sp = 帧底(VFP 块底)
   b switch_and_schedule
 irq_no_preempt:
   ldmia sp!, {r0, lr}
@@ -168,7 +193,11 @@ switch_and_schedule:
 scheduler_loop:
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
-  ldr sp, [r0]               // 帧底(Task.sp)
+  ldr sp, [r0]               // 帧底(Task.sp = VFP 块底)
+  vldmia sp!, {d0-d15}       // 弹 VFP:D0-D15
+  ldr r1, [sp]               // FPSCR(VFP 块顶)
+  vmsr fpscr, r1             // 写回 FPSCR(VFP 系统寄存器须用 VMSR)
+  add sp, sp, #4             // 越过 FPSCR 槽 → 现场帧底
   ldmia sp!, {r0-r12}        // [0..12] 现场
   ldmia sp!, {r1}            // [13] spsr
   msr spsr_cxsf, r1

@@ -30,9 +30,12 @@ unsafe extern "C" fn irq_preempt_check() -> u32 {
     if cur.is_null() {
         return 0;
     }
-    // DEBUG: current 的 sp 落在堆区之外 = 帧归属已坏,打印现场
+    // DEBUG: current 的 sp 必须落在它自己的任务栈内(R5 49 字帧的
+    // Task.sp = VFP 块底,在栈顶之下 196 字节处),否则帧归属已坏
     let sp = (*cur).sp;
-    if !(0x0010_7000usize..0x0010_a000).contains(&sp) {
+    let s0 = (*cur).stack as usize;
+    let s1 = s0 + (*cur).stack_size * core::mem::size_of::<usize>();
+    if !(s0..s1).contains(&sp) {
         crate::sprint!("<BADSP cur={:p} sp={:#x}>", cur, sp);
     }
     let tz = crate::task::scheduler::xtask::highest_ready_prio();
@@ -75,22 +78,23 @@ pub(crate) unsafe extern "C" fn task_exit() {
     scheduler::exit_current_task();
 }
 
-/// 任务初始帧构造(16 字,与 port.S SAVE_CTX/RESTORE_CTX 互为镜像):
-/// 帧低→高 = [0]r0(args) [1..13]r1-r12 [13]spsr [14]lr(蹦床) [15]sp_svc
+/// 任务初始帧构造(49 字 = 现场 16 字 + VFP 33 字,与 port.S 存/恢复
+/// 路径互为镜像):
+/// 现场低到高 = [0]r0(args) [1..13]r1-r12 [13]spsr [14]lr(蹦床)
+/// [15]sp_svc; VFP 块(33 字)压在现场之下 = [16..47]D0-D15 [48]FPSCR,
+/// Task.sp = VFP 块底(scheduler_loop 弹帧起点)
 ///
-/// 首调度经 RESTORE_CTX 弹帧:r0 = args,lr = 蹦床地址,ldr sp,[15]
-/// 弹回任务栈顶,movs pc 跳蹦床 → blx entry(r0=args)进入任务。
-/// spsr = 0x13(SVC 模式、I/F 开、ARM 态)——任务首跑即中断开启
-///
-/// 【FPU 限制声明】帧中无 VFP 状态(D0-D15/FPSCR)——FPEXC.EN 恒关,
-/// 任何浮点指令触发 UNDEF。任务暂不可用浮点;需要时参照 ThreadX
-/// cortex_r5 的可开关 VFP 帧方案扩展(见 book ch32 §32.5)
+/// 首调度经调度循环弹帧: VFP 块 -> 现场 -> movs pc 跳蹦床 -> blx entry
+/// (r0=args)进入任务。spsr = 0x13(SVC 模式、I/F 开、ARM 态)——任务
+/// 首跑即中断开启; FPSCR 存启动值(默认 0 = 最接近舍入), 任务首跑
+/// 浮点行为与复位后一致
 #[inline]
 pub(crate) fn save_context(task: &mut Task) {
     unsafe {
         let top = task.stack.add(task.stack_size - 1) as usize;
         let sp_svc = top & !7; // AAPCS:SP 8 字节对齐(堆顶只保证 4 对齐)
-        let base = (sp_svc - 64) as *mut u32; // 帧底(r0 槽)
+        let base = (sp_svc - 64) as *mut u32; // 现场帧底(r0 槽)
+        let vfp = base.sub(33) as *mut u32; // VFP 块底(D0 槽)
         base.write_volatile(task.args.addr() as u32); // [0] r0 = args
         for i in 1..13usize {
             base.add(i).write_volatile(0); // [1..13] r1-r12 清零
@@ -98,13 +102,18 @@ pub(crate) fn save_context(task: &mut Task) {
         base.add(13).write_volatile(0x13); // [13] spsr:SVC 模式,IRQ/FIQ 开
         base.add(14).write_volatile(_task_entry_trampoline as usize as u32); // [14] lr
         base.add(15).write_volatile(sp_svc as u32); // [15] sp_svc
-        task.sp = base as usize; // 帧底 = RESTORE 起点
+        // VFP 块(33 字):D0-D15 + FPSCR——先清零占位,_start 已开 FPEXC.EN,
+        // 首跑前由首帧构建;真正的寄存器内容在任务让出/抢占时由 port.S 存入
+        for i in 0..33usize {
+            vfp.add(i).write_volatile(0);
+        }
+        task.sp = vfp as usize; // 帧底(VFP 块底)= RESTORE 起点
         // DEBUG: 初始帧布局对照(与 switch_ctx 探针的 cur.sp 互查)
         crate::sprintln!(
             "save_ctx: task={:p} stack={:#x} frame={:#x} sp_svc={:#x} size={}",
             task as *mut Task as *mut u8,
             task.stack as usize,
-            base as usize,
+            vfp as usize,
             sp_svc,
             task.stack_size
         );
