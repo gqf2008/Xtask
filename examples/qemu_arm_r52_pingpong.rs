@@ -85,7 +85,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 /// 目标乒乓次数(双方各 200 次)
-const ROUNDS: usize = 3;
+const ROUNDS: usize = 200;
 
 // R5 无 runtime crate:启动由 chip 口自备(port.S _start),例程只提供
 // main(向量表/启动栈/IRQ 栈全在汇编与链接脚本里)

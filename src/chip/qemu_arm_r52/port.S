@@ -57,15 +57,21 @@ _start:
 
 // ============ SVC 入口(任务让出:yield/sleep) ============
 // 进入时 SVC 模式、SP=任务栈,I 位硬件已置 1——同步存帧,零被打断风险
+// 【帧布局修复】stmdb 先压的寄存器落在高位——若先压 {r0-r12},r0 会
+// 落到帧顶、控制字反落帧底,与恢复序列(ldmia 升序:[0..12]=r0-r12 在
+// 低址)完全颠倒(实测:svc 帧 [0..2]=[sp_svc,lr,spsr] 三槽错位)。
+// 正确做法:sub 预分配整帧 + stmia 升序存 r0-r12(r0 落 [0])+
+// 逐字 str 控制槽(与 save_context/irq_preempt/调度循环同布局)
 .section .text.svc_entry, "ax"
 .global svc_entry
 svc_entry:
-  stmdb sp!, {r0-r12}        // [0..12] 现场
-  mrs r0, spsr
-  stmdb sp!, {r0}            // [13] spsr
-  stmdb sp!, {lr}            // [14] lr(svc 返回地址)
-  add r0, sp, #60            // 入口 SP(已压 15 字)
-  stmdb sp!, {r0}            // [15] sp_svc = 任务让出时的栈指针
+  sub sp, sp, #64            // 预分配 16 字帧(入口 SP 向下)
+  stmia sp, {r0-r12}         // [0..12] 现场:r0 最低 ... r12 最高(升序)
+  mrs r3, spsr
+  str r3, [sp, #52]          // [13] spsr
+  str lr, [sp, #56]          // [14] lr(svc 返回地址)
+  add r3, sp, #64
+  str r3, [sp, #60]          // [15] sp_svc = 入口 SP(任务让出时的栈指针)
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
   str sp, [r0]               // Task.sp = 帧底
@@ -132,14 +138,14 @@ irq_dispatch:
   bic r1, r1, #0x1F
   orr r1, r1, #0x13
   msr cpsr_c, r1             // 切回 SVC
-  stmdb sp!, {r4-r12}        // [4..12]
-  stmdb sp!, {r0-r3}         // [0..3] —— 帧完成,sp=帧底
+  // 帧完成:[15] sp_svc / [14] lr / [13] spsr 已压(控制槽先压=高位),
+  // 剩余 [0..12] 预分配后 stmia 升序——stmdb {r4-r12}/{r0-r3} 会把
+  // 寄存器倒序落位(r12 低址、r0 高址),恢复时 r0↔r3 互换、r4-r12 反序
+  sub sp, sp, #52            // 预分配 [0..12](13 字)
+  stmia sp, {r0-r12}         // [0]=r0 ... [12]=r12(与 save_context/恢复同布局)
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
   str sp, [r0]               // Task.sp = 帧底
-  ldr r0, =0xFF000030
-  mov r1, #63
-  str r1, [r0]
   b switch_and_schedule
 irq_no_preempt:
   ldmia sp!, {r0, lr}

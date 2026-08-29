@@ -96,17 +96,38 @@ impl Scheduler for XTaskScheduler {
                             unsafe { fr.add(13).read_volatile() }
                         };
                         if spsr & 0x1F != 0x13 {
-                            crate::sprint!("\r\nBADFRAME new={:p} sp={:#x} spsr={:x}\r\n",
-                                new, (*new).sp, spsr);
+                            let name = (*new).name();
+                            let s0 = (*new).stack as usize;
+                            let s1 = s0 + (*new).stack_size * core::mem::size_of::<usize>();
+                            let own = (*new).sp >= s0 && (*new).sp < s1;
+                            crate::sprint!(
+                                "\r\nBADFRAME new={:p}({}) sp={:#x} own-stack={}[{:#x},{:#x}) spsr={:x}\r\n",
+                                new,
+                                name,
+                                (*new).sp,
+                                own,
+                                s0,
+                                s1,
+                                spsr
+                            );
                             if !fr.is_null() {
-                                for i in 0..16usize {
+                                // 帧下 4 字(更深处旧帧顶)+ 帧 16 字 + 帧上 8 字
+                                // (压帧前栈残留——[13..15] 若被「另一个 3 字序列」
+                                // 整块覆盖,残留区可见其来源)三区连排
+                                let lo = fr as usize - 16;
+                                for i in 0..28usize {
                                     if i % 8 == 0 {
-                                        crate::sprint!("\r\n  f{:02}: ", i);
+                                        crate::sprint!("\r\n  m{:02}: ", i as isize - 4);
                                     }
                                     crate::sprint!("{:08x} ", unsafe {
-                                        fr.add(i).read_volatile()
+                                        (lo as *const u32).add(i).read_volatile()
                                     });
                                 }
+                            }
+                            let cur = super::xworker::current_ptr();
+                            crate::sprint!("\r\ncur={:p}", cur);
+                            if !cur.is_null() {
+                                crate::sprint!("({})", (*cur).name());
                             }
                             crate::sprint!("\r\n");
                             panic!("frame corrupt");
