@@ -81,6 +81,10 @@ pub(crate) unsafe extern "C" fn task_exit() {
 /// 首调度经 RESTORE_CTX 弹帧:r0 = args,lr = 蹦床地址,ldr sp,[15]
 /// 弹回任务栈顶,movs pc 跳蹦床 → blx entry(r0=args)进入任务。
 /// spsr = 0x13(SVC 模式、I/F 开、ARM 态)——任务首跑即中断开启
+///
+/// 【FPU 限制声明】帧中无 VFP 状态(D0-D15/FPSCR)——FPEXC.EN 恒关,
+/// 任何浮点指令触发 UNDEF。任务暂不可用浮点;需要时参照 ThreadX
+/// cortex_r5 的可开关 VFP 帧方案扩展(见 book ch32 §32.5)
 #[inline]
 pub(crate) fn save_context(task: &mut Task) {
     unsafe {
