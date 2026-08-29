@@ -57,11 +57,11 @@ _start:
 
 // ============ SVC 入口(任务让出:yield/sleep) ============
 // 进入时 SVC 模式、SP=任务栈,I 位硬件已置 1——同步存帧,零被打断风险
-// 【帧布局修复】stmdb 先压的寄存器落在高位——若先压 {r0-r12},r0 会
-// 落到帧顶、控制字反落帧底,与恢复序列(ldmia 升序:[0..12]=r0-r12 在
-// 低址)完全颠倒(实测:svc 帧 [0..2]=[sp_svc,lr,spsr] 三槽错位)。
+// 【帧布局修复】stmdb 递减压栈,后压的块落在更低地址——若先压
+// {r0-r12} 再逐字压控制槽,三个控制字(spsr/lr/sp_svc)反而落在帧底
+// [0..2](实测:svc 帧 [0..2]=[sp_svc,lr,spsr] 三槽错位、恢复全乱)。
 // 正确做法:sub 预分配整帧 + stmia 升序存 r0-r12(r0 落 [0])+
-// 逐字 str 控制槽(与 save_context/irq_preempt/调度循环同布局)
+// 逐字 str 控制槽——与 save_context/irq_preempt/调度循环同布局
 .section .text.svc_entry, "ax"
 .global svc_entry
 svc_entry:
@@ -82,7 +82,8 @@ svc_entry:
 .section .text.irq_entry, "ax"
 .global irq_entry
 irq_entry:
-  stmdb sp!, {r0-r3, r12}    // scratch 暂存 IRQ 栈(5 字)
+  stmdb sp!, {r0-r3, r12}    // scratch 暂存 IRQ 栈(5 字;stmdb 最低编号落最低
+                             // 地址,与 ldmia 升序弹配对自洽——QEMU 实测)
   ldr r2, =IRQ_NESTING
   ldr r3, [r2]
   cmp r3, #0
@@ -138,11 +139,8 @@ irq_dispatch:
   bic r1, r1, #0x1F
   orr r1, r1, #0x13
   msr cpsr_c, r1             // 切回 SVC
-  // 帧完成:[15] sp_svc / [14] lr / [13] spsr 已压(控制槽先压=高位),
-  // 剩余 [0..12] 预分配后 stmia 升序——stmdb {r4-r12}/{r0-r3} 会把
-  // 寄存器倒序落位(r12 低址、r0 高址),恢复时 r0↔r3 互换、r4-r12 反序
-  sub sp, sp, #52            // 预分配 [0..12](13 字)
-  stmia sp, {r0-r12}         // [0]=r0 ... [12]=r12(与 save_context/恢复同布局)
+  stmdb sp!, {r4-r12}        // [4..12](stmdb 最低编号落块内最低地址:r4@[4] ✓)
+  stmdb sp!, {r0-r3}         // [0..3](r0@[0] ✓)—— 帧完成,sp=帧底
   ldr r0, =CURRENT_TASK_PTR
   ldr r0, [r0]
   str sp, [r0]               // Task.sp = 帧底
