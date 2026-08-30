@@ -43,7 +43,9 @@ impl Scheduler for XTaskScheduler {
                 submit_task(task)
             });
             if n_wake > 0 {
-                crate::sprint!("W{}@{} ", n_wake, now); // DEBUG: 到期唤醒探针
+                // DEBUG(R5 专用):到期唤醒探针——sprint! 宏只在 R5 口存在
+                #[cfg(feature = "qemu_arm_r52")]
+                crate::sprint!("W{}@{} ", n_wake, now);
             }
 
             // 检查尾零数，是否有比当前任务相等或更高优先级的任务
@@ -87,52 +89,57 @@ impl Scheduler for XTaskScheduler {
                 };
                 if switch {
                     if let Some(new) = new.as_mut() {
-                        // DEBUG: 帧完整性校验——spsr 槽低 5 位必须 =SVC(0x13),
-                        // 否则 Task 结构已被踩,dump 结构前后内存定位写入者
-                        // 注意:R5 口的 49 字帧 = VFP 块 33 字(D0-D15+FPSCR)
-                        // + 现场 16 字,Task.sp = VFP 块底,spsr 槽在偏移 46
-                        let fr = (*new).sp as *const u32;
-                        let spsr = if fr.is_null() {
-                            0xFFFF_FFFF
-                        } else {
-                            unsafe { fr.add(46).read_volatile() }
-                        };
-                        if spsr & 0x1F != 0x13 {
-                            let name = (*new).name();
-                            let s0 = (*new).stack as usize;
-                            let s1 = s0 + (*new).stack_size * core::mem::size_of::<usize>();
-                            let own = (*new).sp >= s0 && (*new).sp < s1;
-                            crate::sprint!(
-                                "\r\nBADFRAME new={:p}({}) sp={:#x} own-stack={}[{:#x},{:#x}) spsr={:x}\r\n",
-                                new,
-                                name,
-                                (*new).sp,
-                                own,
-                                s0,
-                                s1,
-                                spsr
-                            );
-                            if !fr.is_null() {
-                                // 帧下 4 字(更深处旧帧顶)+ 帧 16 字 + 帧上 8 字
-                                // (压帧前栈残留——[13..15] 若被「另一个 3 字序列」
-                                // 整块覆盖,残留区可见其来源)三区连排
-                                let lo = fr as usize - 16;
-                                for i in 0..28usize {
-                                    if i % 8 == 0 {
-                                        crate::sprint!("\r\n  m{:02}: ", i as isize - 4);
+                        // DEBUG(R5 专用):帧完整性校验——spsr 槽低 5 位必须
+                        // =SVC(0x13),否则 Task 结构已被踩,dump 定位写入者。
+                        // 仅 qemu_arm_r52:49 字帧 = VFP 块 33 字 + 现场 16 字,
+                        // Task.sp = VFP 块底,spsr 槽在偏移 46;其他口帧布局
+                        // 不同,该检查无意义且 sprint! 宏只在 R5 口存在
+                        // (host 测试不带芯片 feature,引用即编译失败)
+                        #[cfg(feature = "qemu_arm_r52")]
+                        {
+                            let fr = (*new).sp as *const u32;
+                            let spsr = if fr.is_null() {
+                                0xFFFF_FFFF
+                            } else {
+                                unsafe { fr.add(46).read_volatile() }
+                            };
+                            if spsr & 0x1F != 0x13 {
+                                let name = (*new).name();
+                                let s0 = (*new).stack as usize;
+                                let s1 = s0 + (*new).stack_size * core::mem::size_of::<usize>();
+                                let own = (*new).sp >= s0 && (*new).sp < s1;
+                                crate::sprint!(
+                                    "\r\nBADFRAME new={:p}({}) sp={:#x} own-stack={}[{:#x},{:#x}) spsr={:x}\r\n",
+                                    new,
+                                    name,
+                                    (*new).sp,
+                                    own,
+                                    s0,
+                                    s1,
+                                    spsr
+                                );
+                                if !fr.is_null() {
+                                    // 帧下 4 字(更深处旧帧顶)+ 帧 16 字 + 帧上 8 字
+                                    // (压帧前栈残留——[13..15] 若被「另一个 3 字序列」
+                                    // 整块覆盖,残留区可见其来源)三区连排
+                                    let lo = fr as usize - 16;
+                                    for i in 0..28usize {
+                                        if i % 8 == 0 {
+                                            crate::sprint!("\r\n  m{:02}: ", i as isize - 4);
+                                        }
+                                        crate::sprint!("{:08x} ", unsafe {
+                                            (lo as *const u32).add(i).read_volatile()
+                                        });
                                     }
-                                    crate::sprint!("{:08x} ", unsafe {
-                                        (lo as *const u32).add(i).read_volatile()
-                                    });
                                 }
+                                let cur = super::xworker::current_ptr();
+                                crate::sprint!("\r\ncur={:p}", cur);
+                                if !cur.is_null() {
+                                    crate::sprint!("({})", (*cur).name());
+                                }
+                                crate::sprint!("\r\n");
+                                panic!("frame corrupt");
                             }
-                            let cur = super::xworker::current_ptr();
-                            crate::sprint!("\r\ncur={:p}", cur);
-                            if !cur.is_null() {
-                                crate::sprint!("({})", (*cur).name());
-                            }
-                            crate::sprint!("\r\n");
-                            panic!("frame corrupt");
                         }
                         if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
                             //检查是否栈溢出
@@ -323,14 +330,17 @@ unsafe fn push_ready(task: *mut Task) {
             READY_BITS.set_bit(idx, true);
         }
     } else {
-        // DEBUG: 指认调用点(LR 在 panic! 展开前 = 调用者返回地址)
-        let mut sp: usize = 0;
-        let mut lr: usize = 0;
-        unsafe {
-            core::arch::asm!("mov {0}, sp", out(reg) sp);
-            core::arch::asm!("mov {0}, lr", out(reg) lr);
+        // DEBUG(R5 专用):指认调用点(LR 在 panic! 展开前 = 调用者返回地址)
+        #[cfg(feature = "qemu_arm_r52")]
+        {
+            let mut sp: usize = 0;
+            let mut lr: usize = 0;
+            unsafe {
+                core::arch::asm!("mov {0}, sp", out(reg) sp);
+                core::arch::asm!("mov {0}, lr", out(reg) lr);
+            }
+            crate::sprintln!("PUSH_READY(NULL) sp={:#x} lr={:#x}", sp, lr);
         }
-        crate::sprintln!("PUSH_READY(NULL) sp={:#x} lr={:#x}", sp, lr);
         panic!("put_task, illegal task {:p}", task);
     }
 }
