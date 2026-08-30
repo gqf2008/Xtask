@@ -12,8 +12,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: 安装 Rust nightly + armv7r target
+        # toolchain 参数 pin:根 rust-toolchain 已固定 nightly-2025-08-08,
+        # targets 必须装进同一工具链(否则 E0463 找不到 core)
         uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2025-08-08
           targets: armv7r-none-eabi
 
       - name: 构建补丁版 QEMU(上游 GIC CPU 接口地址重叠 bug,IRQ 永不投递)
