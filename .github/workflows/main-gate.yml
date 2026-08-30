@@ -21,9 +21,12 @@ jobs:
       - name: 安装 QEMU(riscv32)与 mdbook
         run: |
           sudo apt-get update
-          # riscv32 系统模拟器在 qemu-system-misc;postinst 的 needrestart
-          # 在 runner 容器环境退出 8,用 NEEDRESTART_SUSPEND=1 跳过
-          sudo NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends qemu-system-misc
+          # riscv32 系统模拟器在 qemu-system-misc;其 postinst 的 systemctl
+          # 在 runner 容器里失败会让 apt 返回 8,但包本身已装好——
+          # 容忍退出码并以二进制存在性为判据
+          sudo NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends qemu-system-misc \
+            || true
+          command -v qemu-system-riscv32 || { echo "qemu-system-riscv32 未装上" >&2; exit 1; }
           # mdbook 用官方 release 二进制(避免 cargo install 编译数分钟)
           wget -q https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-x86_64-unknown-linux-gnu.tar.gz
           tar xzf mdbook-x86_64-unknown-linux-gnu.tar.gz
