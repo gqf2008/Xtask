@@ -30,11 +30,10 @@ jobs:
               qemu-system-misc 2>&1 | tail -3 || echo "(apt install 非零——postinst systemctl 在容器内失败,检查二进制)"
           fi
           command -v qemu-system-riscv32 || { echo "qemu-system-riscv32 不可用" >&2; exit 1; }
-          # mdbook 用官方 release 二进制(避免 cargo install 编译数分钟)
+          # mdbook:cargo install(latest/download 资产名带版本前缀,wget 裸名
+          # 404;cargo install 编译 ~2-3 分钟,换取不猜资产名)
           if ! command -v mdbook >/dev/null 2>&1; then
-            wget -q https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-x86_64-unknown-linux-gnu.tar.gz
-            tar xzf mdbook-x86_64-unknown-linux-gnu.tar.gz
-            sudo mv mdbook /usr/local/bin/
+            cargo install mdbook --locked
           fi
           mdbook --version
           qemu-system-riscv32 --version | head -1
