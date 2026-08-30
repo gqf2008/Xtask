@@ -25,7 +25,7 @@ jobs:
           cd qemu-11.1.0
           patch -p1 < "$GITHUB_WORKSPACE/book/ci/qemu-gic-r52.patch"
           ./configure --target-list=aarch64-softmmu \
-            --disable-werror --disable-docs --disable-tools --disable-tests \
+            --disable-werror --disable-docs --disable-tools \
             --disable-guest-agent --disable-gnutls --disable-nettle \
             --disable-gcrypt --disable-vnc --disable-vnc-jpeg --disable-vnc-png \
             --disable-vhost-net --disable-vhost-user --disable-debug-info
