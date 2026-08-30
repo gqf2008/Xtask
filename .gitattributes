@@ -2,7 +2,6 @@
 # "expected filename pattern"（见 README 工具链注意事项）
 *.x text eol=lf
 
-# 手册 PDF 走 LFS(docs/ 二进制体量 ~166MB,普通历史会永久变重;文字索引
-# docs/README.md 仍是普通文件)。"imported_binary" 内建 diff driver 避免在
-# PR 里渲染乱码指针。
-docs/**/*.pdf filter=lfs diff=imported_binary merge=lfs -text
+# 手册 PDF 不入库:体量大(GitHub LFS 免费额度 1GB 存储/1GB 月带宽,推不动),
+# 改在 docs/README.md 放官方下载链接(2026-08-30 从历史中整体摘除,
+# 含 513a147 的 LFS 跟踪)。
