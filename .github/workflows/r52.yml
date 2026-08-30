@@ -33,5 +33,5 @@ jobs:
 
       - name: R5 执行级门禁(乒乓 + VFP 帧)
         env:
-          QEMU_R52_BIN: qemu-11.1.0/build/aarch64-softmmu/qemu-system-aarch64
+          QEMU_R52_BIN: qemu-11.1.0/build/qemu-system-aarch64
         run: bash book/ci/check_r52.sh
