@@ -14,8 +14,9 @@ jobs:
       - name: 安装 Rust nightly + 目标
         # pin 到本地开发 nightly(2025-08-08):最新 nightly 的 core::num trait
         # 演进会使 checkpoint 依赖的 x86_64 crate 旧版编译失败(E0046)
-        uses: dtolnay/rust-toolchain@nightly-2025-08-08
+        uses: dtolnay/rust-toolchain@v2
         with:
+          toolchain: nightly-2025-08-08
           # checkpoint 目标集:riscv32imac(gd32/qemu 全链) + thumbv7em(ch16
           # checkpoint);host 测试与 [3/5] 示例链接共用 riscv32imac
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
