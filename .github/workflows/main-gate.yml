@@ -25,9 +25,9 @@ jobs:
           # 但包本身装好——以二进制存在性为判据)
           if ! command -v qemu-system-riscv32 >/dev/null 2>&1; then
             echo "runner 无 qemu-system-riscv32,尝试 apt 安装"
-            sudo apt-get update >/dev/null
+            sudo apt-get update 2>&1 | tail -3 || echo "(apt update 非零,用现有索引继续)"
             sudo NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends \
-              qemu-system-misc >/dev/null 2>&1 || echo "(apt 返回非零——postinst systemctl 在容器内失败,检查二进制)"
+              qemu-system-misc 2>&1 | tail -3 || echo "(apt install 非零——postinst systemctl 在容器内失败,检查二进制)"
           fi
           command -v qemu-system-riscv32 || { echo "qemu-system-riscv32 不可用" >&2; exit 1; }
           # mdbook 用官方 release 二进制(避免 cargo install 编译数分钟)
