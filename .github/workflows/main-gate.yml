@@ -21,9 +21,9 @@ jobs:
       - name: 安装 QEMU(riscv32)与 mdbook
         run: |
           sudo apt-get update
-          # qemu-system-riscv 专用包(依赖树远小于 qemu-system-misc,
-          # 后者 postinst 在 runner 上退出 8)
-          sudo apt-get install -y --no-install-recommends qemu-system-riscv
+          # riscv32 系统模拟器在 qemu-system-misc;postinst 的 needrestart
+          # 在 runner 容器环境退出 8,用 NEEDRESTART_SUSPEND=1 跳过
+          sudo NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends qemu-system-misc
           # mdbook 用官方 release 二进制(避免 cargo install 编译数分钟)
           wget -q https://github.com/rust-lang/mdBook/releases/latest/download/mdbook-x86_64-unknown-linux-gnu.tar.gz
           tar xzf mdbook-x86_64-unknown-linux-gnu.tar.gz
