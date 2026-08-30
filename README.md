@@ -49,6 +49,8 @@
   - [x] STM32F103C8T6
 - CM0+
   - [x] RP2040(rp2040-hal 0.9;构建级验证 2026-08-23,真机待验)
+- CR5F
+  - [x] qemu_arm_r52: QEMU xlnx-zcu102 的 Cortex-R5F(armv7r-none-eabi;**执行级验证** 2026-08-30——200 轮乒乓 + tick 心跳 + VFP 帧 100 轮跨切换保持,补丁版 QEMU 跑通;**CI 执行级门禁** `.github/workflows/r52.yml`——补丁版 QEMU 构建 + 双例程断言全绿;无 PendSV 架构的「中断借道 + 调度循环」移植,方法论见书稿第 31/32 章;真机待验)
 
 ### 快速开始
 
