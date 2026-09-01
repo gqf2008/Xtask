@@ -40,7 +40,7 @@ global_asm!(include_str!("port.S"), options(raw));
 unsafe extern "C" fn mtimer_irq_isr() {
     //isr_sprintln!("mtimer_irq_isr");
     // tickless 一次性到点:实测本次睡眠拍数跳账(TICKS += el)后照常摘到期;
-    // 恒定节拍 = 重装 mtimecmp + 逐拍账(与 qemu 口同构,见 ch29)
+    // 恒定节拍 = 重装 mtimecmp + 逐拍账(与 qemu 口同构,见 ch28)
     let armed = super::TICKLESS_ARMED.get();
     if armed != 0 {
         // 一次性到点:el = 距武装时刻的整拍数(≥ delta——定时器不会

@@ -47,7 +47,7 @@ pub const TICK_PERIOD: u64 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64;
 /// SiFive test 设备(测试自退出)
 pub(crate) const SIFIVE_TEST: usize = 0x0010_0000;
 
-// ---- 外部中断:PLIC + NS16550 RX(ch29 章末练习 1 的落地)----
+// ---- 外部中断:PLIC + NS16550 RX(ch28 章末练习 1 的落地)----
 // 机器外部中断 mcause=11。布局换算自 QEMU virt.h/sifive_plic:
 // 优先级表@+0x00(id n 优先级 = 4n)、pending@+0x1000、**hart0 使能
 // @+0x2000**(每核 stride 0x80——0x2080 是 hart1 的使能,写错会双核
@@ -175,7 +175,7 @@ pub(crate) fn setup_intrrupt() {
     }
 }
 
-// ---- tickless 动态节拍(ch29)----
+// ---- tickless 动态节拍(ch28)----
 
 /// 一次性武装时刻(= 0 未武装/恒定节拍模式)。单核独占(tickless 门控在
 /// 单核语义):volatile 而非原子——RV32 无 64 位原子指令,与 TICKS 同款
@@ -286,7 +286,7 @@ impl Portable for QemuRiscvPorting {
         }
     }
 
-    // ---- tickless 动态节拍(ch29,见 book/src/ch29-tickless.md)----
+    // ---- tickless 动态节拍(ch28,见 book/src/ch28-tickless.md)----
 
     #[inline]
     fn tickless_supported() -> bool {

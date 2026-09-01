@@ -13,7 +13,7 @@
 //!   (QEMU 上游 bug!`hw/arm/xlnx-zynqmp.c` 的 `GIC_BASE_ADDR + i*0x1000`
 //!   使 CPU 接口与 dist 同址重叠、GICC_CTLR 恒 0 → IRQ 永不投递。
 //!   **必须用打过补丁的 QEMU**(`GIC_BASE_ADDR + (i+1)*0x1000`),见
-//!   book/src/ch31-*.md 与 README);
+//!   book/src/ch29-*.md 与 README);
 //! - **TTC0 @0xFF110000** 133MHz:CLK_CTRL=0x03(预分频÷4)+ INTERVAL=33249
 //!   → 1kHz 节拍,SPI#36 → intid 68;
 //! - **Cadence UART0 @0xFF000000** 轮询 TX;

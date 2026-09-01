@@ -6,7 +6,7 @@
 //! M0+ 无原子 CAS,spinning_top 依赖 CAS;临界区版在单核上语义等价且
 //! 与内核的 free() 纪律同源。XTaskSpinAlloc 类型保留(有 CAS 的目标可用)。
 //!
-//! 后端引擎二选一(书稿第 11 章 vs 第 28 章):
+//! 后端引擎二选一(书稿第 11 章 vs 第 27 章):
 //! - 默认 `Heap`(linked_list_allocator):first-fit 空闲链表,O(n) 分配;
 //! - `tlsf` feature:换用本仓库手写的迷你 TLSF(`allocator::tlsf::MiniTlsf`),
 //!   O(1) 分桶分配——同一条临界区包装,接口不变,对内核透明。
@@ -16,7 +16,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
 use core::ptr::{self, NonNull};
 
-/// 迷你 TLSF 引擎(书稿第 28 章):O(1) 分桶分配器,与 first-fit 对照教学
+/// 迷你 TLSF 引擎(书稿第 27 章):O(1) 分桶分配器,与 first-fit 对照教学
 pub mod tlsf;
 
 #[cfg(not(feature = "tlsf"))]
@@ -24,7 +24,7 @@ use linked_list_allocator::Heap as Engine;
 #[cfg(feature = "tlsf")]
 use tlsf::MiniTlsf as Engine;
 
-/// 第 28 章对照引擎:first-fit 空闲链表的薄包装(与 [`tlsf::MiniTlsf`]
+/// 第 27 章对照引擎:first-fit 空闲链表的薄包装(与 [`tlsf::MiniTlsf`]
 /// 同一接口形状,执行级实验 A/B 两引擎直驱;全局分配器的后端选择不受影响)
 pub struct FirstFit {
     heap: linked_list_allocator::Heap,

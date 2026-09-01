@@ -1,4 +1,4 @@
-//! idle 任务:tickless 动态节拍引擎(第 29 章)+ 恒定节拍自旋兜底。
+//! idle 任务:tickless 动态节拍引擎(第 28 章)+ 恒定节拍自旋兜底。
 
 use core::ffi::c_void;
 
@@ -9,7 +9,7 @@ use crate::task::scheduler::xtask::{self, IDLE_TASKS};
 use crate::task::scheduler;
 use crate::{Task, IDLE_TASK_NAME};
 
-/// tickless 空闲三态决策(第 29 章)——纯函数,host 可测:
+/// tickless 空闲三态决策(第 28 章)——纯函数,host 可测:
 /// 由"当前拍 + 最近期限"定出空闲动作
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleDecision {
@@ -115,7 +115,7 @@ fn tickless_idle() {
                 // 跳账(TICKS += el)后照常摘到期任务——到点之间没有
                 // 任何中间拍,这就是"动态节拍"的全部收益。
                 // 早醒(睡眠期间来了 MSIP 等)时 ISR 测到 ~0 拍、清掉武装,
-                // 无事发生,回循环重决——无害(见第 29 章踩坑:早醒零拍)
+                // 无事发生,回循环重决——无害(见第 28 章踩坑:早醒零拍)
                 Porting::tickless_arm_delta(delta);
                 Porting::tickless_wait();
             }

@@ -1,4 +1,4 @@
-//! 迷你 TLSF(Two-Level Segregated Fit)——书稿第 28 章的手写引擎。
+//! 迷你 TLSF(Two-Level Segregated Fit)——书稿第 27 章的手写引擎。
 //!
 //! 与 `linked_list_allocator`(第 11 章的 first-fit 空闲链表)的对照:
 //!
@@ -8,7 +8,7 @@
 //!   两张位图记录哪些桶非空;分配 = 两次位扫描找到最小可用桶,取桶链表头,
 //!   **与空闲块总数无关**——这就是"O(1) 分配/释放"的全部含义。
 //!
-//! 诚实的边界(第 28 章反复讲):
+//! 诚实的边界(第 27 章反复讲):
 //!
 //! 1. "O(1)"指**不随堆状态退化**,不是每条指令单周期:位扫描用的
 //!    `leading_zeros`/`trailing_zeros` 在没有 CLZ/CTZ 指令的目标(如 RV32
@@ -19,7 +19,7 @@
 //!    测试 `checkerboard_fragmentation_is_a_shared_limit` 把这一点钉死)。
 //! 3. 迷你版的声明式局限:对齐上限 = **2×usize**(覆盖 RV32 的 u64/double
 //!    与 x64 的 max_align_t;超对齐请求返回 None,诚实退化不静默出错);
-//!    单区域(多区域 `add_pool` 留作第 28 章练习)。
+//!    单区域(多区域 `add_pool` 留作第 27 章练习)。
 //!
 //! 参考:Masmano, Ripoll, Crespo & Real, "TLSF: a New Dynamic Memory
 //! Allocator for Real-Time Systems"(ECRTS 2004);完整 Rust 实现见 rlsf
@@ -451,7 +451,7 @@ mod tests {
 
     /// 棋盘格碎片:16 × 64B 申请、放掉奇数号 → 8 个不相邻的 64B 级洞。
     /// 申请 256B:两个引擎都**失败**——物理碎片是一切通用分配器的共限,
-    /// TLSF 不是魔法(第 28 章的诚实底线);全放合并后双双成功。
+    /// TLSF 不是魔法(第 27 章的诚实底线);全放合并后双双成功。
     #[test]
     fn checkerboard_fragmentation_is_a_shared_limit() {
         use linked_list_allocator::Heap;
