@@ -51,7 +51,8 @@ impl Scheduler for XTaskScheduler {
             // 检查尾零数，是否有比当前任务相等或更高优先级的任务
             // 如果想等优先级则时间片调度，否则就一直抢占着，直到任务主动挂起
             // TODO 需改进 ARM CLZ指令计算前导零
-            let trailing_zero = READY_BITS.trailing_zeros();
+            let trailing_zero = READY_BITS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)]
+                .trailing_zeros();
             trailing_zero < 16 && (trailing_zero + 1) <= self.current().priority as u32
         })
     }
@@ -225,38 +226,57 @@ pub(crate) unsafe fn submit_task(task: *mut Task) {
     }
 }
 
-/// 查找并弹出就绪任务
-/// 如果任务队列里没有就绪任务，则返回本核 IDLE 任务
-/// 不变式：`READY_BITS` 位 i 置位 ⟺ `READYQ[i]` 非空（push/pop 双侧维护，
-/// 不一致时 pop 侧自清位并在 debug 下断言——F4：修前一致性纯靠约定）
-/// 亲和性(SMP):本核只取"未绑核"或"绑到本核"的任务;队首绑往别核时
-/// 跳过它继续扫同队,整队都绑往别核则留给对应核,本核降档试下一优先级
-/// ——绑核任务不会被错核抢走,也不会堵死本核的更低优先级就绪任务
+/// 查找并弹出就绪任务(每核 runqueue + work stealing)。
+/// 先弹本核队列;本核空则按在线核顺序从别的核偷一个"可在本核运行"的
+/// 任务(未绑核或绑到本核)——work stealing 即负载均衡(ch25 路线④)。
+/// 本核与所有别核都空则返回本核 IDLE 任务。
+/// 不变式：`READY_BITS[h]` 位 i 置位 ⟺ `READYQ[h][i]` 非空(push/pop 双侧维护)。
+/// 亲和性:pop 只取"未绑核"或"绑到目标核"的任务;队首绑往别的核时跳过
+/// 继续扫同队,整队都绑往别核则降档试下一优先级——绑核任务不会被错核抢走。
 #[inline(always)]
 unsafe fn pop_ready() -> *mut Task {
-    let me = Porting::hart_id();
-    let idle = IDLE_TASKS[(me as usize).min(MAX_HARTS - 1)];
-    let mut bits = READY_BITS;
-    while bits != 0 {
-        let tz = bits.trailing_zeros() as usize;
-        bits &= bits - 1; //本档取不到可跑任务时,降档试下一优先级
-        let q = &mut READYQ[tz];
-        if q.is_empty() {
-            debug_assert!(false, "READY_BITS 位{tz}置位但队列为空——不变式被破坏");
-            READY_BITS.set_bit(tz, false);
-            continue;
-        }
-        let pos = q.iter().position(|&t| (*t).hwid.map_or(true, |h| h == me));
-        if let Some(i) = pos {
-            //position 已确认存在,remove 必成功
-            let task = q.remove(i).expect("READYQ 元素在 position 后消失");
-            if q.is_empty() {
-                READY_BITS.set_bit(tz, false);
+    let me = (Porting::hart_id() as usize).min(MAX_HARTS - 1);
+    let idle = IDLE_TASKS[me];
+    if let Some(task) = pop_from(me, me) {
+        return task;
+    }
+    // work stealing:本核空,从别的在线核偷(忙核的任务被空核分担,天然负载均衡)
+    let n = Porting::core_count().min(MAX_HARTS as u16) as usize;
+    for h in 0..n {
+        if h != me {
+            if let Some(task) = pop_from(h, me) {
+                return task;
             }
-            return task;
         }
     }
     idle
+}
+
+/// 从 `src` 核的就绪队列弹出一个"可在 `dst` 核运行"的任务。
+/// `src` 空、或整队都绑往别的核时返回 None(位图不变式在 pop 侧自清)。
+#[inline(always)]
+unsafe fn pop_from(src: usize, dst: usize) -> Option<*mut Task> {
+    let mut bits = READY_BITS[src];
+    while bits != 0 {
+        let tz = bits.trailing_zeros() as usize;
+        bits &= bits - 1; // 本档取不到可跑任务时,降档试下一优先级
+        let q = &mut READYQ[src][tz];
+        if q.is_empty() {
+            debug_assert!(false, "READY_BITS[{src}] 位{tz}置位但队列为空——不变式被破坏");
+            READY_BITS[src].set_bit(tz, false);
+            continue;
+        }
+        let pos = q.iter().position(|&t| (*t).hwid.map_or(true, |h| h == dst as u16));
+        if let Some(i) = pos {
+            // position 已确认存在,remove 必成功
+            let task = q.remove(i).expect("READYQ 元素在 position 后消失");
+            if q.is_empty() {
+                READY_BITS[src].set_bit(tz, false);
+            }
+            return Some(task);
+        }
+    }
+    None
 }
 
 /// 推入就绪队列
@@ -285,6 +305,20 @@ pub(crate) unsafe fn request_preempt_if_higher(task: *mut Task) {
     }
 }
 
+/// 定位一个就绪队列引用属于哪个核的哪个优先级桶(运行期改优先级搬桶时
+/// 从旧队列回推核号与桶号,用于同步该核的 READY_BITS)。
+#[inline]
+unsafe fn readyq_slot(q: *const TaskQueue) -> Option<(usize, usize)> {
+    for (h, hq) in READYQ.iter().enumerate() {
+        for (p, bucket) in hq.iter().enumerate() {
+            if core::ptr::eq(q, bucket as *const TaskQueue) {
+                return Some((h, p));
+            }
+        }
+    }
+    None
+}
+
 /// 运行期改任务优先级(必须在 `sync::free` 内):把"优先级字段"和
 /// "任务此刻所处队列"两个事实一起搬走——`READYQ` 的下标 = 优先级-1,
 /// 只改字段不改桶会破坏"READY_BITS ⟺ 队列非空"不变式(pop 侧 debug 断言)。
@@ -296,14 +330,16 @@ pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
     if t.priority == new_prio {
         return;
     }
-    let old = t.priority;
     t.priority = new_prio;
     if t.state == State::Ready {
         let ptr = task;
         if let Some(from) = &mut t.queue {
             (*from).retain(|&x| x != ptr);
-            if (*from).is_empty() && (old as usize) <= 16 {
-                READY_BITS.set_bit(old as usize - 1, false);
+            // 每核 runqueue:旧队列属于哪个核由指针反查;空桶才清该核位图
+            if let Some((qh, qp)) = readyq_slot(&**from as *const TaskQueue) {
+                if (*from).is_empty() {
+                    READY_BITS[qh].set_bit(qp, false);
+                }
             }
         }
         // SMP 在核竞态(wakeup 的 is_current_any 同款守卫):任务可能刚被别核
@@ -323,11 +359,14 @@ pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
 
 unsafe fn push_ready(task: *mut Task) {
     if let Some(task) = task.as_mut() {
+        // 绑核任务入绑定核;未绑核任务入本核(任务 spawn/wakeup 当前所在核)
+        let hart = task.hwid.unwrap_or(Porting::hart_id()) as usize;
         let idx = (task.priority - 1) as usize;
         debug_assert!(idx < 16, "非法优先级 {}", task.priority);
-        if idx < 16 {
-            task.bind(&mut READYQ[idx]);
-            READY_BITS.set_bit(idx, true);
+        debug_assert!(hart < MAX_HARTS, "非法核 {}", hart);
+        if idx < 16 && hart < MAX_HARTS {
+            task.bind(&mut READYQ[hart][idx]);
+            READY_BITS[hart].set_bit(idx, true);
         }
     } else {
         // DEBUG(R5 专用):指认调用点(LR 在 panic! 展开前 = 调用者返回地址)
@@ -363,17 +402,21 @@ unsafe fn push_delay(task: *mut Task) {
         task.queue = Some(&mut DELAY);
     }
 }
-static mut READY_BITS: u16 = 0;
+/// 每核就绪位图(按 mhartid 索引):位 i 置位 ⟺ 本核 READYQ[i] 非空。
+/// 各核的位图/队列都在全局临界区(`sync::free`)下访问,work stealing
+/// 的跨核偷取因此与 push/pop 互斥,无需额外锁
+pub(crate) static mut READY_BITS: [u16; MAX_HARTS] = [0; MAX_HARTS];
 
 /// 每核空闲任务(按 mhartid 索引)——该核没有就绪任务时切到本核 idle;
 /// 每核一个:同一 idle 任务块绝不能在两核并发运行(state 字段会撕裂)
 pub(crate) static mut IDLE_TASKS: [*mut Task; MAX_HARTS] = [core::ptr::null_mut(); MAX_HARTS];
 
-/// 1-16 优先级任务就绪队列（下标 = 优先级-1），数字越小优先级越高。
-/// `VecDeque::new` 是 const——编译期初始化，运行期零惰性初始化
-/// （F4+F5：修前是 16 个 `Option` 静态量 + `INITED` 惰性 init，
-/// 32 处手写 match 臂、多核启动下有良性竞争，一并结构性消除）
-pub(crate) static mut READYQ: [TaskQueue; 16] = [const { VecDeque::new() }; 16];
+/// 每核 1-16 优先级任务就绪队列（第一维按 mhartid 索引，第二维下标 =
+/// 优先级-1），数字越小优先级越高。每核一份队列 = 每核 runqueue
+/// （ch25 改造路线④）。`VecDeque::new` 是 const——编译期初始化，运行期
+/// 零惰性初始化（修前是全局 16 个桶 + 惰性 init，一并结构性消除）
+pub(crate) static mut READYQ: [[TaskQueue; 16]; MAX_HARTS] =
+    [const { [const { VecDeque::new() }; 16] }; MAX_HARTS];
 
 /// 延时队列——按 wake_tick 升序（push_delay 有序插入维护）
 pub(crate) static mut DELAY: TaskQueue = VecDeque::new();
@@ -394,14 +437,14 @@ pub(crate) unsafe fn next_delay_tick() -> Option<u64> {
 pub(crate) unsafe fn has_ready() -> bool {
     // SAFETY: 调用方持临界区,与写侧(tick ISR 的 push_ready)同锁互斥;
     // 唯一调用点 tickless_idle 在同一临界区内先后调用,无并发写者
-    unsafe { READY_BITS != 0 }
+    unsafe { READY_BITS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)] != 0 }
 }
 
 /// 最高优先级就绪桶下标(R5 口 irq_preempt_check 用:READY_BITS 尾零
 /// 即最高优先级桶;空队列返回 16)。调用方需处于关中断上下文
 #[inline]
 pub(crate) unsafe fn highest_ready_prio() -> u32 {
-    unsafe { READY_BITS.trailing_zeros() }
+    unsafe { READY_BITS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)].trailing_zeros() }
 }
 
 /// 测试清场(仅 host 单测):wakeup 会把就绪任务推进全局 READYQ——回收
@@ -409,10 +452,14 @@ pub(crate) unsafe fn highest_ready_prio() -> u32 {
 /// 驱动调度器的 host 测试都会解引用已释放的 Task。
 #[cfg(test)]
 pub(crate) unsafe fn clear_readyq_for_test() {
-    for q in READYQ.iter_mut() {
-        q.clear();
+    for hq in READYQ.iter_mut() {
+        for q in hq.iter_mut() {
+            q.clear();
+        }
     }
-    READY_BITS = 0;
+    for b in READY_BITS.iter_mut() {
+        *b = 0;
+    }
 }
 
 #[cfg(test)]

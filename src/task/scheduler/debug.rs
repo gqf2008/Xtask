@@ -27,10 +27,12 @@ pub(crate) fn start_debug_task() {
 }
 unsafe fn print_ready_task() {
     use super::xtask::*;
-    for q in READYQ.iter() {
-        q.iter().for_each(|item| {
-            print_task_list(*item);
-        });
+    for hart in READYQ.iter() {
+        for q in hart.iter() {
+            q.iter().for_each(|item| {
+                print_task_list(*item);
+            });
+        }
     }
 }
 unsafe fn print_delay_task() {

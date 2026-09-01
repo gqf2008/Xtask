@@ -21,6 +21,8 @@ extern crate alloc;
 //                       pop_ready 若不跳过别核绑定的任务,位图必混位)
 //   8. timer_xcore    —— tick ISR(hart0)搬定时器堆与任务侧(hart1)增删
 //                       定时器高并发:⑥ 修复前 ISR 裸操作堆,此处必坏
+//   9. work_stealing  —— 8 个任务全部从 hart0 spawn,被空核经 work
+//                       stealing 偷走,至少分布到 2 个核(每核 runqueue 负载均衡)
 //
 // 运行:qemu-system-riscv32 -M virt -smp 2 -nographic -bios none -kernel \
 //       target/riscv32imac-unknown-none-elf/release/examples/qemu_smp
@@ -346,16 +348,37 @@ fn main() -> ! {
             );
             sprintln!("test timer_xcore ... done ({hits} hits)");
 
+            // ---- 9. 每核 runqueue 负载均衡:大量任务被空核偷走,分布到多个核 ----
+            // 8 个同优先级自旋任务全部从 examiner(hart0) 这一核 spawn——每核
+            // runqueue 下靠 work stealing 把任务分给空核;finish(8) 保证 8 个
+            // 全部跑完、无丢失,位图断言至少分布到 2 个核(-smp 4/8 下会更多)。
+            static SEEN_STEAL: AtomicUsize = AtomicUsize::new(0);
+            SEEN_STEAL.store(0, Ordering::Release);
+            begin_phase();
+            for _ in 0..8 {
+                TaskBuilder::new().name("smp.steal").priority(8).spawn(|| {
+                    spin_task(&SEEN_STEAL, 8);
+                });
+            }
+            wait_phase();
+            let seen = SEEN_STEAL.load(Ordering::Acquire);
+            check(
+                seen.count_ones() >= 2,
+                "work_stealing",
+                format!("8 个任务见过的核位图 {seen:#b}(应 ≥2 核——每核 runqueue 负载均衡)"),
+            );
+            sprintln!("test work_stealing ... done (seen {seen:#b})");
+
             // ---- 汇总 ----
             let fails = FAILED.lock().clone();
             if fails.is_empty() {
-                sprintln!("smp PASS: 8/8");
+                sprintln!("smp PASS: 9/9");
                 qemu_exit_pass();
             } else {
                 for m in fails.iter() {
                     sprintln!("FAILED: {m}");
                 }
-                sprintln!("smp FAIL: {}/8", 8 - fails.len());
+                sprintln!("smp FAIL: {}/9", 9 - fails.len());
                 qemu_exit_fail();
             }
         });
