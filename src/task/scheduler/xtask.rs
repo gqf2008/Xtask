@@ -349,10 +349,10 @@ pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
     t.priority = new_prio;
     if t.state == State::Ready {
         let ptr = task;
-        if let Some(from) = &mut t.queue {
+        if let Some(from) = t.queue {
             (*from).retain(|&x| x != ptr);
             // 每核 runqueue:旧队列属于哪个核由指针反查;空桶才清该核位图
-            if let Some((qh, qp)) = readyq_slot(&**from as *const TaskQueue) {
+            if let Some((qh, qp)) = readyq_slot(from as *const TaskQueue) {
                 if (*from).is_empty() {
                     READY_BITS[qh].set_bit(qp, false);
                 }
@@ -381,7 +381,7 @@ unsafe fn push_ready(task: *mut Task) {
         debug_assert!(idx < 16, "非法优先级 {}", task.priority);
         debug_assert!(hart < MAX_HARTS, "非法核 {}", hart);
         if idx < 16 && hart < MAX_HARTS {
-            task.bind(&mut READYQ[hart][idx]);
+            task.bind(core::ptr::addr_of_mut!(READYQ[hart][idx]));
             READY_BITS[hart].set_bit(idx, true);
         }
     } else {
@@ -407,7 +407,7 @@ unsafe fn push_delay(task: *mut Task) {
     if let Some(task) = task.as_mut() {
         // 与 bind 同款先去重：任务已在某队列中时直接插入会重复入队
         let ptr = task as *mut Task;
-        if let Some(from) = &mut task.queue {
+        if let Some(from) = task.queue {
             (*from).retain(|item| *item != ptr);
         }
         let pos = DELAY
@@ -415,7 +415,7 @@ unsafe fn push_delay(task: *mut Task) {
             .position(|&t| (*t).wake_tick > task.wake_tick)
             .unwrap_or(DELAY.len());
         DELAY.insert(pos, task);
-        task.queue = Some(&mut DELAY);
+        task.queue = Some(core::ptr::addr_of_mut!(DELAY));
     }
 }
 /// 每核就绪位图(按 mhartid 索引):位 i 置位 ⟺ 本核 READYQ[i] 非空。

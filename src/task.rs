@@ -147,7 +147,12 @@ pub struct Task {
     pub(crate) stack: *mut usize,                     //栈空间，指向栈底地址
     pub(crate) entry: Func,                           //任务入口
     pub(crate) args: *mut c_void,                     //任务参数
-    pub(crate) queue: Option<&'static mut TaskQueue>, // 当前任务队列队列
+    /// 当前任务所在队列的回指。裸指针而非 &'static mut:同桶多任务
+    /// (如默认优先级 8 的两个任务同挂 READYQ[7])会同时持有指向同一
+    /// VecDeque 的回指,&mut 的 noalias 契约被结构性违反(Miri 必报、
+    /// LTO 下误优化空间);裸指针不声明独占,实际互斥由"所有访问都在
+    /// sync::free 临界区内"提供
+    pub(crate) queue: Option<*mut TaskQueue>,
     pub(crate) name: String,
     pub(crate) stack_size: usize,
     pub(crate) ticks: usize,
@@ -313,15 +318,20 @@ impl Task {
 
     #[track_caller]
     #[inline(always)]
-    pub(crate) fn bind(&mut self, target: &'static mut TaskQueue) {
+    pub(crate) fn bind(&mut self, target: *mut TaskQueue) {
         let ptr = self as *mut Task;
-        if let Some(from) = &mut self.queue {
-            //无条件先去重：即使 from == target 也要先移除，
-            //否则任务仍在队列中时再次 bind 会同任务入队两次，
-            //导致重复调度甚至二次释放
-            (*from).retain(|item| *item != ptr);
+        // SAFETY: from/target 均指向全局静态队列(READYQ 桶/DELAY),内核
+        // 侧全部访问都在 sync::free 临界区内,无二度并发;裸指针不声明
+        // 独占,同桶多任务各持回指不再构成重叠 &mut
+        unsafe {
+            if let Some(from) = self.queue {
+                //无条件先去重：即使 from == target 也要先移除，
+                //否则任务仍在队列中时再次 bind 会同任务入队两次，
+                //导致重复调度甚至二次释放
+                (*from).retain(|item| *item != ptr);
+            }
+            (*target).push_back(self);
         }
-        target.push_back(self);
         self.queue = Some(target);
     }
 
