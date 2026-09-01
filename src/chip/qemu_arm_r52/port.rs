@@ -39,7 +39,11 @@ unsafe extern "C" fn irq_preempt_check() -> u32 {
         crate::sprint!("<BADSP cur={:p} sp={:#x}>", cur, sp);
     }
     let tz = crate::task::scheduler::xtask::highest_ready_prio();
-    if tz < 16 && (tz as u32 + 1) < (*cur).priority as u32 {
+    // 与调度器契约同款的 <=:do_systick(xtask.rs)对同优先级也判抢占
+    // (时间片轮转),本口 IrqHandler 丢弃 systick 返回的 wake 布尔、
+    // irq_to 又是 no-op——IRQ 出口判定是同优先级轮转的唯一触发通道,
+    // 写成严格 < 会让"不主动让出"的任务永久霸占,同优先级任务饿死
+    if tz < 16 && (tz as u32 + 1) <= (*cur).priority as u32 {
         1
     } else {
         0
