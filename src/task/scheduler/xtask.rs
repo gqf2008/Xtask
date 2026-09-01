@@ -326,7 +326,9 @@ unsafe fn readyq_slot(q: *const TaskQueue) -> Option<(usize, usize)> {
 /// lock_core 按新优先级重排其锁等待队列)只改字段。
 pub(crate) unsafe fn set_priority(task: *mut Task, new_prio: u8) {
     let t = &mut *task;
-    debug_assert!((1..=16).contains(&new_prio), "非法优先级 {new_prio}");
+    // release 级断言:非法优先级若放行,Ready 任务经 push_ready 的
+    // 桶下标静默失败路径被丢弃(永不调度+内存泄漏),调用方零反馈
+    assert!((1..=16).contains(&new_prio), "非法优先级 {new_prio}");
     if t.priority == new_prio {
         return;
     }

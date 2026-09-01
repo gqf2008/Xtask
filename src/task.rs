@@ -65,7 +65,10 @@ impl<'a> TaskBuilder<'a> {
         self
     }
     pub fn priority(mut self, priority: u8) -> Self {
-        assert!(priority > 0);
+        // 上界必须拦在 release 构建:push_ready 的就绪桶下标检查只是
+        // debug_assert,release 下 priority≥17 的任务会被静默丢弃——
+        // 永不调度且堆内存随 mem::forget 泄漏,调用方零反馈
+        assert!((1..=16).contains(&priority), "非法优先级 {priority}(有效范围 1-16)");
         self.priority = priority;
         self
     }
@@ -388,5 +391,24 @@ impl Display for Task {
             "Task(id: {}, name: {}, ticks: {}, wake_tick: {}, priority: {}, state: {:?})",
             self.id, self.name, self.ticks, self.wake_tick, self.priority, self.state
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// 回归:priority 上界断言——修前只查 >0,release 构建下 priority≥17
+    /// 的任务被 push_ready 的桶下标检查(debug_assert)静默丢弃:
+    /// 永不调度且堆内存泄漏,调用方零反馈。
+    #[test]
+    #[should_panic(expected = "非法优先级")]
+    fn priority_above_16_is_rejected() {
+        let _ = super::TaskBuilder::new().priority(17);
+    }
+
+    /// 阳性对照:边界值 1 与 16 必须放行(断言别把合法范围也拦了)
+    #[test]
+    fn priority_bounds_1_and_16_are_accepted() {
+        let _ = super::TaskBuilder::new().priority(1);
+        let _ = super::TaskBuilder::new().priority(16);
     }
 }
