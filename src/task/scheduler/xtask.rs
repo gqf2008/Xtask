@@ -145,7 +145,17 @@ impl Scheduler for XTaskScheduler {
                         if let Some(old) = xworker.execute(new).and_then(|item| item.as_mut()) {
                             //检查是否栈溢出
                             old.stack_overflow();
-                            submit_task(old);
+                            // idle 豁免:idle 是 pop_ready 队空时捏造的兜底,
+                            // 本就不在就绪队列(见下方不切分支的同款豁免)。
+                            // 修前切出路径把本核 idle 推进全局共享的
+                            // READYQ[15]:SMP 下别核可经亲和性过滤(idle 的
+                            // hwid=None 任意核放行)把它弹出并发执行——两核
+                            // 对同一 idle 任务块的 sp/栈并发存取,整机损坏;
+                            // 且 pop_ready 队空时无条件捏造 IDLE_TASKS[me],
+                            // 不查它是否正在别核运行,漏洞闭环
+                            if !core::ptr::eq(old, IDLE_TASKS[me]) {
+                                submit_task(old);
+                            }
                         }
                     }
                 } else if new != IDLE_TASKS[(Porting::hart_id() as usize).min(MAX_HARTS - 1)] {
