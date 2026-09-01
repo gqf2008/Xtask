@@ -1,4 +1,4 @@
-//! idle 任务:tickless 动态节拍引擎(第 28 章)+ 恒定节拍自旋兜底。
+//! idle 任务:tickless 动态节拍引擎(第 29 章)+ 恒定节拍自旋兜底。
 
 use core::ffi::c_void;
 
@@ -9,7 +9,7 @@ use crate::task::scheduler::xtask::{self, IDLE_TASKS};
 use crate::task::scheduler;
 use crate::{Task, IDLE_TASK_NAME};
 
-/// tickless 空闲三态决策(第 28 章)——纯函数,host 可测:
+/// tickless 空闲三态决策(第 29 章)——纯函数,host 可测:
 /// 由"当前拍 + 最近期限"定出空闲动作
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleDecision {

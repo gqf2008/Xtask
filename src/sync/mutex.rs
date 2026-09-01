@@ -70,7 +70,7 @@ impl<T> Mutex<T> {
     /// 空闲锁(规则 2,哪怕锁是空的——交叉持锁的死锁由此掐断)。
     /// ⚠️ **声明责任**:天花板必须覆盖**所有**实际使用者(任何使用者
     /// 优先级数字 ≥ ceiling),漏标的后果是协议性质失效,引擎按声明行事。
-    /// 与 PI 锁混用时协议定理失效——按锁二选一(书稿第 26 章)。
+    /// 与 PI 锁混用时协议定理失效——按锁二选一(书稿第 27 章)。
     pub const fn with_ceiling(data: T, ceiling: u8) -> Self {
         Self {
             core: UnsafeCell::new(LockCore::with_ceiling(ceiling)),

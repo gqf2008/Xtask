@@ -49,8 +49,8 @@ rustflags = [
 ]
 
 # Cortex-R5(QEMU zcu102):自备链接脚本(memory.x + link.x,无 runtime crate)。
-# 不加 runner——QEMU 由 check.sh / 手动命令跑,见 book/src/ch29-*.md
-# +vfp3:开 FPU 指令集(帧含 VFP 块 D0-D15+FPSCR,见第 30 章「FPU 帧」;不加 d32
+# 不加 runner——QEMU 由 check.sh / 手动命令跑,见 book/src/ch30-*.md
+# +vfp3:开 FPU 指令集(帧含 VFP 块 D0-D15+FPSCR,见第 31 章「FPU 帧」;不加 d32
 # 即 D16,与 R5F 的 VFPv3-D16 一致);float ABI 仍是 soft(参数走通用
 # 寄存器),函数体可用 VFP 指令
 [target.armv7r-none-eabi]

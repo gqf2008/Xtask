@@ -17,7 +17,7 @@ const TICK_PERIOD_US: usize = 1_000_000 / TICK_CLOCK_HZ;
 /// 节拍推进(tick ISR 侧,主核独占调用):TICKS 直接 +delta 并驱动
 /// 软定时器堆。逐拍路径 delta=1(恒定节拍),tickless 一次性到点
 /// delta=el(实测跳账,`jump_ticks`)——两者是同一操作的批量/逐拍两档,
-/// 等价性即"绝对时刻账本对逐拍/跳账等价"(第 28 章)。
+/// 等价性即"绝对时刻账本对逐拍/跳账等价"(第 29 章)。
 /// 读写同锁:SMP 下读侧(tick())在临界区内读,写侧也必须持同一把锁——
 /// 否则 RV32 上 u64 两次 32 位读写可撕裂,别核读者会读到高低位错代的值
 #[inline]
@@ -142,7 +142,7 @@ impl DelayUs<u8> for Delay {
 mod tests {
     use super::{jump_ticks, tick, TICKS};
 
-    /// 跳账:直接 +delta——与逐拍 +1 的逐拍路径等价(第 28 章 tickless
+    /// 跳账:直接 +delta——与逐拍 +1 的逐拍路径等价(第 29 章 tickless
     /// 到点补账)。唯一触碰 TICKS 全局的测试:其余 host 测试不读 tick 值,
     /// 无共享状态;末行还原现场
     #[test]

@@ -33,7 +33,7 @@ unsafe extern "C" fn TickHandler() {
 }
 
 /// 机器外部中断(mcause=11):PLIC 门控的全部外部中断走这里。
-/// 现状只接 UART RX(ch28 章末练习 1):claim 后按源 id 分派,完成后
+/// 现状只接 UART RX(ch29 章末练习 1):claim 后按源 id 分派,完成后
 /// 写回 claim(PLIC 握手)。UART 侧清空接收 FIFO(RBR 读即出栈),再调
 /// 例程回调(唤醒/通知——回调必须绝不停留)
 #[no_mangle]

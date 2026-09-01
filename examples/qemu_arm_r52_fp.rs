@@ -7,7 +7,7 @@ extern crate alloc;
 // 两个任务各持独有 FPU 状态(任务 A:s3=3.0;任务 B:s3=9.0),经
 // sleep 频繁切换——若 VFP 帧保存/恢复正确,各自醒来后 s3 保持不变;
 // 否则互串(任务读到对方的值)或清零,立即 FAIL 退出。
-// 这是 第 30 章「FPU 帧」的实现验证:49 字帧 = 现场 16 字 +
+// 这是 第 31 章「FPU 帧」的实现验证:49 字帧 = 现场 16 字 +
 // VFP 33 字(D0-D15 + FPSCR),FPEXC.EN 在 _start 置位。
 
 use xtask::chip::qemu_arm_r52::stdout::{qemu_exit_fail, qemu_exit_pass, write_str};

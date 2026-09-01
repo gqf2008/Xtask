@@ -61,7 +61,7 @@ pub(crate) fn setup_intrrupt() {
     }
 }
 
-// ---- tickless 动态节拍(ch28)----
+// ---- tickless 动态节拍(ch29)----
 // 与 qemu_riscv 口同构:一次性武装 mtimecmp,tick ISR 实测拍数跳账。
 
 /// 一次性武装时刻(= 0 未武装/恒定节拍模式)。单核独占(tickless
@@ -140,7 +140,7 @@ impl Portable for Gd32vf103Porting {
         }
     }
 
-    // ---- tickless 动态节拍(ch28,见 book/src/ch28-tickless.md)----
+    // ---- tickless 动态节拍(ch29,见 book/src/ch29-tickless.md)----
 
     #[inline]
     fn tickless_supported() -> bool {

@@ -117,10 +117,10 @@ pub trait Portable {
     #[inline]
     fn start_secondary_cores() {}
 
-    // ---- tickless 动态节拍扩展面(第 28 章)----
+    // ---- tickless 动态节拍扩展面(第 29 章)----
     // 六个方法全部带"恒定节拍"默认实现:现有各口零改动、行为逐字不变
     // (idle 会自旋等中断,与旧 `loop {}` 等价);要省电的口按需覆盖。
-    // 见 book/src/ch28-tickless.md。
+    // 见 book/src/ch29-tickless.md。
 
     /// 本口是否支持 tickless 动态节拍(一次性节拍定时器 + wfi 等待)
     #[inline]
