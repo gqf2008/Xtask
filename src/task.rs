@@ -341,10 +341,18 @@ impl Task {
     /// 当前任务等待，在当前任务调用
     #[inline]
     pub(crate) fn wait(&mut self, ticks: usize) {
-        self.state = State::Blocked;
-        // 记绝对到期时刻：延时队列按 wake_tick 升序插入（push_delay），
-        // tick 中断侧从队首摘取，同刻到期保持 FIFO 唤醒次序
-        self.wake_tick = crate::time::tick() + ticks as u64;
+        // "写到期时刻 + 置 Blocked"必须在同一临界区内(与 wakeup/
+        // park_locked 同款纪律):修前先置 Blocked 后写 wake_tick,
+        // 两行之间被 SysTick 抢占时,do_schedule 的 submit_task(old)
+        // 命中 Blocked 臂会按残留的旧 wake_tick(首次睡眠为 0)把任务
+        // 插到延时队列队首,下一拍即被"到期"唤醒——sleep_ms(100)
+        // 塌缩为约 1 tick。临界区内 ISR 无法插进窗口。
+        crate::sync::free(|_| {
+            // 记绝对到期时刻：延时队列按 wake_tick 升序插入（push_delay），
+            // tick 中断侧从队首摘取，同刻到期保持 FIFO 唤醒次序
+            self.wake_tick = crate::time::tick() + ticks as u64;
+            self.state = State::Blocked;
+        });
     }
 
     /// 栈围栏标志是否被修改
