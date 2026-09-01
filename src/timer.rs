@@ -14,11 +14,19 @@ use crate::Task;
 use alloc::boxed::Box;
 use alloc::collections::BinaryHeap;
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use core::cmp::{Ord, Ordering, Reverse};
 use core::ffi::c_void;
 
 static mut HEAP: Option<BinaryHeap<Box<TimerInner>>> = None;
 static mut READY: Option<VecDeque<Box<TimerInner>>> = None;
+
+/// 取消登记:句柄 drop 时目标定时器既不在 HEAP 也不在 READY 的第三种
+/// 位置——正在被 timer_task 弹到局部变量里执行回调(in-flight)。
+/// drop 的 retain 对它必落空,登记到这里;drain_ready_one 回调返回后
+/// 消费:不复活并入 TimerInner::drop 回收闭包。条目是瞬态的(消费它的
+/// 那次 drain 就在 drop 之后紧随的同一轮 READY 消费里)
+static mut CANCELLED: Vec<usize> = Vec::new();
 
 static mut TIMER_TASK: *mut Task = core::ptr::null_mut();
 
@@ -47,17 +55,7 @@ pub(crate) fn start_timer_task() {
         loop {
             sync::free(|_cs| unsafe {
                 if let Some(q) = &mut READY {
-                    loop {
-                        if let Some(mut t) = q.pop_front() {
-                            (t.entry)(t.args);
-                            if t.period > 0 {
-                                t.next_tick = time::tick() + t.period as u64;
-                                submit(t);
-                            }
-                        } else {
-                            break;
-                        }
-                    }
+                    while drain_ready_one(q) {}
                 }
                 let task = xworker.current();
                 task.block();
@@ -67,6 +65,28 @@ pub(crate) fn start_timer_task() {
             yield_now();
         }
     }
+}
+
+/// 消费 READY 队首一个到期定时器,返回是否消费了一个:
+/// 执行回调后,周期定时器按"取消登记"决定复活还是回收——回调期间
+/// 句柄被 drop 的定时器此刻躺在本函数局部变量里(in-flight),不在
+/// HEAP/READY 任何容器,Timer::drop 的 retain 必落空、只能登记到
+/// CANCELLED;这里消费登记:不重新入堆,并让 TimerInner::drop 回收
+/// 闭包(修前无条件复活,句柄销毁后永远关不掉、闭包永久泄漏)
+unsafe fn drain_ready_one(q: &mut VecDeque<Box<TimerInner>>) -> bool {
+    let Some(mut t) = q.pop_front() else {
+        return false;
+    };
+    (t.entry)(t.args);
+    let addr = t.args.addr();
+    if let Some(pos) = CANCELLED.iter().position(|&a| a == addr) {
+        CANCELLED.swap_remove(pos);
+        drop(t); // 句柄已在回调期间 drop:不复活,回收闭包
+    } else if t.period > 0 {
+        t.next_tick = time::tick() + t.period as u64;
+        submit(t);
+    }
+    true
 }
 
 /// 扫描堆顶是否有超时定时任务
@@ -214,13 +234,29 @@ impl Drop for Timer {
     fn drop(&mut self) {
         unsafe {
             sync::free(|_| {
+                let mut found = false;
                 if let Some(heap) = &mut HEAP {
-                    heap.retain(|item| item.args.addr() != self.0);
+                    heap.retain(|item| {
+                        let keep = item.args.addr() != self.0;
+                        found |= !keep;
+                        keep
+                    });
                 }
                 //到期定时器可能已被 do_tick 挪进 READY 队列，这里也必须清理，
                 //否则取消失效：周期定时器会继续触发并重新入堆，句柄 drop 后也永远关不掉
                 if let Some(q) = &mut READY {
-                    q.retain(|item| item.args.addr() != self.0);
+                    q.retain(|item| {
+                        let keep = item.args.addr() != self.0;
+                        found |= !keep;
+                        keep
+                    });
+                }
+                // 第三种位置:正在被 timer_task 执行回调(in-flight,不在
+                // 任何容器,retain 必落空)——登记取消,由 drain_ready_one
+                // 在回调返回后消费;否则周期定时器被无条件复活,句柄销毁后
+                // 再无取消手段
+                if !found {
+                    CANCELLED.push(self.0);
                 }
             });
         }
@@ -247,10 +283,12 @@ impl Ord for TimerInner {
 
 #[cfg(test)]
 mod tests {
-    use super::{do_tick, Timer, TimerInner, HEAP, READY};
+    use super::{do_tick, drain_ready_one, Timer, TimerInner, CANCELLED, HEAP, READY};
     use alloc::boxed::Box;
     use alloc::collections::{BinaryHeap, VecDeque};
+    use alloc::sync::Arc;
     use core::ffi::c_void;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     fn dummy(_args: *mut c_void) {}
 
@@ -305,6 +343,80 @@ mod tests {
                 2,
                 "READY 里的定时器应被句柄 drop 取消"
             );
+
+            // 第三种位置:in-flight(正被 drain 弹到局部变量里执行回调)
+            // 的周期定时器,回调里 drop 句柄也必须取消生效——修前 retain
+            // 落空后回调返回仍被无条件重新入堆:永久复活、句柄销毁后再无
+            // 取消手段、闭包泄漏。修复后经 CANCELLED 登记:不复活且
+            // TimerInner::drop 回收闭包
+            fn call_fn(args: *mut c_void) {
+                // 与 TimerInner::period 的 entry 同款:调用闭包但不消耗它
+                unsafe {
+                    let b = Box::from_raw(args as *mut Box<dyn Fn()>);
+                    b();
+                    core::mem::forget(b);
+                }
+            }
+            static HANDLE: std::sync::Mutex<Option<Timer>> = std::sync::Mutex::new(None);
+
+            // 先清空上半场遗留的到期一次性定时器,让 in-flight 场景从队首开始
+            while drain_ready_one(READY.as_mut().unwrap()) {}
+            assert!(READY.as_ref().unwrap().is_empty());
+
+            // 周期定时器,回调里 drop 自己的句柄;闭包持 Arc 计数验证回收
+            let mark = Arc::new(AtomicUsize::new(0));
+            let f: Box<Box<dyn Fn() + Send + 'static>> = Box::new(Box::new({
+                let mark = mark.clone();
+                move || {
+                    mark.fetch_add(1, Ordering::SeqCst);
+                    if let Some(h) = HANDLE.lock().unwrap().take() {
+                        drop(h); // 回调中取消自己
+                    }
+                }
+            }));
+            let args = &*f as *const _ as *mut c_void;
+            core::mem::forget(f);
+            let timer = Box::new(TimerInner {
+                entry: call_fn,
+                args,
+                period: 5,
+                next_tick: 0,
+            });
+            *HANDLE.lock().unwrap() = Some(Timer(timer.args.addr()));
+            READY.as_mut().unwrap().push_back(timer);
+
+            // 消费:回调执行(记 1 次)并自 drop → 登记 → drain 消费,不复活
+            assert!(drain_ready_one(READY.as_mut().unwrap()));
+            assert_eq!(mark.load(Ordering::SeqCst), 1, "回调应执行一次");
+            assert_eq!(
+                HEAP.as_ref().unwrap().len(),
+                1,
+                "in-flight drop 后周期定时器不得复活入堆(堆里只剩上半场未到期的一次性定时器)"
+            );
+            assert!(CANCELLED.is_empty(), "取消登记必须被当轮消费");
+            assert_eq!(
+                Arc::strong_count(&mark),
+                1,
+                "取消后 TimerInner::drop 必须回收闭包(Arc 计数回落)"
+            );
+
+            // 阳性对照:句柄未 drop 的周期定时器照常复活入堆
+            let g: Box<Box<dyn Fn() + Send + 'static>> = Box::new(Box::new(|| {}));
+            let gargs = &*g as *const _ as *mut c_void;
+            core::mem::forget(g);
+            READY.as_mut().unwrap().push_back(Box::new(TimerInner {
+                entry: call_fn,
+                args: gargs,
+                period: 5,
+                next_tick: 0,
+            }));
+            assert!(drain_ready_one(READY.as_mut().unwrap()));
+            assert_eq!(
+                HEAP.as_ref().unwrap().len(),
+                2,
+                "未取消的周期定时器必须复活(上半场遗留 1 + 复活 1)"
+            );
+            assert!(CANCELLED.is_empty(), "阳性对照不得误挂取消登记");
 
             //清理现场，避免污染其他测试
             HEAP = None;
