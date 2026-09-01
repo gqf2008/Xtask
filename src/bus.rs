@@ -1,13 +1,20 @@
 //! 总线
 use crate::sync;
+use crate::sync::arc::Arc;
 
 use alloc::vec::Vec;
 use alloc::{boxed::Box, collections::BTreeMap};
 use core::cell::{Cell, RefCell};
 
+/// 回调统一包进 Arc:publish/call 先快照克隆、解除 RefCell 借用后再执行——
+/// 回调里重入 subscribe/unsubscribe/publish/register 不再撞上借用冲突
+/// (修前持 borrow_mut 执行回调,重入即 BorrowMutError panic = abort 停机);
+/// 回调中退订自己/他人也由 Arc 保活,绝不执行已释放的闭包
+type Callback<'a, E> = Arc<Box<dyn Fn(&'a str, E) + Send + 'static>>;
+
 pub struct Bus<'a, E> {
-    subscribers: RefCell<BTreeMap<&'a str, Vec<(usize, Box<dyn Fn(&'a str, E)>)>>>,
-    callee: RefCell<BTreeMap<&'a str, Box<dyn Fn(&'a str, E)>>>,
+    subscribers: RefCell<BTreeMap<&'a str, Vec<(usize, Callback<'a, E>)>>>,
+    callee: RefCell<BTreeMap<&'a str, Callback<'a, E>>>,
     next_token: Cell<usize>,
 }
 
@@ -39,7 +46,7 @@ impl<'a, E: Clone> Bus<'a, E> {
             let id = self.next_token.get();
             self.next_token.set(id + 1);
             let list = subscribers.entry(topic).or_default();
-            list.push((id, Box::new(f)));
+            list.push((id, Arc::new(Box::new(f))));
             (topic, id)
         })
     }
@@ -63,9 +70,18 @@ impl<'a, E: Clone> Bus<'a, E> {
     /// 发送事件
     /// 只能在中断服务中调用
     pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
-        let mut subscribers = self.subscribers.borrow_mut();
-        if let Some(list) = subscribers.get_mut(topic) {
-            list.iter().for_each(|(_, f)| f(topic, event.clone()));
+        // 快照本轮订阅(Arc 克隆)后解除借用,再逐个回调:回调是任意用户
+        // 代码,允许重入本总线的任何操作。快照语义与主流 pub-sub 一致:
+        // 回调中退订的自己/他人本轮仍触发(Arc 保活),新订阅的本轮不触发
+        let snapshot: Vec<Callback<'a, E>> = {
+            let subscribers = self.subscribers.borrow();
+            match subscribers.get(topic) {
+                Some(list) => list.iter().map(|(_, f)| f.clone()).collect(),
+                None => return self,
+            }
+        };
+        for f in snapshot {
+            (*f)(topic, event.clone());
         }
         self
     }
@@ -79,7 +95,7 @@ impl<'a, E: Clone> Bus<'a, E> {
     }
 
     pub fn register_isr<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) -> &Self {
-        let f = Box::new(f);
+        let f: Callback<'a, E> = Arc::new(Box::new(f));
         let mut callee = self.callee.borrow_mut();
         callee.insert(name, f);
         self
@@ -95,9 +111,11 @@ impl<'a, E: Clone> Bus<'a, E> {
     }
 
     pub fn call_isr(&self, name: &'a str, event: E) -> &Self {
-        let callee = self.callee.borrow();
-        if let Some(f) = callee.get(name) {
-            f(name, event);
+        // 与 publish_isr 同款:先克隆 Arc 解除借用再回调——回调里重入
+        // register/unregister/call 不再撞上 RefCell 借用冲突
+        let f = self.callee.borrow().get(name).cloned();
+        if let Some(f) = f {
+            (*f)(name, event);
         }
         self
     }
@@ -185,5 +203,67 @@ mod tests {
             1,
             "未退订的 ZST 回调不应被误删"
         );
+    }
+
+    /// 回归:回调重入总线不得 panic。修前 publish_isr 持 RefCell 可变
+    /// 借用执行回调,回调里 subscribe/unsubscribe/publish 立即
+    /// BorrowMutError——no_std 目标上 panic=abort,内核停机。
+    /// 快照修复后:重入安全;回调里退订自己,下一轮不再触发;
+    /// 同 topic 的其他订阅者本轮照常触发。
+    #[test]
+    fn publish_callback_may_reenter_bus() {
+        static SELF_ID: AtomicUsize = AtomicUsize::new(0);
+        static SELF_HITS: AtomicUsize = AtomicUsize::new(0);
+        static OTHER: AtomicUsize = AtomicUsize::new(0);
+        let bus: &'static Bus<u32> = Box::leak(Box::new(Bus::new()));
+
+        // 回调里"退订自己 + 向别的 topic 再发一个事件"(pub-sub 典型用法)
+        // (id 从 0 开始,存 t.1+1 避免哨兵 0 与首个合法 token 撞车)
+        let t = bus.subscribe("a", move |_, _| {
+            SELF_HITS.fetch_add(1, Ordering::SeqCst);
+            let id = SELF_ID.swap(0, Ordering::SeqCst);
+            if id != 0 {
+                bus.unsubscribe(("a", id - 1)); // 退订自己(修前此处 panic)
+            }
+            bus.publish("b", 7); // 重入发布(修前此处 panic)
+        });
+        SELF_ID.store(t.1 + 1, Ordering::SeqCst);
+        bus.subscribe("a", |_, _| {
+            OTHER.fetch_add(1, Ordering::SeqCst);
+        });
+        let heard_b = Arc::new(AtomicUsize::new(0));
+        bus.subscribe("b", {
+            let h = heard_b.clone();
+            move |_, e| {
+                assert_eq!(e, 7);
+                h.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+
+        bus.publish("a", 1); // 第一次:自退订回调 + other,并转发 b
+        bus.publish("a", 1); // 第二次:自退订回调已摘除,只剩 other
+
+        assert_eq!(SELF_HITS.load(Ordering::SeqCst), 1, "自退订后不应再触发");
+        assert_eq!(OTHER.load(Ordering::SeqCst), 2, "other 两次都应在");
+        assert_eq!(heard_b.load(Ordering::SeqCst), 1, "b 只被转发一次");
+    }
+
+    /// 回归:call 的回调里重入 register/unregister 不得 panic
+    /// (修前 call_isr 持 borrow() 执行回调,重入 borrow_mut 即 panic)
+    #[test]
+    fn call_callback_may_reenter_bus() {
+        let bus: &'static Bus<u32> = Box::leak(Box::new(Bus::new()));
+        let hits = Arc::new(AtomicUsize::new(0));
+        bus.register("x", {
+            let h = hits.clone();
+            move |_, _| {
+                h.fetch_add(1, Ordering::SeqCst);
+                bus.unregister("y"); // 重入:借用冲突在修前直接 panic
+            }
+        });
+        bus.register("y", |_, _| {});
+        bus.call("x", 0);
+        bus.call("y", 0); // y 已被 unregister,不应 panic
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 }
