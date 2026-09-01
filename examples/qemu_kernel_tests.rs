@@ -994,6 +994,16 @@ fn uart_rx_wake_cb() {
     }
 }
 
+/// 测试 24 的噪声计数:每次噪声早醒 +1
+static NOISE_COUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// UART RX 噪声回调(ISR 上下文,测试 24 专用):只计数,**绝不唤醒任何
+/// 任务**——每次早醒后无任务就绪,trap 出口 do_schedule 弹出的仍是本核
+/// idle(new == cur),正是踩坑 5 下半场"停留 idle 重武装"的触发路径
+fn uart_rx_noise_cb() {
+    NOISE_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
 /// 测试 22:冻眠(SleepForever)→ 外部中断唤醒 → 恢复调度 ★
 /// 书稿 ch29 踩坑 4 的诚实边界由此关闭:考官挂起后全系统零就绪、零期限,
 /// idle 走到 SleepForever 停表+wfi 深睡——**能叫醒它的只剩外部中断**。
@@ -1048,6 +1058,62 @@ fn test_tickless_frozen_wake() {
         (30..=70).contains(&dt),
         "tickless_frozen_wake",
         format!("唤醒后 30ms 睡眠拍账 {dt}(应 [30,70]——外部唤醒后节拍链仍精确)"),
+    );
+}
+
+/// 测试 24:tickless"停留 idle"半边——周期性噪声中断不得推后期限 ★
+/// 书稿 ch29 踩坑 5 下半场的专项守卫。与测试 23 的关键差异:噪声字节
+/// 的回调**不唤醒任何任务**——早醒后无任务就绪,trap 出口 do_schedule
+/// 弹出的仍是本核 idle(new == cur,"停留 idle"路径)。
+///   修前:leave_idle 只在 new != cur 时调,停留 idle 不补账——idle 用
+///   冻结的 TICKS 重算出不变的 delta 重新武装,而口侧一次性 cmp 锚在
+///   当前墙钟:每个噪声字节把期限重新推远"已流逝墙钟"一段。5 字节
+///   ×150ms 间隔把 2000ms 睡眠推到 ≈2750ms+(≫ 40 拍容差);
+///   修后:停留 idle 也实测补账(TICKS += el),重算 delta 随实测收缩,
+///   墙钟期限不动。
+/// 判别同测试 23:墙钟(systick)拍账 ∈ [exp, exp+40];另断言噪声计数
+/// ≥3(喂了 5 字节)——噪声没打进去则测试失去判别力,不许静默绿。
+fn test_tickless_noise_stay_idle() {
+    use xtask::chip::qemu_riscv::{
+        uart_disable_rx_irq, uart_enable_rx_irq, uart_set_rx_callback, TICK_PERIOD,
+    };
+    use xtask::port::{Portable, Porting};
+    static WIN: Mutex<(u64, u64)> = Mutex::new((0, 0));
+    const MS: usize = 2000;
+    NOISE_COUNT.store(0, Ordering::Relaxed);
+    *WIN.lock() = (0, 0);
+    uart_set_rx_callback(Some(uart_rx_noise_cb));
+    uart_enable_rx_irq();
+    let done = XArc::new(Semaphore::new());
+    let d2 = done.clone();
+    TaskBuilder::new().name("t24.slp").priority(9).spawn(move || {
+        let pre = Porting::systick();
+        // 握手标记:验证器读到后开始喂 5 个噪声字节(间隔 150ms)
+        write_str("T24-SLEEPING: noise storm during 2000ms sleep\r\n");
+        xtask::sleep_ms(MS);
+        let post = Porting::systick();
+        *WIN.lock() = (pre, post);
+        d2.post();
+    });
+    done.wait(); // 等任务真正到点(墙钟 2000ms;噪声期间 CPU 在 idle)
+    let (pre, post) = *WIN.lock();
+    uart_disable_rx_irq();
+    uart_set_rx_callback(None);
+    let noise = NOISE_COUNT.load(Ordering::Relaxed);
+    check(
+        noise >= 3,
+        "tickless_noise_stay_idle",
+        format!("噪声早醒 {noise} 次(应 ≥3——太少则噪声没打进去,判别力丢失)"),
+    );
+    let exp = MS as u64 * TICK_PERIOD;
+    let d = post - pre;
+    check(
+        d >= exp && d <= exp + 40 * TICK_PERIOD,
+        "tickless_noise_stay_idle",
+        format!(
+            "墙钟拍账 {d}(应 [{}, {}]——停留 idle 的早醒也要补账,\
+             每个噪声字节推远一段即超界)", exp, exp + 40 * TICK_PERIOD
+        ),
     );
 }
 
@@ -1160,6 +1226,7 @@ fn main() -> ! {
                 ("tickless_far_deadline", test_tickless_far_deadline),
                 ("tickless_frozen_wake", test_tickless_frozen_wake),
                 ("tickless_early_wake_drift", test_tickless_early_wake_drift),
+                ("tickless_noise_stay_idle", test_tickless_noise_stay_idle),
             ];
             let total = tests.len();
             let mut passed = 0usize;
