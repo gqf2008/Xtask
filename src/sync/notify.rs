@@ -36,6 +36,16 @@ impl Notifier {
     unsafe fn block(&self) {
         let task = xworker.current();
         let addr = (task as *mut Task).addr();
+        // 一对一契约守卫:挂起登记只有这一个槽,同侧第二个阻塞者会
+        // 无条件覆盖前者登记——被覆盖的任务状态已是 Suspended 且内核
+        // 再无任何结构引用它,后续所有 wakeup 都唤不到(静默永久挂死)。
+        // 违约时立刻 panic(目标端 abort),胜过静默丢任务
+        assert!(
+            self.blocker.load() == 0,
+            "Notifier 一对一契约被破坏:已有挂起者 {:#x},新挂起者 {:#x}",
+            self.blocker.load(),
+            addr
+        );
         self.blocker.store(addr);
         task.block();
     }
