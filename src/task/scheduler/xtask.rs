@@ -63,15 +63,19 @@ impl Scheduler for XTaskScheduler {
             //弹出一个就绪任务(本核无就绪则回本核 idle)
             let new = pop_ready();
             let cur = super::xworker::current_ptr();
-            // 离开本核 idle 的边界:tickless 曾把节拍定时器拨成"一次性
-            // 武装/停表",现在确有别的任务要跑——口侧按实测补账
-            // (TICKS += el)并把节拍拨回恒定。否则"睡眠中被外部中断
-            // 早醒 → 任务运行 → idle 重新武装"会把新武装锚在冻结的
-            // TICKS 上,墙钟期限被每个清醒片段整体拖后;任务运行期也
-            // 失去逐拍时间片/到期摘取。恒定节拍口/未睡眠的 idle 是
-            // 空操作
+            // 离开/停留本核 idle 的边界:tickless 曾把节拍定时器拨成
+            // "一次性武装/停表"——口侧按实测补账(TICKS += el)并把节拍
+            // 拨回恒定。修前只在 new != cur(确有别的任务要跑)时补账,
+            // 漏了"早醒但无任务就绪"(new == cur)半边:外部中断早醒后
+            // TICKS 保持冻结、TICKLESS_ARMED 未清,idle 下轮用冻结的
+            // now 重算 delta 重新武装——而口侧一次性 cmp 锚在当前墙钟,
+            // 首次武装至早醒间流逝的墙钟无人入账,周期性外部中断(如
+            // UART RX)会把睡眠期限无限推后,睡眠任务/软定时器饿死。
+            // 停留 idle 也补账后,重算的 delta 随实测 TICKS 收缩,期限
+            // 不再漂移。恒定节拍口/未睡眠的 idle 是空操作;idle 每轮
+            // 随后会重新武装,节拍拨回恒定无副作用
             let me = (Porting::hart_id() as usize).min(MAX_HARTS - 1);
-            if !cur.is_null() && cur == IDLE_TASKS[me] && new != cur {
+            if !cur.is_null() && cur == IDLE_TASKS[me] {
                 Porting::tickless_leave_idle();
             }
             // current_ptr 判空:从核首调度时本核 CURRENT 尚为 null

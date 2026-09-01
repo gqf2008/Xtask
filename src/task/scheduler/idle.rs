@@ -114,8 +114,11 @@ fn tickless_idle() {
                 // 一次性武装:delta 拍整后一次节拍中断,中断路径实测时长
                 // 跳账(TICKS += el)后照常摘到期任务——到点之间没有
                 // 任何中间拍,这就是"动态节拍"的全部收益。
-                // 早醒(睡眠期间来了 MSIP 等)时 ISR 测到 ~0 拍、清掉武装,
-                // 无事发生,回循环重决——无害(见第 28 章踩坑:早醒零拍)
+                // 早醒(睡眠期间来了外部中断等)时 trap 出口 do_schedule
+                // 会对"停留 idle"也调 tickless_leave_idle:按实测补账
+                // (TICKS += el)再回本函数重决——delta 随实测收缩,期限
+                // 不漂移(修前早醒无任务就绪时不补账,冻结 TICKS 重武装
+                // 会把期限无限推后)
                 Porting::tickless_arm_delta(delta);
                 Porting::tickless_wait();
             }
