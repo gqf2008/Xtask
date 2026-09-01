@@ -79,6 +79,28 @@ fn leave() {
     }
 }
 
+/// 深度 RAII 守卫:f 在临界区内 panic 展开时,裸的 `enter(); f(); leave()`
+/// 会跳过 leave()——host 端该线程深度残留 ≥1,后续所有 free 一律走嵌套
+/// 快路径、静默跳过 HostPorting 的进程互斥锁(并行测试下并发裸改全局
+/// 状态)。守卫把"进深度"与"退深度"绑到展开安全的作用域上。
+/// 目标端 panic=abort 不展开,守卫零成本。
+struct DepthGuard;
+
+impl DepthGuard {
+    #[inline]
+    fn new() -> Self {
+        enter();
+        DepthGuard
+    }
+}
+
+impl Drop for DepthGuard {
+    #[inline]
+    fn drop(&mut self) {
+        leave();
+    }
+}
+
 /// 全局自旋锁:SMP 下挡住别的核;单核恒立得。
 /// host 测试不启用——互斥已由 HostPorting 的进程内锁提供,测试 panic
 /// 时若抱着自旋锁会让后续测试集体挂死。
@@ -119,18 +141,19 @@ where
     F: FnOnce(&CriticalSection) -> R,
 {
     if depth() > 0 {
-        enter();
         // SAFETY: depth>0 意味着本执行上下文的外层 free 正在持区——
         // 本核中断已关、全局自旋已持,构造 CriticalSection 的约定成立
-        let r = f(unsafe { &CriticalSection::new() });
-        leave();
-        return r;
+        let _depth = DepthGuard::new();
+        return f(unsafe { &CriticalSection::new() });
     }
     Porting::free(|cs| {
         kernel_cs_acquire();
-        enter();
+        let depth = DepthGuard::new();
         let r = f(cs);
-        leave();
+        // 正常路径显式配平(先退深度再放自旋);panic 展开路径由
+        // DepthGuard::drop 兜底退深度——全局自旋锁在目标端随
+        // panic=abort 停机,host 端 kernel_cs_* 本就是空操作
+        drop(depth);
         kernel_cs_release();
         r
     })
@@ -159,6 +182,23 @@ mod tests {
             });
         });
         assert_eq!(super::depth(), 0, "退出后深度必须归零(配平)");
+        free(|_| ());
+        assert_eq!(super::depth(), 0);
+    }
+
+    /// 回归:闭包内 panic 展开不得泄漏深度。修前 leave() 被跳过,
+    /// 本线程深度残留 ≥1,后续 free 一律走嵌套快路径、静默跳过
+    /// HostPorting 的进程互斥锁——并行测试下并发裸改全局状态。
+    /// (现行 drv_static 的 double_fill_panics 每次 cargo test 都在
+    /// 制造这个泄漏,只是碰巧没撞上共享全局才表面全绿。)
+    #[test]
+    fn panic_inside_free_does_not_leak_depth() {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            free(|_| panic!("故意 panic:验证深度不泄漏"));
+        }));
+        assert!(r.is_err());
+        assert_eq!(super::depth(), 0, "panic 展开后深度必须归零");
+        // 后续外层 free 必须还能走完整的「互斥锁+深度」路径(深度归零前提)
         free(|_| ());
         assert_eq!(super::depth(), 0);
     }
