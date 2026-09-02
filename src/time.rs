@@ -57,7 +57,9 @@ pub fn tick() -> u64 {
 /// 毫秒转tick
 #[inline(always)]
 pub fn ms2ticks(ms: usize) -> usize {
-    ms * 1000 / TICK_PERIOD_US
+    // 经 u64 中转:32 位目标上 `ms * 1000` 在 ms 超过约 429 万(≈49 天)时
+    // 会溢出 usize 回绕——先抬到 u64 再除,大输入不丢精度、不回绕
+    ((ms as u64 * 1000) / TICK_PERIOD_US as u64) as usize
 }
 
 /// 返回tick时长，单位毫秒
