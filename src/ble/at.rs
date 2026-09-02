@@ -11,7 +11,7 @@
 //! 设计与 ch22 `slip` 同款纪律:位级/词法的"会算错"全部在这里,
 //! 宿主 golden 常量钉死;真机上只剩 UART 时序。
 
-use crate::drv::UartDevice;
+use crate::device::StreamDevice;
 use core::fmt::{self};
 
 /// 最长命令帧字节:"AT+UUIDSVR128="(14) + 32 个 hex + 15 个空格 = 61,取整 64
@@ -349,20 +349,25 @@ pub trait BleIo: Sync {
     fn write_all(&self, buf: &[u8]);
 }
 
-/// 一切 `UartDevice` 都是 `BleIo`(方法转发;trait 名不同只为把
-/// "非阻塞读"契约钉进类型——ch22 同款手法)
-impl<T: UartDevice + ?Sized + Sync> BleIo for T {
+/// 一切 `StreamDevice` 都是 `BleIo`(方法转发;trait 名不同只为把
+/// "非阻塞读"契约钉进类型——ch22 同款手法;
+/// `Sync` 上界由 `StreamDevice: Device: Sync` 隐含)
+impl<T: StreamDevice + ?Sized> BleIo for T {
     #[inline]
     fn rx_len(&self) -> usize {
-        UartDevice::rx_len(self)
+        self.available()
     }
     #[inline]
     fn read_byte(&self) -> u8 {
-        UartDevice::read_byte(self)
+        let mut b = [0u8; 1];
+        // 契约:仅 rx_len() > 0 时调用——流设备的非阻塞读此时必返回 1 字节
+        let n = self.read(&mut b).expect("BleIo 契约:available>0 时 read 不应失败");
+        debug_assert_eq!(n, 1, "BleIo 契约:available>0 时 read 必返回 1 字节");
+        b[0]
     }
     #[inline]
     fn write_all(&self, buf: &[u8]) {
-        UartDevice::write_all(self, buf)
+        StreamDevice::write_all(self, buf).expect("BleIo:流设备写不应失败")
     }
 }
 

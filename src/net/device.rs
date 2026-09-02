@@ -11,11 +11,11 @@
 //! - **字段级拆借**:`receive` 同时返回两枚 token,各借 `SlipDevice` 的**不同字段**
 //!   (rx 帧缓冲 / tx 编码缓冲)——都想借 `&mut self` 是 borrowck 必拒的错误
 //!   (踩坑 b),纯 safe 写法,无裸指针;
-//! - **共享引用 + 内部可变 + `Sync` 上界**:与 `BdDevice` 同款论证——physical 层
+//! - **共享引用 + 内部可变 + `Sync` 上界**:与 `BlockDevice` 同款论证——physical 层
 //!   经 `&` 被协议栈与任务共享,`&dyn PhyIo` 要 Send 必须先 `PhyIo: Sync`
 //!   (auto-trait 链,见 ch21 踩坑 2)。
 
-use crate::drv::UartDevice;
+use crate::device::StreamDevice;
 use crate::net::slip::{SlipDecoder, SlipEncoder, SLIP_MAX_FRAME, SLIP_MTU};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::Result;
@@ -26,7 +26,7 @@ use smoltcp::time::Instant;
 /// 契约:
 /// - `read_byte` **仅在 `rx_len() > 0` 时调用**(调用方保证,本 trait 不检查);
 /// - `write_all` 在任务上下文调用,允许轮询阻塞(57600 下 ~174µs/字节);
-/// - `Sync` 上界:方法与 `UartDevice` 一致全 `&self`,内部自持可变状态,
+/// - `Sync` 上界:方法与 `StreamDevice` 一致全 `&self`,内部自持可变状态,
 ///   经 `&dyn PhyIo` 共享(见模块文档的 auto-trait 论证)。
 pub trait PhyIo: Sync {
     /// 接收缓冲中待读字节数(非阻塞查询)
@@ -37,20 +37,25 @@ pub trait PhyIo: Sync {
     fn write_all(&self, buf: &[u8]);
 }
 
-/// 一切 `UartDevice` 都是 `PhyIo`(方法直接转发——UART 的 SPSC 环形缓冲
+/// 一切 `StreamDevice` 都是 `PhyIo`(方法直接转发——UART 的 SPSC 环形缓冲
 /// + waiter 槽已是现成的字节流;trait 名不同只为了把"非阻塞读"契约钉进类型)。
-impl<T: UartDevice + ?Sized + Sync> PhyIo for T {
+/// `Sync` 上界由 `StreamDevice: Device: Sync` 隐含,不必再写。
+impl<T: StreamDevice + ?Sized> PhyIo for T {
     #[inline]
     fn rx_len(&self) -> usize {
-        UartDevice::rx_len(self)
+        self.available()
     }
     #[inline]
     fn read_byte(&self) -> u8 {
-        UartDevice::read_byte(self)
+        let mut b = [0u8; 1];
+        // 契约:仅 rx_len() > 0 时调用——流设备的非阻塞读此时必返回 1 字节
+        let n = self.read(&mut b).expect("PhyIo 契约:available>0 时 read 不应失败");
+        debug_assert_eq!(n, 1, "PhyIo 契约:available>0 时 read 必返回 1 字节");
+        b[0]
     }
     #[inline]
     fn write_all(&self, buf: &[u8]) {
-        UartDevice::write_all(self, buf)
+        StreamDevice::write_all(self, buf).expect("PhyIo:流设备写不应失败")
     }
 }
 
@@ -208,15 +213,36 @@ mod tests {
         }
     }
 
-    impl UartDevice for MockLink {
-        fn write_all(&self, buf: &[u8]) {
-            self.tx.borrow_mut().push(buf.to_vec());
+    impl crate::device::Device for MockLink {
+        fn kind(&self) -> crate::device::DeviceKind {
+            crate::device::DeviceKind::Stream
         }
-        fn rx_len(&self) -> usize {
+        fn as_stream(&self) -> Option<&dyn StreamDevice> {
+            Some(self)
+        }
+    }
+
+    impl StreamDevice for MockLink {
+        fn available(&self) -> usize {
             self.rx.borrow().len()
         }
-        fn read_byte(&self) -> u8 {
-            self.rx.borrow_mut().pop_front().unwrap()
+        fn read(&self, buf: &mut [u8]) -> core::result::Result<usize, crate::device::DeviceError> {
+            let mut rx = self.rx.borrow_mut();
+            let mut n = 0;
+            while n < buf.len() {
+                match rx.pop_front() {
+                    Some(b) => {
+                        buf[n] = b;
+                        n += 1;
+                    }
+                    None => break,
+                }
+            }
+            Ok(n)
+        }
+        fn write(&self, buf: &[u8]) -> core::result::Result<usize, crate::device::DeviceError> {
+            self.tx.borrow_mut().push(buf.to_vec());
+            Ok(buf.len())
         }
     }
 

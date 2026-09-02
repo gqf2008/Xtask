@@ -27,7 +27,7 @@ pub struct SlipStack {
 
 impl SlipStack {
     /// 组装协议栈:设备按值进 Interface,phy 必须 `'static`
-    /// (示例里是 `find_uart("uart0")` 返回的 `&'static dyn UartDevice`)。
+    /// (示例里是 `find_stream("uart0")` 返回的 `&'static dyn StreamDevice`)。
     pub fn build(phy: &'static dyn PhyIo, ip: [u8; 4], prefix: u8) -> SlipStack {
         let iface = InterfaceBuilder::new(SlipDevice::new(phy), Vec::new())
             .ip_addrs([IpCidr::new(IpAddress::v4(ip[0], ip[1], ip[2], ip[3]), prefix)])

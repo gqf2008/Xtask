@@ -8,7 +8,7 @@
 //! 在真机上表现为"SD 卡初始化失败"，定位要靠逻辑分析仪；在宿主上就是一条
 //! 断言红。协议驱动的第一层防御就是把这些纯计算钉死在宿主侧。
 
-use crate::drv::SECTOR_SIZE;
+use crate::device::SECTOR_SIZE;
 
 /// 命令号（SPI 模式）
 pub const CMD0: u8 = 0; // GO_IDLE_STATE：切入 SPI 模式

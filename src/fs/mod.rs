@@ -1,6 +1,6 @@
 //! 文件系统（第 21 章）
 //!
-//! 分层：`drv::BdDevice`（块设备，读/写扇区）→ [`block::FatAdapter`]
+//! 分层：`device::BlockDevice`（块设备，读/写扇区）→ [`block::FatAdapter`]
 //! （翻译成 fatfs 的字节流 + 游标）→ fatfs（FAT 语义）。本模块只做翻译
 //! 与取舍，不分叉文件系统实现——FAT 的正确性由 fatfs 库承担，教学点在于
 //! **接口形状**：文件系统要的是什么、块设备给了什么、中间差什么。

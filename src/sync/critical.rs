@@ -197,7 +197,7 @@ mod tests {
     /// 回归:闭包内 panic 展开不得泄漏深度。修前 leave() 被跳过,
     /// 本线程深度残留 ≥1,后续 free 一律走嵌套快路径、静默跳过
     /// HostPorting 的进程互斥锁——并行测试下并发裸改全局状态。
-    /// (现行 drv_static 的 double_fill_panics 每次 cargo test 都在
+    /// (现行 device::table 的 double_fill_panics 每次 cargo test 都在
     /// 制造这个泄漏,只是碰巧没撞上共享全局才表面全绿。)
     #[test]
     fn panic_inside_free_does_not_leak_depth() {

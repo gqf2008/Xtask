@@ -12,8 +12,7 @@ use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt};
 
 use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::drv_sd::SdCard;
-use xtask::drv_static;
-use xtask::drv_static::DeviceSlot;
+use xtask::device::table::{self, DeviceSlot};
 use xtask::fs::{
     format_volume, FatAdapter, FileSystem, FormatVolumeOptions, FsOptions, Read, Seek, SeekFrom,
     Write,
@@ -21,7 +20,7 @@ use xtask::fs::{
 use xtask::prelude::*;
 
 // 文件系统示例（第 21 章）：全部组件在一条链上
-//   SdCard（SPI 驱动，bsp）→ BdDevice（两个函数：读/写扇区，ch20 驱动层）
+//   SdCard（SPI 驱动，bsp）→ BlockDevice（两个函数：读/写扇区，ch20 驱动层）
 //   → FatAdapter（字节流翻译，宿主回归）→ fatfs → 文件任务
 // - writer（prio 2）：每秒向 LOG.TXT 追加一行（"文件 I/O 与任务阻塞"——
 //   writer/reader 抢同一把 FS 互斥锁，抢不到的任务进入 Blocked）
@@ -31,7 +30,7 @@ use xtask::prelude::*;
 //   真机上这就是"格式化确认框"的实现位置）
 // - 日志走 USART0 终端（57600，8N1）；本例不占用 uart 设备类
 
-// 编译期设备清单：SD 卡经 ch20 驱动层按名获取（BdDevice 是设备类的第三位成员）
+// 编译期设备清单：SD 卡经 ch20 驱动层按名获取（清单与注册表同认 `&'static dyn Device`）
 xtask::device_list! { BOARD_SD {
     "sd0" => &SD_SLOT,
 } }
@@ -39,8 +38,8 @@ xtask::device_list! { BOARD_SD {
 static SD_SLOT: DeviceSlot = DeviceSlot::new();
 
 /// 文件系统类型：fatfs 操作的是"字节流 + 游标"（FatAdapter），
-/// 存储来自驱动层按名取出的块设备（`&'static dyn BdDevice`）
-type SdFs = FileSystem<FatAdapter<&'static dyn BdDevice>>;
+/// 存储来自驱动层按名取出的块设备（`&'static dyn BlockDevice`）
+type SdFs = FileSystem<FatAdapter<&'static dyn BlockDevice>>;
 
 /// 挂载好的文件系统：全局唯一（单卡单卷）。
 /// 注意用 `Mutex<Option<_>>` 而不是 `OnceCell`：core 的 `OnceCell` 是
@@ -54,7 +53,7 @@ static FS: Mutex<Option<SdFs>> = Mutex::new(None);
 /// 可见；若推迟到任务里，会与 writer/reader 抢同一把 FS 锁，还可能在
 /// 第一个文件操作时才被迫格式化（卡顿发生在任务上下文里，难定位）。
 fn mount() {
-    let bd = drv_static::find_bd("sd0").expect("SD 卡未就绪：清单未挂载或槽未填");
+    let bd = table::find_block("sd0").expect("SD 卡未就绪：清单未挂载或槽未填");
     let fs = match FileSystem::new(FatAdapter::new(bd), FsOptions::new()) {
         Ok(fs) => fs,
         // 全 0 卷（无 55AA 签名）= 未格式化（宿主回归：unformatted_volume_open_fails）
@@ -74,7 +73,7 @@ fn mount() {
     log::info!(
         "fatfs: 挂载成功，容量 {} 扇区（{} KiB），簇总数 {}",
         bd.sector_count(),
-        bd.sector_count() * 512 / 1024,
+        bd.sector_count() * bd.sector_size() / 1024,
         clusters
     );
 }
@@ -164,8 +163,8 @@ fn init() {
         .unwrap_or_else(|e| panic!("SD 卡初始化失败: {:?}（检查 TF 卡是否插好）", e));
 
     // 挂进 ch20 驱动层：编译期清单里登记名字，消费者按名取
-    SD_SLOT.fill(DeviceApi::Bd(sd));
-    drv_static::attach(BOARD_SD);
+    SD_SLOT.fill(sd);
+    table::attach(BOARD_SD);
 
     mount();
 }

@@ -1,6 +1,6 @@
 //! 编译期设备清单：Zephyr 式"静态清单 + 线性扫描"的 Rust 对应物
 //!
-//! `drv`（运行期注册表）讲清了设备模型的形状；本模块回答 Zephyr 的另一个问题：
+//! `super`（运行期注册表）讲清了设备模型的形状；本模块回答 Zephyr 的另一个问题：
 //! **为什么真实内核不在运行期做"注册"**——设备集合、名字、绑定在链接后全部定死，
 //! 运行期只剩查找与分发。对应关系（Zephyr 源码核对）：
 //!
@@ -12,28 +12,31 @@
 //! | `device_get_binding`（扫 ROM 段 + 名字匹配） | `find`（扫清单 + 名字匹配 + 槽就绪检查） |
 //! | init 编程硬件、`device_is_ready` | `init` 里 `fill` 实例；未填 = 未就绪（`find` 返回 None） |
 //!
-//! 与 `drv` 的分工：二者共用 `drv::DeviceApi` 枚举与 `LedDevice`/`UartDevice` 类 API，
-//! 只换"表"的实现——`drv` 是可增删的运行期表（教学：模型透明、host 可测、可演示热注册），
-//! 本模块是编译期定形的清单（真实内核心态：零运行期注册决策）。
+//! 与运行期注册表的分工：二者共用同一种句柄 `&'static dyn Device` 与同一套
+//! 能力 trait，只换"表"的实现——注册表是可增删的运行期表（教学：模型透明、
+//! host 可测、可演示热注册），本模块是编译期定形的清单（真实内核心态：零运行期
+//! 注册决策）。能力分发同样走 `as_*`：表对设备类透明，新增能力 trait 本模块
+//! 只加一个 `find_xxx` 便捷查找，槽/描述符/宏一行不改。
 //!
 //! 设计取舍：清单存**实例槽指针**而非实例本身——Rust 嵌入生态的外设（GPIO 引脚、
 //! Serial）没有 const 构造器，实例只能在 init 里运行期构造；槽把"编译期定形的名字/集合"
-//! 与"运行期才存在的实例"焊接在一起，RAM 代价 = 每设备一个 `Option<DeviceApi>`。
-//! （Zephyr 的 C 同样在 init 里编程硬件，只是它连 device 对象都 const——Rust 侧以
-//! 槽代替 device_state，语义不变：**名字属于编译期，实例属于运行期**。）
+//! 与"运行期才存在的实例"焊接在一起，RAM 代价 = 每设备一个
+//! `Option<&'static dyn Device>`。（Zephyr 的 C 同样在 init 里编程硬件，只是它连
+//! device 对象都 const——Rust 侧以槽代替 device_state，语义不变：**名字属于编译期，
+//! 实例属于运行期**。）
 //!
-//! 纪律与 `drv` 同款：槽与表的访问全部在 `sync::free` 临界区内（单核关中断），
+//! 纪律与注册表同款：槽与表的访问全部在 `sync::free` 临界区内（单核关中断），
 //! `unsafe impl Send/Sync` 的理由与 bus.rs/REGISTRY 同构。
 
 use core::cell::UnsafeCell;
 
-use crate::drv::{BdDevice, DeviceApi, LedDevice, UartDevice};
+use crate::device::{BlockDevice, BusDevice, Control, Device, EventDevice, StreamDevice};
 use crate::sync;
 
 /// 设备实例槽：编译期清单里的"位置"，运行期由 init 填**一次**实例。
 /// 未填 = 设备在清单里（存在）但未就绪——`find` 返回 `None`，与 Zephyr 的
 /// `device_get_binding` 对未就绪设备返回 NULL 同语义。
-pub struct DeviceSlot(UnsafeCell<Option<DeviceApi>>);
+pub struct DeviceSlot(UnsafeCell<Option<&'static dyn Device>>);
 
 // SAFETY: 槽的读写全部发生在 sync::free 临界区内（单核关中断），ISR 与任务
 // 不可能并发访问同一借用——与 bus.rs/REGISTRY 的 unsafe impl 同构。
@@ -51,11 +54,11 @@ impl DeviceSlot {
     /// 重复填充直接 panic——"一台设备只构造一次"是 Zephyr 的隐式契约
     /// （它的 `device_init` 对已初始化设备返回 `-EALREADY`），教学内核宁可
     /// 早失败也不静默覆盖。
-    pub fn fill(&self, api: DeviceApi) {
+    pub fn fill(&self, dev: &'static dyn Device) {
         sync::free(|_| {
             let slot = unsafe { &mut *self.0.get() };
             assert!(slot.is_none(), "设备槽重复填充：实例已存在，不允许覆盖");
-            *slot = Some(api);
+            *slot = Some(dev);
         });
     }
 
@@ -65,14 +68,16 @@ impl DeviceSlot {
     /// 芯片端口的 `interrupt::free` 虽可重入（深度计数），一次操作一次取锁才能让
     /// 宿主与真机行为一致。找不到这个纪律的地方 = bus.rs/REGISTRY 同款：整个
     /// 操作一块临界区，内部不许再 `free`。
-    fn get_in_critical(&self) -> Option<DeviceApi> {
+    fn get_in_critical(&self) -> Option<&'static dyn Device> {
         unsafe { *self.0.get() }
     }
 }
 
 /// 设备描述符：编译期定形的"名字 → 实例槽"。
-/// 实例本身在 run 期填槽，描述符只定三件事——**叫什么、属于哪类、槽在哪**，
-/// 全部写入 ROM（const 数组），与 Zephyr 的 const `struct device` 同构。
+/// 实例本身在 run 期填槽，描述符只定两件事——**叫什么、槽在哪**，全部写入 ROM
+/// （const 数组），与 Zephyr 的 const `struct device` 同构。设备类别由槽内实例的
+/// `kind()`/`as_*` 回答，描述符不携带（能力开放扩展，描述符跟着定死就退化成
+/// 封闭枚举了）。
 pub struct DeviceDef {
     /// 设备名（`find` 的查找键；全局唯一，Zephyr binding 语义）
     pub name: &'static str,
@@ -95,9 +100,9 @@ impl DeviceDef {
 macro_rules! device_list {
     ($name:ident { $($n:expr => $s:expr),+ $(,)? }) => {
         /// 编译期设备清单（ROM）：名字 → 实例槽；实例在 init 里 `fill` 后
-        /// 由 `xtask::drv_static::find` 按名取用。
-        pub static $name: &[$crate::drv_static::DeviceDef] = &[
-            $( $crate::drv_static::DeviceDef::new($n, $s) ),+
+        /// 由 `xtask::device::table::find` 按名取用。
+        pub static $name: &[$crate::device::table::DeviceDef] = &[
+            $( $crate::device::table::DeviceDef::new($n, $s) ),+
         ];
     };
 }
@@ -127,10 +132,11 @@ impl DeviceTable {
         });
     }
 
-    /// 按名查找设备能力（Zephyr `device_get_binding` 同款线性扫描）。
+    /// 按名查找设备（Zephyr `device_get_binding` 同款线性扫描；通用入口，
+    /// 拿到后用 `as_*` 取能力，或用下面的 `find_stream`/`find_block`/… 直接取）。
     /// 返回 `None` 的三种情形：清单未挂载 / 名字不在清单 / **在清单但槽未填**（未就绪）——
     /// 后两种与 Zephyr 的"找不到"与"未 ready 返回 NULL"一一对应。
-    pub fn find(&self, name: &str) -> Option<DeviceApi> {
+    pub fn find(&self, name: &str) -> Option<&'static dyn Device> {
         sync::free(|_| unsafe {
             let list = (*self.0.get())?;
             list.iter()
@@ -139,28 +145,32 @@ impl DeviceTable {
         })
     }
 
-    /// 按名查找 LED 设备；名字存在但不是 LED 类时返回 `None`（用 `find` 可区分）
-    pub fn find_led(&self, name: &str) -> Option<&'static dyn LedDevice> {
-        match self.find(name) {
-            Some(DeviceApi::Led(dev)) => Some(dev),
-            _ => None,
-        }
+    // ---- 能力级便捷查找（薄包装：find + as_*）----
+
+    /// 按名取字节流能力；名字不存在/槽未填/设备无此能力时返回 None
+    /// （用 `find` 可区分"没有"与"能力不符"）
+    pub fn find_stream(&self, name: &str) -> Option<&'static dyn StreamDevice> {
+        self.find(name).and_then(|d| d.as_stream())
     }
 
-    /// 按名查找串口设备；名字存在但不是 UART 类时返回 `None`（用 `find` 可区分）
-    pub fn find_uart(&self, name: &str) -> Option<&'static dyn UartDevice> {
-        match self.find(name) {
-            Some(DeviceApi::Uart(dev)) => Some(dev),
-            _ => None,
-        }
+    /// 按名取块设备能力
+    pub fn find_block(&self, name: &str) -> Option<&'static dyn BlockDevice> {
+        self.find(name).and_then(|d| d.as_block())
     }
 
-    /// 按名查找块设备；名字存在但不是块设备类时返回 `None`（用 `find` 可区分）
-    pub fn find_bd(&self, name: &str) -> Option<&'static dyn BdDevice> {
-        match self.find(name) {
-            Some(DeviceApi::Bd(dev)) => Some(dev),
-            _ => None,
-        }
+    /// 按名取控制面能力
+    pub fn find_control(&self, name: &str) -> Option<&'static dyn Control> {
+        self.find(name).and_then(|d| d.as_control())
+    }
+
+    /// 按名取总线能力
+    pub fn find_bus(&self, name: &str) -> Option<&'static dyn BusDevice> {
+        self.find(name).and_then(|d| d.as_bus())
+    }
+
+    /// 按名取事件/唤醒能力
+    pub fn find_event(&self, name: &str) -> Option<&'static dyn EventDevice> {
+        self.find(name).and_then(|d| d.as_event())
     }
 }
 
@@ -172,61 +182,124 @@ pub fn attach(list: &'static [DeviceDef]) {
     TABLE.attach(list);
 }
 
-/// 从全局清单表按名查找设备能力
-pub fn find(name: &str) -> Option<DeviceApi> {
+/// 从全局清单表按名查找设备（通用入口）
+pub fn find(name: &str) -> Option<&'static dyn Device> {
     TABLE.find(name)
 }
 
-/// 从全局清单表按名查找 LED 设备
-pub fn find_led(name: &str) -> Option<&'static dyn LedDevice> {
-    TABLE.find_led(name)
+/// 从全局清单表按名取字节流能力
+pub fn find_stream(name: &str) -> Option<&'static dyn StreamDevice> {
+    TABLE.find_stream(name)
 }
 
-/// 从全局清单表按名查找串口设备
-pub fn find_uart(name: &str) -> Option<&'static dyn UartDevice> {
-    TABLE.find_uart(name)
+/// 从全局清单表按名取块设备能力
+pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
+    TABLE.find_block(name)
 }
 
-/// 从全局清单表按名查找块设备
-pub fn find_bd(name: &str) -> Option<&'static dyn BdDevice> {
-    TABLE.find_bd(name)
+/// 从全局清单表按名取控制面能力
+pub fn find_control(name: &str) -> Option<&'static dyn Control> {
+    TABLE.find_control(name)
+}
+
+/// 从全局清单表按名取总线能力
+pub fn find_bus(name: &str) -> Option<&'static dyn BusDevice> {
+    TABLE.find_bus(name)
+}
+
+/// 从全局清单表按名取事件/唤醒能力
+pub fn find_event(name: &str) -> Option<&'static dyn EventDevice> {
+    TABLE.find_event(name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::{DeviceError, DeviceKind};
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    /// mock LED：on 计数 +1、toggle 计数 +10（与 drv.rs 的 mock 同款）
+    /// mock LED：op1 计数 +1、op3 计数 +10（与 device.rs 的 mock 同款）
     struct MockLed {
         count: Arc<AtomicUsize>,
     }
-    impl LedDevice for MockLed {
-        fn on(&self) {
-            self.count.fetch_add(1, Ordering::SeqCst);
+    impl Device for MockLed {
+        fn kind(&self) -> DeviceKind {
+            DeviceKind::Control
         }
-        fn off(&self) {}
-        fn toggle(&self) {
-            self.count.fetch_add(10, Ordering::SeqCst);
+        fn as_control(&self) -> Option<&dyn Control> {
+            Some(self)
+        }
+    }
+    impl Control for MockLed {
+        fn control(&self, op: u32, _arg: usize) -> Result<usize, DeviceError> {
+            match op {
+                1 => {
+                    self.count.fetch_add(1, Ordering::SeqCst);
+                    Ok(0)
+                }
+                3 => {
+                    self.count.fetch_add(10, Ordering::SeqCst);
+                    Ok(0)
+                }
+                _ => Err(DeviceError::InvalidInput),
+            }
         }
     }
 
-    /// mock UART：write_all 累加字节数
-    struct MockUart {
+    /// mock 流设备：write 累加字节数；同时实现事件能力（验证复合设备按名取多能力）
+    struct MockStream {
         written: Arc<AtomicUsize>,
+        registered: Arc<AtomicUsize>,
     }
-    impl UartDevice for MockUart {
-        fn write_all(&self, buf: &[u8]) {
+    impl Device for MockStream {
+        fn kind(&self) -> DeviceKind {
+            DeviceKind::Stream
+        }
+        fn as_stream(&self) -> Option<&dyn StreamDevice> {
+            Some(self)
+        }
+        fn as_event(&self) -> Option<&dyn EventDevice> {
+            Some(self)
+        }
+    }
+    impl StreamDevice for MockStream {
+        fn available(&self) -> usize {
+            0
+        }
+        fn read(&self, _buf: &mut [u8]) -> Result<usize, DeviceError> {
+            Ok(0)
+        }
+        fn write(&self, buf: &[u8]) -> Result<usize, DeviceError> {
             self.written.fetch_add(buf.len(), Ordering::SeqCst);
+            Ok(buf.len())
         }
-        fn rx_len(&self) -> usize {
-            0
+    }
+    impl EventDevice for MockStream {
+        fn register_waiter(&self, waiter: usize) -> Result<(), DeviceError> {
+            self.registered.store(waiter, Ordering::SeqCst);
+            Ok(())
         }
-        fn read_byte(&self) -> u8 {
-            0
-        }
+        fn wake(&self) {}
+    }
+
+    fn mock_led() -> (&'static dyn Device, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        let dev: &'static dyn Device = Box::leak(Box::new(MockLed {
+            count: count.clone(),
+        }));
+        (dev, count)
+    }
+
+    fn mock_stream() -> (&'static dyn Device, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let written = Arc::new(AtomicUsize::new(0));
+        let registered = Arc::new(AtomicUsize::new(0));
+        let dev: &'static dyn Device = Box::leak(Box::new(MockStream {
+            written: written.clone(),
+            registered: registered.clone(),
+        }));
+        (dev, written, registered)
     }
 
     /// 清单未挂载 → find 一律 None（attach 前的安全失败）。
@@ -234,6 +307,7 @@ mod tests {
     fn find_before_attach_is_none() {
         let table = DeviceTable::new();
         assert!(table.find("led0").is_none());
+        assert!(table.find_control("led0").is_none());
         assert!(table.find("ghost").is_none());
     }
 
@@ -254,7 +328,8 @@ mod tests {
         );
     }
 
-    /// 回归：fill 后 find 命中；查到的确实是同一个实例（计数透传验证）。
+    /// 回归：fill 后 find 命中；查到的确实是同一个实例（计数透传验证）；
+    /// 复合能力设备同一注册项上 `find_stream` 与 `find_event` 都可用。
     #[test]
     fn attach_fill_find_use_roundtrip() {
         static LED_SLOT: DeviceSlot = DeviceSlot::new();
@@ -266,40 +341,54 @@ mod tests {
         let table = DeviceTable::new();
         table.attach(LIST);
 
-        let count = Arc::new(AtomicUsize::new(0));
-        let dev: &'static dyn LedDevice = Box::leak(Box::new(MockLed { count: count.clone() }));
-        LED_SLOT.fill(DeviceApi::Led(dev));
+        let (led, count) = mock_led();
+        LED_SLOT.fill(led);
+        let c = table.find_control("led0").expect("填槽后应能找到控制面");
+        c.control(1, 0).unwrap();
+        c.control(3, 0).unwrap();
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            11,
+            "op1(+1) 与 op3(+10) 都应生效"
+        );
 
-        let led = table.find_led("led0").expect("填槽后应能找到");
-        led.on();
-        led.toggle();
-        assert_eq!(count.load(Ordering::SeqCst), 11, "on(+1) 与 toggle(+10) 都应生效");
-
-        let written = Arc::new(AtomicUsize::new(0));
-        let uart: &'static dyn UartDevice = Box::leak(Box::new(MockUart { written: written.clone() }));
-        UART_SLOT.fill(DeviceApi::Uart(uart));
-        table.find_uart("uart0").expect("填槽后应能找到").write_all(b"hi");
+        let (uart, written, registered) = mock_stream();
+        UART_SLOT.fill(uart);
+        table
+            .find_stream("uart0")
+            .expect("填槽后应能找到流能力")
+            .write_all(b"hi")
+            .unwrap();
         assert_eq!(written.load(Ordering::SeqCst), 2);
+        // 同一槽：事件能力也可取（read_blocking 的组合原料）
+        table
+            .find_event("uart0")
+            .expect("同一设备应能取到事件能力")
+            .register_waiter(0x55)
+            .unwrap();
+        assert_eq!(registered.load(Ordering::SeqCst), 0x55);
     }
 
-    /// 回归：名字不在清单 → None；类不符 → find_led/ find_uart 各得 None。
+    /// 回归：名字不在清单 → None；能力不符 → find_control/find_stream 各得 None。
     #[test]
     fn unknown_name_and_wrong_class_are_none() {
         static UART_SLOT: DeviceSlot = DeviceSlot::new();
         const LIST: &[DeviceDef] = &[DeviceDef::new("uart0", &UART_SLOT)];
         let table = DeviceTable::new();
         table.attach(LIST);
-        let uart: &'static dyn UartDevice = Box::leak(Box::new(MockUart {
-            written: Arc::new(AtomicUsize::new(0)),
-        }));
-        UART_SLOT.fill(DeviceApi::Uart(uart));
+        let (uart, _, _) = mock_stream();
+        UART_SLOT.fill(uart);
 
         assert!(table.find("ghost").is_none(), "名字不在清单");
-        assert!(table.find_led("uart0").is_none(), "名字是 UART 类，按 LED 找应 None");
-        match table.find("uart0") {
-            Some(DeviceApi::Uart(_)) => {}
-            other => panic!("find 应返回 Uart 变体，实际 {:?}", other.map(|_| "非 Uart")),
-        }
+        assert!(
+            table.find_control("uart0").is_none(),
+            "流设备未 override as_control，按控制面找应 None"
+        );
+        assert_eq!(
+            table.find("uart0").unwrap().kind(),
+            DeviceKind::Stream,
+            "通用 find 应命中并给出主类标签"
+        );
     }
 
     /// 阳性对照：重复填充必须 panic（设备只构造一次的契约）。
@@ -307,14 +396,10 @@ mod tests {
     #[should_panic(expected = "重复填充")]
     fn double_fill_panics() {
         static SLOT: DeviceSlot = DeviceSlot::new();
-        let dev: &'static dyn LedDevice = Box::leak(Box::new(MockLed {
-            count: Arc::new(AtomicUsize::new(0)),
-        }));
-        SLOT.fill(DeviceApi::Led(dev));
-        let dev2: &'static dyn LedDevice = Box::leak(Box::new(MockLed {
-            count: Arc::new(AtomicUsize::new(0)),
-        }));
-        SLOT.fill(DeviceApi::Led(dev2)); // 第二次：panic
+        let (dev, _) = mock_led();
+        SLOT.fill(dev);
+        let (dev2, _) = mock_led();
+        SLOT.fill(dev2); // 第二次：panic
     }
 
     /// 回归：`device_list!` 宏声明 → attach → find 全流程。
@@ -327,14 +412,17 @@ mod tests {
 
     #[test]
     fn device_list_macro_roundtrip() {
-        let count = Arc::new(AtomicUsize::new(0));
-        let dev: &'static dyn LedDevice = Box::leak(Box::new(MockLed { count: count.clone() }));
-        S1.fill(DeviceApi::Led(dev));
+        let (dev, count) = mock_led();
+        S1.fill(dev);
 
         let table = DeviceTable::new();
         table.attach(TEST_BOARD);
-        table.find_led("red").expect("宏清单应可查").on();
+        table
+            .find_control("red")
+            .expect("宏清单应可查")
+            .control(1, 0)
+            .unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 1);
-        assert!(table.find_led("uart0").is_none(), "S2 未填，应未就绪");
+        assert!(table.find_stream("uart0").is_none(), "S2 未填，应未就绪");
     }
 }

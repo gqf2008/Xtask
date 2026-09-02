@@ -8,22 +8,23 @@ use gd32vf103xx_hal as hal;
 use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt};
 
 use xtask::arch::riscv::rt;
-use xtask::bsp::longan_nano::drv_led::DrvLed;
+use xtask::bsp::longan_nano::drv_led::{DrvLed, LED_ON, LED_TOGGLE};
 use xtask::bsp::longan_nano::drv_uart::uart0_isr;
 use xtask::bsp::longan_nano::led::{rgb, Led};
-use xtask::drv::DeviceApi;
-use xtask::drv_static;
-use xtask::drv_static::DeviceSlot;
+use xtask::device::table::{self, DeviceSlot};
 use xtask::prelude::*;
 
 // 驱动抽象层示例：注册→查找→使用 全流程
-// - LED：编译期设备清单（drv_static）——"red"/"green"/"blue" 的名字集合在编译期定死
-//   （const 数组），实例在 init 里构造后填进静态槽（RAM）；清单里有名而槽未填 = 未就绪
-//   （find 返回 None，对应 Zephyr device_is_ready 语义）
-// - UART0：运行期注册表（drv）——实例是运行期独占构造（Serial::new），按名即挂即查。
-//   两种形态共用同一套 DeviceApi 枚举与 LedDevice/UartDevice 类 API，只换"表"的实现
-// - UART0：中断驱动接收 + 环形缓冲，echo 任务 read_byte 挂进状态机（等待即 Blocked），
-//   终端键入什么回什么，每收一字节蓝灯翻转一下；绿灯 500ms 常亮常灭
+// - 表只认识 `&'static dyn Device`；能力分发走 `as_*` 查询——LED 是纯控制设备
+//   （Control），UART 是流设备（StreamDevice）+ 事件能力（EventDevice）
+// - LED：编译期设备清单（device::table）——"red"/"green"/"blue" 的名字集合在编译期
+//   定死（const 数组），实例在 init 里构造后填进静态槽（RAM）；清单里有名而槽未填 =
+//   未就绪（find 返回 None，对应 Zephyr device_is_ready 语义）
+// - UART0：运行期注册表（device::register）——实例是运行期独占构造（Serial::new），
+//   按名即挂即查。两种形态共用同一种设备句柄，只换"表"的实现
+// - UART0：中断驱动接收 + 环形缓冲；echo 任务用内核通用适配器 read_blocking
+//   （StreamDevice + EventDevice 组合，等待即 Blocked），终端键入什么回什么，
+//   每收一字节蓝灯翻转一下；绿灯 500ms 常亮常灭
 // - 不配置 stdout：USART0 已被 Uart0 占用（日志走默认 RTT）
 
 // 编译期设备清单：名字 → 槽（槽在下面声明为静态，init 里 fill）
@@ -72,12 +73,12 @@ fn init() {
     blue.off();
 
     // 清单三件套：构造实例 → 填槽（每槽一次，重复填会 panic）→ attach 清单。
-    // 清单本体（const 数组）在 ROM，槽（一个 Option<DeviceApi>）在 RAM——
+    // 清单本体（const 数组）在 ROM，槽（一个 Option<&'static dyn Device>）在 RAM——
     // 对应 Zephyr 的 const struct device 数组 + RAM 里的 device_state。
-    RED_SLOT.fill(DeviceApi::Led(Box::leak(Box::new(DrvLed::new(red)))));
-    GREEN_SLOT.fill(DeviceApi::Led(Box::leak(Box::new(DrvLed::new(green)))));
-    BLUE_SLOT.fill(DeviceApi::Led(Box::leak(Box::new(DrvLed::new(blue)))));
-    drv_static::attach(BOARD_LEDS);
+    RED_SLOT.fill(Box::leak(Box::new(DrvLed::new(red))) as &'static dyn Device);
+    GREEN_SLOT.fill(Box::leak(Box::new(DrvLed::new(green))) as &'static dyn Device);
+    BLUE_SLOT.fill(Box::leak(Box::new(DrvLed::new(blue))) as &'static dyn Device);
+    table::attach(BOARD_LEDS);
 
     let mut afio = dp.AFIO.constrain(&mut rcu);
 
@@ -91,37 +92,42 @@ fn init() {
         &mut rcu,
     );
 
-    // 注册：把设备泄漏成 'static 后按名登记（注册表不拥有设备，只登记"谁是谁"）。
+    // 注册：把设备按名登记（注册表不拥有设备，只登记"谁是谁"；句柄已是 'static）。
     // 静态名字 + 空注册表，注册失败只可能是名字撞车——启动期直接暴露。
-    register_uart("uart0", uart0).unwrap();
+    register("uart0", uart0).unwrap();
 
     log::info!("driver: leds via device list + uart0 via registry");
     // 开机先亮一下红灯：调度器启动前的 find→use 也走通
-    drv_static::find_led("red").unwrap().on();
+    table::find_control("red")
+        .unwrap()
+        .control(LED_ON, 0)
+        .unwrap();
 }
 
 #[rt::entry]
 fn main() -> ! {
     init();
 
-    // 绿灯 500ms 翻转：应用不认识具体 LED，只按名字拿驱动
-    TaskBuilder::new()
-        .name("blink")
-        .priority(3)
-        .spawn(|| loop {
-            drv_static::find_led("green").unwrap().toggle();
-            xtask::sleep_ms(500);
-        });
+    // 绿灯 500ms 翻转：应用不认识具体 LED，只按名字拿控制面发命令
+    TaskBuilder::new().name("blink").priority(3).spawn(|| loop {
+        table::find_control("green")
+            .unwrap()
+            .control(LED_TOGGLE, 0)
+            .unwrap();
+        xtask::sleep_ms(500);
+    });
 
-    // echo：read_byte 没字节时任务挂起（Blocked），UART 中断来了才被唤醒
-    TaskBuilder::new()
-        .name("echo")
-        .priority(2)
-        .spawn(|| loop {
-            let b = find_uart("uart0").unwrap().read_byte();
-            find_uart("uart0").unwrap().write_all(&[b]);
-            drv_static::find_led("blue").unwrap().toggle();
-        });
+    // echo：read_blocking 没字节时任务挂起（Blocked），UART 中断来了才被唤醒
+    TaskBuilder::new().name("echo").priority(2).spawn(|| loop {
+        let dev = find("uart0").unwrap();
+        let mut b = [0u8; 1];
+        read_blocking(dev, &mut b).unwrap();
+        find_stream("uart0").unwrap().write(&b).unwrap();
+        table::find_control("blue")
+            .unwrap()
+            .control(LED_TOGGLE, 0)
+            .unwrap();
+    });
 
     xtask::start()
 }

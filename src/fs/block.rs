@@ -1,8 +1,8 @@
 //! 块设备 → FatFS 的字节流适配层
 //!
-//! 第 21 章的分层：**块设备只会两个动作**（读扇区、写扇区，`drv::BdDevice`），
+//! 第 21 章的分层：**块设备只会两个动作**（读扇区、写扇区，`device::BlockDevice`），
 //! FAT 文件系统想要的是"字节流 + 可移动游标"（`Read`/`Write`/`Seek`）——本模块的
-//! [`FatAdapter`] 就是这 30 行翻译：把一个 `BdDevice` 变成 fatfs 可以直接开卷的存储。
+//! [`FatAdapter`] 就是这 30 行翻译：把一个 `BlockDevice` 变成 fatfs 可以直接开卷的存储。
 //!
 //! 三个正确的关键点（每一个都有对应宿主回归，见测试）：
 //! 1. **扇区跨界数学**——一个字节流读写会跨两个扇区；首尾非对齐段必须走
@@ -14,23 +14,30 @@
 //!    失败时降级为 `Ok(done)` 短写，把真正的失败留到下一次调用（那时坏扇区
 //!    成了本次第一个扇区，`done == 0` 才能诚实报 Err）。
 
-use crate::drv::{BdDevice, BdError, SECTOR_SIZE};
+use crate::device::{BlockDevice, DeviceError, SECTOR_SIZE};
 use fatfs::{IoBase, IoError, Read, Seek, SeekFrom, Write};
 
-/// `BdDevice` → fatfs 存储的适配器：内部只有一个字节游标。
+/// `BlockDevice` → fatfs 存储的适配器：内部只有一个字节游标。
 /// fatfs 对存储的访问全部是 `seek + read/write`，游标即全部状态（无缓冲，
 /// 所以 [`Write::flush`] 是空实现——没有需要落盘的中间状态）。
-pub struct FatAdapter<B: BdDevice> {
-    /// 被包装的块设备（具体设备或 `&'static dyn BdDevice` 均可）
+pub struct FatAdapter<B: BlockDevice> {
+    /// 被包装的块设备（具体设备或 `&'static dyn BlockDevice` 均可）
     dev: B,
     /// 字节游标（fatfs 的一切读写都落到它之上）
     pos: u64,
 }
 
-impl<B: BdDevice> FatAdapter<B> {
+impl<B: BlockDevice> FatAdapter<B> {
     /// 包装一个块设备。**开卷前游标必须为 0**——fatfs 的 `FileSystem::new`
     /// 有调试断言 `seek(Current(0)) == 0`（fs.rs:380），用完的适配器不要复用。
     pub fn new(dev: B) -> Self {
+        // 栈上暂存是编译期定长 [u8; 512]（SECTOR_SIZE 常量）——运行期扇区
+        // 大小必须与之吻合；sector_size() 查询是前向兼容位，暂只支持 512B
+        assert_eq!(
+            dev.sector_size(),
+            SECTOR_SIZE,
+            "FatAdapter 暂只支持 512B 扇区（栈暂存为定长）"
+        );
         Self { dev, pos: 0 }
     }
 
@@ -40,29 +47,29 @@ impl<B: BdDevice> FatAdapter<B> {
     }
 }
 
-// fatfs 的错误类型是泛型 `Error<E: IoError>`：给 `BdError` 实现 `IoError`，
-// 适配器的 `type Error = BdError` 即可直接用 `?` 放入 `Error::Io`。
-impl IoError for BdError {
+// fatfs 的错误类型是泛型 `Error<E: IoError>`：给 `DeviceError` 实现 `IoError`，
+// 适配器的 `type Error = DeviceError` 即可直接用 `?` 放入 `Error::Io`。
+impl IoError for DeviceError {
     /// 无"被中断可重试"语义（不做信号量式重试），恒 false
     fn is_interrupted(&self) -> bool {
         false
     }
     /// `read_exact` 提前碰到卷尾时的构造器
     fn new_unexpected_eof_error() -> Self {
-        BdError::UnexpectedEof
+        DeviceError::UnexpectedEof
     }
     /// `write_all` 拿到 `Ok(0)`（写零字节）时的构造器
     fn new_write_zero_error() -> Self {
-        BdError::WriteZero
+        DeviceError::WriteZero
     }
 }
 
-impl<B: BdDevice> IoBase for FatAdapter<B> {
-    type Error = BdError;
+impl<B: BlockDevice> IoBase for FatAdapter<B> {
+    type Error = DeviceError;
 }
 
-impl<B: BdDevice> Read for FatAdapter<B> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, BdError> {
+impl<B: BlockDevice> Read for FatAdapter<B> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, DeviceError> {
         let total = self.total_bytes();
         if self.pos >= total {
             return Ok(0); // EOF：read_exact 判结束的语义基础
@@ -98,8 +105,8 @@ impl<B: BdDevice> Read for FatAdapter<B> {
     }
 }
 
-impl<B: BdDevice> Write for FatAdapter<B> {
-    fn write(&mut self, buf: &[u8]) -> Result<usize, BdError> {
+impl<B: BlockDevice> Write for FatAdapter<B> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, DeviceError> {
         let total = self.total_bytes();
         if self.pos >= total {
             return Ok(0); // 卷尾之外的写：0 字节（write_all 会据此报 WriteZero）
@@ -132,33 +139,33 @@ impl<B: BdDevice> Write for FatAdapter<B> {
         Ok(done)
     }
 
-    fn flush(&mut self) -> Result<(), BdError> {
+    fn flush(&mut self) -> Result<(), DeviceError> {
         Ok(()) // 无缓冲，无中间状态可落盘
     }
 }
 
-impl<B: BdDevice> Seek for FatAdapter<B> {
-    fn seek(&mut self, pos: SeekFrom) -> Result<u64, BdError> {
+impl<B: BlockDevice> Seek for FatAdapter<B> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, DeviceError> {
         let len = self.total_bytes();
         let new = match pos {
             SeekFrom::Start(x) => x,
             SeekFrom::End(e) => {
-                let v = (len as i64).checked_add(e).ok_or(BdError::InvalidInput)?;
+                let v = (len as i64).checked_add(e).ok_or(DeviceError::InvalidInput)?;
                 if v < 0 || v > len as i64 {
-                    return Err(BdError::InvalidInput);
+                    return Err(DeviceError::InvalidInput);
                 }
                 v as u64
             }
             SeekFrom::Current(e) => {
-                let v = (self.pos as i64).checked_add(e).ok_or(BdError::InvalidInput)?;
+                let v = (self.pos as i64).checked_add(e).ok_or(DeviceError::InvalidInput)?;
                 if v < 0 || v > len as i64 {
-                    return Err(BdError::InvalidInput);
+                    return Err(DeviceError::InvalidInput);
                 }
                 v as u64
             }
         };
         if new > len {
-            return Err(BdError::InvalidInput);
+            return Err(DeviceError::InvalidInput);
         }
         self.pos = new;
         Ok(new)
@@ -168,21 +175,21 @@ impl<B: BdDevice> Seek for FatAdapter<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drv::BdDevice;
+    use crate::device::{Device, DeviceKind};
     use core::cell::{Cell, RefCell};
     use fatfs::Error as FatError;
     use fatfs::{format_volume, FileSystem, FormatVolumeOptions, FsOptions};
     use fatfs::FatType;
 
     /// 内存盘：1MiB（2048 扇区 → FAT12、簇 512B，测试友好）。
-    /// 坏扇区可注入：命中后读/写返回 Err(BdError::Io)——错误传播路径的失控测试。
+    /// 坏扇区可注入：命中后读/写返回 Err(DeviceError::Io)——错误传播路径的失控测试。
     struct RamDisk {
         buf: RefCell<Vec<u8>>,
         bad_read: Cell<Option<u64>>,
         bad_write: Cell<Option<u64>>,
     }
 
-    // SAFETY: `BdDevice: Sync` 超约束要求所有实现兼具 Sync；本 mock 仅在
+    // SAFETY: `BlockDevice: Sync` 超约束要求所有实现兼具 Sync；本 mock 仅在
     // 宿主测试内使用——所有访问发生在同一个测试线程里（借用的借出与归还
     // 成对出现于单个测试函数体内），不存在跨线程/跨上下文并发访问。
     unsafe impl Sync for RamDisk {}
@@ -211,21 +218,33 @@ mod tests {
         }
     }
 
-    impl BdDevice for RamDisk {
+    impl Device for RamDisk {
+        fn kind(&self) -> DeviceKind {
+            DeviceKind::Block
+        }
+        fn as_block(&self) -> Option<&dyn BlockDevice> {
+            Some(self)
+        }
+    }
+
+    impl BlockDevice for RamDisk {
+        fn sector_size(&self) -> u64 {
+            SECTOR_SIZE
+        }
         fn sector_count(&self) -> u64 {
             2048
         }
-        fn read_sector(&self, no: u64, buf: &mut [u8]) -> Result<(), BdError> {
+        fn read_sector(&self, no: u64, buf: &mut [u8]) -> Result<(), DeviceError> {
             if self.bad_read.get() == Some(no) {
-                return Err(BdError::Io);
+                return Err(DeviceError::Io);
             }
             assert!(no < self.sector_count(), "扇区号越界");
             buf.copy_from_slice(&self.snapshot(no));
             Ok(())
         }
-        fn write_sector(&self, no: u64, data: &[u8]) -> Result<(), BdError> {
+        fn write_sector(&self, no: u64, data: &[u8]) -> Result<(), DeviceError> {
             if self.bad_write.get() == Some(no) {
-                return Err(BdError::Io);
+                return Err(DeviceError::Io);
             }
             assert!(no < self.sector_count(), "扇区号越界");
             let mut buf = self.buf.borrow_mut();
@@ -331,8 +350,8 @@ mod tests {
         let pat = [0x5A; SECTOR_SIZE as usize];
         a.seek(SeekFrom::Start(3 * SECTOR_SIZE)).unwrap();
         match a.write(&pat) {
-            Err(BdError::Io) => {}
-            other => panic!("坏扇区写应报 BdError::Io，实际 {:?}", other),
+            Err(DeviceError::Io) => {}
+            other => panic!("坏扇区写应报 DeviceError::Io，实际 {:?}", other),
         }
         // 其他扇区不受影响（坏扇区本身不写，邻居也不该被动过）
         assert_eq!(disk.snapshot(2), [0u8; SECTOR_SIZE as usize]);
@@ -351,7 +370,7 @@ mod tests {
         // 下次调用：坏扇区是第一个扇区 → 诚实报错
         let more = [0x66; 512];
         match a.write(&more) {
-            Err(BdError::Io) => {}
+            Err(DeviceError::Io) => {}
             other => panic!("坏扇区写应报错，实际 {:?}", other),
         }
     }
@@ -367,7 +386,7 @@ mod tests {
         assert_eq!(a.read(&mut buf).unwrap(), 512, "扇区 0 读成、扇区 1 坏 → 短读 512");
         let mut buf2 = [0u8; 512];
         match a.read(&mut buf2) {
-            Err(BdError::Io) => {}
+            Err(DeviceError::Io) => {}
             other => panic!("坏扇区读应报错，实际 {:?}", other),
         }
     }

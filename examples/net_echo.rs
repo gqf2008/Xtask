@@ -8,7 +8,7 @@ use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt};
 
 use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::drv_uart::{uart0_isr, Uart0};
-use xtask::drv::register_uart;
+use xtask::device::register;
 use xtask::net::iface::SocketHandle;
 use xtask::net::socket::TcpSocket;
 use xtask::net::stack::SlipStack;
@@ -57,10 +57,10 @@ fn init() {
     let mut afio = dp.AFIO.constrain(&mut rcu);
     // USART0 给 SLIP 用;日志走默认 RTT,不需要 stdout 配置(driver 示例先例)
     let uart0 = Uart0::new(dp.USART0, gpioa.pa9, gpioa.pa10, 57600.bps(), &mut afio, &mut rcu);
-    register_uart("uart0", uart0).expect("register uart0");
+    register("uart0", uart0).expect("register uart0");
 
     // 协议栈 + socket 都在调度器启动前挂载(与 ch21 挂载同款纪律)
-    // 具体的 Uart0(unsize 成 trait 对象)——UartDevice 的 blanket impl 使其也是 PhyIo
+    // 具体的 Uart0(unsize 成 trait 对象)——StreamDevice 的 blanket impl 使其也是 PhyIo
     let phy: &'static dyn xtask::net::device::PhyIo = uart0;
     let mut stack = SlipStack::build(phy, [10, 0, 0, 9], 24);
     let tcp_h = stack.add_tcp(2048, 2048, Some(1234)); // TCP 监听 1234

@@ -6,7 +6,7 @@ pub use crate::sync::mutex::{Mutex, MutexGuard};
 pub use crate::sync::reentrant_mutex::{ReentrantMutex, ReentrantMutexGuard};
 
 pub use crate::bus::*;
-pub use crate::drv::*;
+pub use crate::device::*;
 pub use crate::sync::*;
 pub use crate::task::scheduler::start;
 pub use crate::task::*;

@@ -11,7 +11,7 @@ use xtask::ble::at::{AtSession, Cmd, RespLine};
 use xtask::ble::gatt::Service;
 use xtask::bsp::longan_nano::drv_uart::{uart0_isr, Uart0};
 use xtask::bsp::longan_nano::led::{rgb, GREEN, Led};
-use xtask::drv::register_uart;
+use xtask::device::register;
 use xtask::prelude::*;
 
 // BLE 示例(第 24 章):E104-BT5032A 模组 + GATT 服务建模——手机 nRF Connect
@@ -64,12 +64,12 @@ fn init() -> (&'static Uart0, GREEN) {
 
     let mut afio = dp.AFIO.constrain(&mut rcu);
     // USART0 给 BLE 模组(57600=PCB 上限;模组先按书稿实验 0 一次性配好)。
-    // Uart0::new 返回 &'static Uart0(具体类型)——注册表收 &dyn UartDevice,
+    // Uart0::new 返回 &'static Uart0(具体类型)——注册表收 &dyn Device,
     // 会话收 &dyn BleIo:两个 unsize 方向都从具体类型出发才成立
-    // (trait 对象之间不能互转: dyn UartDevice 不自带 Sync)
+    // (trait 对象之间不能互转)
     let uart0: &'static Uart0 =
         Uart0::new(dp.USART0, gpioa.pa9, gpioa.pa10, 57600.bps(), &mut afio, &mut rcu);
-    register_uart("ble0", uart0).expect("register ble0");
+    register("ble0", uart0).expect("register ble0");
 
     log::info!("ble_gatt: uart0@57600 -> E104-BT5032A");
     (uart0, green)

@@ -14,9 +14,8 @@ pub mod allocator;
 pub mod arch;
 pub mod bsp;
 pub mod bus;
-pub mod drv;
-pub mod drv_static;
 pub mod chip;
+pub mod device;
 #[cfg(feature = "fs")]
 pub mod fs;
 pub mod fsm;
