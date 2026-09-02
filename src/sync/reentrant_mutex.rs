@@ -78,7 +78,7 @@ impl<T> ReentrantMutex<T> {
     pub fn lock(&self) -> ReentrantMutexGuard<'_, T> {
         loop {
             if lock_core::acquire(&self.core, true) {
-                return ReentrantMutexGuard { mutex: self };
+                return ReentrantMutexGuard::new(self);
             }
             // 别人持有:已挂起入队(按优先级)。醒后重试认领——持有者可能已被
             // 抢先(barging),一律回到 acquire 让账本重新裁决
@@ -88,7 +88,7 @@ impl<T> ReentrantMutex<T> {
 
     /// 尝试加锁：非阻塞。空闲/已持有返回 `Some(guard)`,别人持有返回 `None`。
     pub fn try_lock(&self) -> Option<ReentrantMutexGuard<'_, T>> {
-        lock_core::try_acquire(&self.core, true).then(|| ReentrantMutexGuard { mutex: self })
+        lock_core::try_acquire(&self.core, true).then(|| ReentrantMutexGuard::new(self))
     }
 
     /// 测试专用：读当前递归深度(0 = 空闲)。host 是单上下文(身份 null),
@@ -102,6 +102,20 @@ impl<T> ReentrantMutex<T> {
 /// 可重入锁守卫：析构即解锁一层(深度 -1,减到 0 才真正释放)。
 pub struct ReentrantMutexGuard<'a, T> {
     mutex: &'a ReentrantMutex<T>,
+    /// `!Send + !Sync` 标记:与 [`MutexGuard`](crate::sync::mutex::MutexGuard)
+    /// 同理——守卫不得跨任务移动,释放必须是持有者本人(递归深度账按持有
+    /// 任务记)。裸指针非 Send/Sync,把约束钉进类型系统。
+    _not_send: core::marker::PhantomData<*mut ()>,
+}
+
+impl<'a, T> ReentrantMutexGuard<'a, T> {
+    #[inline]
+    fn new(mutex: &'a ReentrantMutex<T>) -> Self {
+        Self {
+            mutex,
+            _not_send: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<T> Deref for ReentrantMutexGuard<'_, T> {

@@ -83,7 +83,7 @@ impl<T> Mutex<T> {
     pub fn lock(&self) -> MutexGuard<'_, T> {
         loop {
             if lock_core::acquire(&self.core, false) {
-                return MutexGuard { mutex: self };
+                return MutexGuard::new(self);
             }
             // 没拿到锁:已挂起入队(按优先级)。醒后回来重试认领——可能被抢先
             // (barging),一律重试,这是"挂起-唤醒"模型的标准写法
@@ -93,7 +93,7 @@ impl<T> Mutex<T> {
 
     /// 尝试加锁：非阻塞，拿不到返回 `None`（宿主回归与"不愿等"的场景）。
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        lock_core::try_acquire(&self.core, false).then(|| MutexGuard { mutex: self })
+        lock_core::try_acquire(&self.core, false).then(|| MutexGuard::new(self))
     }
 }
 
@@ -102,6 +102,21 @@ impl<T> Mutex<T> {
 /// 编译期不允许在锁外传播。
 pub struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
+    /// `!Send + !Sync` 标记:守卫不得跨任务移动——锁只能由持有者本人释放
+    /// (lock_core::release_locked 的 owner 账本纪律;守卫若在别的任务里
+    /// drop,就会释放他人锁)。裸指针非 Send/Sync,把这一约束钉进类型系统,
+    /// 让"跨任务释放"在编译期即被拒(std MutexGuard 同为 !Send)。
+    _not_send: core::marker::PhantomData<*mut ()>,
+}
+
+impl<'a, T> MutexGuard<'a, T> {
+    #[inline]
+    fn new(mutex: &'a Mutex<T>) -> Self {
+        Self {
+            mutex,
+            _not_send: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<T> Deref for MutexGuard<'_, T> {
