@@ -93,11 +93,11 @@ if [ -n "$QEMU_BIN" ]; then
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_smp \
         --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
     SMP2_OUT="$( "$QEMU_BIN" -M virt -smp 2 -nographic -bios none -kernel "$SMP_ELF" </dev/null 2>&1 | grep -v "GLib-GIO" || true )"
-    echo "$SMP2_OUT" | grep -q "smp PASS: 8/8" \
+    echo "$SMP2_OUT" | grep -q "smp PASS: 9/9" \
         || { echo "qemu_smp 未全过;输出:"; echo "$SMP2_OUT" | tail -15; exit 1; }
     echo "$SMP2_OUT" | grep -q "harts online: 2" \
         || { echo "qemu_smp 未识别双核;输出:"; echo "$SMP2_OUT" | tail -5; exit 1; }
-    echo "qemu_smp -smp 2: 8/8 passed(双核调度/跨核 IPI/锁堆压力/绑核/定时器跨核 执行级验证)"
+    echo "qemu_smp -smp 2: 9/9 passed(双核调度/跨核 IPI/锁堆压力/绑核/定时器跨核 执行级验证)"
 else
     echo "qemu-system-riscv32 未安装,跳过执行门禁(安装:winget install SoftwareFreedomConservancy.QEMU)"
 fi
