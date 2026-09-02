@@ -79,6 +79,14 @@ fn leave() {
     }
 }
 
+/// 测试探针:本执行上下文的临界区嵌套深度(0 = 不在任何 `free` 内)。
+/// 供"回调不得在持锁状态下被调用"类回归测试断言(bus 的 publish/call
+/// 修复:回调必须在临界区外执行)。
+#[cfg(test)]
+pub(crate) fn depth_now() -> usize {
+    depth()
+}
+
 /// 深度 RAII 守卫:f 在临界区内 panic 展开时,裸的 `enter(); f(); leave()`
 /// 会跳过 leave()——host 端该线程深度残留 ≥1,后续所有 free 一律走嵌套
 /// 快路径、静默跳过 HostPorting 的进程互斥锁(并行测试下并发裸改全局

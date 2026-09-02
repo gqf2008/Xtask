@@ -6,10 +6,18 @@ use alloc::vec::Vec;
 use alloc::{boxed::Box, collections::BTreeMap};
 use core::cell::{Cell, RefCell};
 
-/// 回调统一包进 Arc:publish/call 先快照克隆、解除 RefCell 借用后再执行——
-/// 回调里重入 subscribe/unsubscribe/publish/register 不再撞上借用冲突
-/// (修前持 borrow_mut 执行回调,重入即 BorrowMutError panic = abort 停机);
-/// 回调中退订自己/他人也由 Arc 保活,绝不执行已释放的闭包
+/// 回调统一包进 Arc:publish/call 先在**临界区内**快照克隆、解除 RefCell
+/// 借用,再在**临界区外**逐个执行——回调里重入 subscribe/unsubscribe/publish/
+/// register 不再撞上借用冲突(修前持 borrow_mut 执行回调,重入即
+/// BorrowMutError panic = abort 停机);回调中退订自己/他人也由 Arc 保活,
+/// 绝不执行已释放的闭包。
+///
+/// 回调在临界区外执行是本模块的关键纪律:回调是任意用户代码,绝不在
+/// 关中断(单核)/持全局自旋锁(SMP)下运行——否则拖垮中断延迟(本内核
+/// `Mutex` 文档明令"关中断几毫秒会打死 systick")、SMP 下持锁跑用户码还
+/// 会阻塞别核一切临界区。一切 RefCell 借用(快照/注册/注销)都收进
+/// `sync::free`(ISR 侧同规,ch25 ⑥),与 semaphore/queue/timer 的
+/// ISR 路径一致——SMP 下不存在裸借用竞争。
 type Callback<'a, E> = Arc<Box<dyn Fn(&'a str, E) + Send + 'static>>;
 
 pub struct Bus<'a, E> {
@@ -61,29 +69,34 @@ impl<'a, E: Clone> Bus<'a, E> {
         });
     }
 
-    /// 发送事件
-    /// 不能在中断服务中调用，中断服务中调用请用event_isr
-    pub fn publish(&self, topic: &'a str, event: E) -> &Self {
-        sync::free(|_| self.publish_isr(topic, event))
-    }
-
-    /// 发送事件
-    /// 只能在中断服务中调用
-    pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
-        // 快照本轮订阅(Arc 克隆)后解除借用,再逐个回调:回调是任意用户
-        // 代码,允许重入本总线的任何操作。快照语义与主流 pub-sub 一致:
-        // 回调中退订的自己/他人本轮仍触发(Arc 保活),新订阅的本轮不触发
-        let snapshot: Vec<Callback<'a, E>> = {
+    /// 取某 topic 的本轮订阅快照(Arc 克隆)。**只在临界区内借 RefCell、
+    /// 出区即还**——回调派发放到锁外。SMP(ch25 ⑥):ISR 侧也走同一把全局锁,
+    /// 与任务侧 subscribe/unsubscribe 的 `borrow_mut` 互斥,无裸借用竞争。
+    fn snapshot(&self, topic: &'a str) -> Vec<Callback<'a, E>> {
+        sync::free(|_| {
             let subscribers = self.subscribers.borrow();
             match subscribers.get(topic) {
                 Some(list) => list.iter().map(|(_, f)| f.clone()).collect(),
-                None => return self,
+                None => Vec::new(),
             }
-        };
-        for f in snapshot {
+        })
+    }
+
+    /// 发送事件(任务/中断上下文通用:快照在临界区内,回调在临界区外执行)。
+    pub fn publish(&self, topic: &'a str, event: E) -> &Self {
+        // 快照语义与主流 pub-sub 一致:回调中退订的自己/他人本轮仍触发
+        // (Arc 保活),新订阅的本轮不触发。回调是任意用户代码,允许重入本
+        // 总线的任何操作——且在临界区外执行,不关中断/不持全局自旋跑用户码
+        for f in self.snapshot(topic) {
             (*f)(topic, event.clone());
         }
         self
+    }
+
+    /// 发送事件(中断服务里用;与 `publish` 同一实现——快照进锁、回调出锁,
+    /// 两种上下文都安全。ISR 侧回调必须绝不停留:只做唤醒/通知)
+    pub fn publish_isr(&self, topic: &'a str, event: E) -> &Self {
+        self.publish(topic, event)
     }
 
     pub fn register<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) -> &Self {
@@ -96,24 +109,30 @@ impl<'a, E: Clone> Bus<'a, E> {
 
     pub fn register_isr<F: Fn(&'a str, E) + Send + 'static>(&self, name: &'a str, f: F) -> &Self {
         let f: Callback<'a, E> = Arc::new(Box::new(f));
-        let mut callee = self.callee.borrow_mut();
-        callee.insert(name, f);
+        // ch25 ⑥:借用收进临界区(嵌套安全),与任务侧 register 同一把锁
+        sync::free(|_| {
+            self.callee.borrow_mut().insert(name, f);
+        });
         self
     }
 
     pub fn unregister_isr(&self, name: &'a str) {
-        let mut callee = self.callee.borrow_mut();
-        callee.remove(name);
+        sync::free(|_| {
+            self.callee.borrow_mut().remove(name);
+        });
     }
 
     pub fn call(&self, name: &'a str, event: E) -> &Self {
-        sync::free(|_| self.call_isr(name, event))
+        // 直接委托:快照/回调的临界区内切分由 call_isr 完成,这里不再多包
+        // 一层 free(否则回调又被裹进外层临界区,失去"回调出锁"的意义)
+        self.call_isr(name, event)
     }
 
     pub fn call_isr(&self, name: &'a str, event: E) -> &Self {
-        // 与 publish_isr 同款:先克隆 Arc 解除借用再回调——回调里重入
-        // register/unregister/call 不再撞上 RefCell 借用冲突
-        let f = self.callee.borrow().get(name).cloned();
+        // 与 publish 同款:临界区内只克隆 Arc(解除借用),回调在临界区外
+        // 执行——回调里重入 register/unregister/call 不再撞上借用冲突,也不
+        // 在持锁/关中断下跑用户码
+        let f = sync::free(|_| self.callee.borrow().get(name).cloned());
         if let Some(f) = f {
             (*f)(name, event);
         }
@@ -265,5 +284,37 @@ mod tests {
         bus.call("x", 0);
         bus.call("y", 0); // y 已被 unregister,不应 panic
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    /// 回归(审查修复):回调必须在临界区**外**执行。修前 `publish`/`call` 把
+    /// 整个派发(含全部回调)裹进 `sync::free`——回调里 `depth_now() >= 1`,
+    /// 任意用户代码在关中断(单核)/持全局自旋(SMP)下运行,拖垮中断延迟。
+    /// 修后快照在锁内、回调在锁外:回调里临界区深度必须恒为 0,且回调可安全
+    /// 调用任何需进临界区的内核原语。
+    #[test]
+    fn callbacks_run_outside_critical_section() {
+        use crate::sync::critical;
+        let bus = Bus::<u32>::new();
+        static PUB_DEPTH: AtomicUsize = AtomicUsize::new(usize::MAX);
+        bus.subscribe("t", move |_, _| {
+            PUB_DEPTH.fetch_min(critical::depth_now(), Ordering::SeqCst);
+        });
+        bus.publish("t", 1);
+        assert_eq!(
+            PUB_DEPTH.load(Ordering::SeqCst),
+            0,
+            "publish 回调必须在临界区外执行(修前被 publish 的 free 裹住,深度 >= 1)"
+        );
+
+        static CALL_DEPTH: AtomicUsize = AtomicUsize::new(usize::MAX);
+        bus.register("x", move |_, _| {
+            CALL_DEPTH.fetch_min(critical::depth_now(), Ordering::SeqCst);
+        });
+        bus.call("x", 0);
+        assert_eq!(
+            CALL_DEPTH.load(Ordering::SeqCst),
+            0,
+            "call 回调同样必须在临界区外执行"
+        );
     }
 }
