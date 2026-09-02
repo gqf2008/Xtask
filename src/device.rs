@@ -193,8 +193,9 @@ pub trait BlockDevice: Device {
 ///   （可加方向/尺寸位），让"指针还是标量"在命令码上可判读。
 ///
 /// 返回值：查询型 op 返回设备写回的字节数/数值；设置型返回 `Ok(0)`；
-/// 未知 op 返回 `Err(InvalidInput)`；设备不支持控制面则不实现本 trait
-/// （`as_control` 默认 None）。
+/// 未知 op 返回 `Err(InvalidInput)`；**占位实现**（能力已暴露、命令面
+/// 尚未定义，如 Uart0）可对一切 op 报 `Err(Unsupported)`；设备不支持
+/// 控制面则不实现本 trait（`as_control` 默认 None）。
 pub trait Control: Device {
     /// 执行控制指令；`op`/`arg` 语义由设备族自定（见 trait 级约定）
     fn control(&self, op: u32, arg: usize) -> Result<usize, DeviceError>;
@@ -241,6 +242,12 @@ pub trait EventDevice: Device {
 /// 丢失唤醒免疫（沿用 `drv_uart` 的踩坑纪律）：**"复查 available + 登记
 /// waiter + 挂起"在同一 `sync::free` 临界区内**——ISR 不可能插进"发现空"
 /// 与"挂起"之间；先入队的字节必然看到 waiter 已登记。
+///
+/// **调用契约**（沿用旧 `read_byte` 的红线）：
+/// - **仅任务上下文**（调度器启动后）：内部走 `xworker.current()` +
+///   `Task::block()`，boot 上下文/ISR 里调用即踩空指针/破坏任务状态机；
+/// - **单读者**：同一设备同一时刻只允许一个任务调用——`EventDevice` 是
+///   单等待者语义，并发调用互相覆盖 waiter，先登记者永久丢失唤醒。
 pub fn read_blocking(dev: &dyn Device, buf: &mut [u8]) -> Result<usize, DeviceError> {
     let stream = dev.as_stream().ok_or(DeviceError::Unsupported)?;
     let event = dev.as_event().ok_or(DeviceError::Unsupported)?;

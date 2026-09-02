@@ -32,8 +32,9 @@ use xtask::prelude::*;
 // 任务:ble-pump(prio 2)五阶段——握手(容错)→ 配置 7 步 → 等
 // STA:wakeup → 开广播+打印 GATT 树 → 稳态(事件日志/FFF2 回显/心跳);
 // led-blink(prio 1)绿 500ms。日志走 RTT。
-// ⚠️ 红线:握手/配置全部在任务里(xtask::start() 之前 read_byte 会踩
-// xworker.current() 空指针——书稿踩坑 5)。
+// ⚠️ 红线:握手/配置全部在任务里(start() 之前中断未开、无数据可达,
+// send 只会把字节预算耗成超时;阻塞读的 xworker 空指针踩坑面已随驱动层
+// 重构移入 device::read_blocking——书稿踩坑 5)。
 
 /// 自定义 GATT 树:服务 0x1102,板→手机 0x1103,手机→板 0x1104
 const SVR: u16 = 0x1102;

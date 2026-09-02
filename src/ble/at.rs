@@ -382,10 +382,13 @@ pub enum AtError {
 
 /// AT 会话:一条 UART 上的命令/应答状态机。
 ///
-/// ⚠️ **红线(书稿踩坑):`send` 只能在任务上下文调用**——空缓冲的
-/// `read_byte` 会经任务状态机挂起,在 `xtask::start()` 之前的 init/main
-/// 里调用将命中 `xworker.current()` 的空指针解引用。boot 上下文只用
-/// `poll()`(非阻塞,`rx_len>0` 才读)。
+/// ⚠️ **红线变迁(书稿踩坑 5):旧版 `read_byte` 是阻塞读**,空缓冲会经任务
+/// 状态机挂起,在 `xtask::start()` 之前调用命中 `xworker.current()` 的空指针
+/// 解引用——该踩坑面已随驱动层重构移入内核适配器 `device::read_blocking`
+/// (它仍是"仅任务上下文",见其上调用契约)。本层的 `read_byte` 现为
+/// **非阻塞读**(`rx_len>0` 才调),`send` 空缓冲只走 `yield_now` + 字节
+/// 预算——机制上任何上下文安全;但 boot 上下文里中断未开、永远等不到
+/// 字节,只会把预算耗成 `Timeout`。纪律不变:boot 上下文只用 `poll()`。
 pub struct AtSession<'a> {
     io: &'a dyn BleIo,
     dec: RespDecoder,
@@ -416,7 +419,8 @@ impl<'a> AtSession<'a> {
         None
     }
 
-    /// 发送并阻塞收集第一条应答行(**仅任务上下文**——见类型文档红线)。
+    /// 发送并收集第一条应答行(空缓冲走 `yield_now` + 字节预算,机制上
+    /// 任何上下文安全;boot 下只会耗成 `Timeout`——见类型文档红线变迁)。
     /// 先 `poll` 清场(丢弃上一命令的迟到残行);`RX_BUDGET` 字节内
     /// 无完整行 → `Err(Timeout)`。模块回 `+ERR=N` 仍是 `Ok`——
     /// 传输成功与模块错误分层。
