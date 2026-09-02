@@ -1,0 +1,11 @@
+--- a/hw/arm/xlnx-zynqmp.c
++++ b/hw/arm/xlnx-zynqmp.c
+@@ -646,7 +646,7 @@
+             qemu_irq irq;
+
+             sysbus_mmio_map(SYS_BUS_DEVICE(&s->rpu_gic), i + 1,
+-                            GIC_BASE_ADDR + i * 0x1000);
++                            GIC_BASE_ADDR + (i + 1) * 0x1000);
+             sysbus_connect_irq(SYS_BUS_DEVICE(&s->rpu_gic), i,
+                                qdev_get_gpio_in(DEVICE(&s->rpu_cpu[i]),
+                                                 ARM_CPU_IRQ));

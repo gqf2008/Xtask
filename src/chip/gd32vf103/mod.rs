@@ -140,7 +140,7 @@ impl Portable for Gd32vf103Porting {
         }
     }
 
-    // ---- tickless 动态节拍(ch29,见 book/src/ch29-tickless.md)----
+    // ---- tickless 动态节拍(ch29,见书稿第 29 章)----
 
     #[inline]
     fn tickless_supported() -> bool {

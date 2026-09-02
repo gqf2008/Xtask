@@ -1486,10 +1486,10 @@ pub trait Portable {
 > 全局锁)、`hwid` 预留位激活为 `TaskBuilder::affinity(hart)` 绑核
 > (确定性放置;绑到不在线的核=任务饥饿,应用契约)。执行验证:
 > `examples/qemu_smp.rs` 扩为 8 项,-smp 2/3/4/8 全绿(新增绑核
-> 放置断言、定时器堆跨核并发),check.sh 第 4 步门禁;
+> 放置断言、定时器堆跨核并发),ci/gate.sh 门禁;
 > `qemu_kernel_tests` 在 -smp 1/-smp 2 下仍各 12/12(未开启 SMP 时
 > hart1 永久停泊,单核语义不变)。设计分析与改造路线见
-> book/src/ch25-smp.md。
+> 书稿第 25 章。
 
 ## RISC-V
 

@@ -10,7 +10,7 @@ extern crate alloc;
 // - 心跳任务:每秒打印 tick 数——验证 TTC 节拍与 sleep_ms 绝对时基;
 // - 跑满 200 次乒乓后 semihosting SYS_EXIT 以 exit 0 退出
 //   (CI 门禁无需 timeout 杀进程,退出码即测试结果)。
-// 运行(修复版 QEMU,见 book/src/ch30-*.md / README):
+// 运行(修复版 QEMU,见书稿第 30/31 章 / README):
 //   qemu-system-aarch64 -M xlnx-zcu102 -smp 5 -m 1G -nographic \
 //     -global xlnx-zynqmp.boot-cpu=rpu-cpu[0] -semihosting-config enable=on,target=native \
 //     -device loader,file=target/armv7r-none-eabi/release/examples/qemu_arm_r52_pingpong

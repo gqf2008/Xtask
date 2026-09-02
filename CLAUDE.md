@@ -34,7 +34,7 @@ cargo run --example multitask_rp_pico --features rp2040 --target thumbv6m-none-e
 
 A default target (`thumbv7em-none-eabihf`) and per-target `runner` (probe-run / gdb+openocd / elf2uf2-rs) are set in `.cargo/config.toml`; `cargo run` uses the runner to flash. OpenOCD configs and GDB scripts live in `debug/<chip>/`. Chip HALs are mostly crates, but `gd32vf103xx-hal` is a local path dep at `hal2/gd32vf103xx-hal`.
 
-Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4`, `rp2040`, `ch32v103`/`ch32v203`/`ch32v307`, `esp32c3`, plus `qemu_riscv` (QEMU virt; **execution-verified** — `check.sh` step 4 runs it; others build-verified 2026-08-23; real-board verification pending for f4/f1 constants, h7 timeline, cm32m4/rp2040). Non-chip features: `timer` (software timers), `tlsf` (global allocator backend swap to the hand-written mini TLSF, ch28), `debug_task`, `fs` (fatfs), `net` (smoltcp), `usb`, `ble`, `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp_pico`).
+Chip features: `gd32vf103`, `stm32f1`, `stm32f4`, `stm32h7`, `cm32m4`, `rp2040`, `ch32v103`/`ch32v203`/`ch32v307`, `esp32c3`, plus `qemu_riscv` (QEMU virt; **execution-verified** — `ci/gate.sh` runs it; others build-verified 2026-08-23; real-board verification pending for f4/f1 constants, h7 timeline, cm32m4/rp2040). Non-chip features: `timer` (software timers), `tlsf` (global allocator backend swap to the hand-written mini TLSF, ch28), `debug_task`, `fs` (fatfs), `net` (smoltcp), `usb`, `ble`, `rtt_log` / `stdout_log`, board BSPs (`longan_nano`, `bluepill`, `greenpill`, `rp_pico`).
 
 ## Architecture
 

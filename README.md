@@ -26,7 +26,7 @@
 ### 验证体系
 
 - [x] 宿主回归：`cargo test --lib`(纯逻辑单测,无需硬件;当前 **148/148**,含第 28 章 TLSF 8 条与第 29 章 tickless 5 条:idle 三态决策 4 + 大跳账 1)
-- [x] QEMU 执行级：`check.sh` 第 4 步在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 24 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(24/24 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
+- [x] QEMU 执行级：`ci/gate.sh` 在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 24 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(24/24 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
 - [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、esp32c3 待上板
 
 ### 移植的芯片
@@ -59,8 +59,8 @@
 ```bash
 cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
 # 测试 22/23(冻眠唤醒/早醒拍账)需经 qemu stdin 喂字节——内核打
-# 握手标记、主机读到才写(book/ci/feed_qemu.py,时序零假设):
-python book/ci/feed_qemu.py 180 qemu-system-riscv32 \
+# 握手标记、主机读到才写(ci/feed_qemu.py,时序零假设):
+python ci/feed_qemu.py 180 qemu-system-riscv32 \
   target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
 # 期望输出 24/24 passed,进程以退出码 0 自行结束
 

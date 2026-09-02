@@ -13,15 +13,15 @@ jobs:
 
       - name: 安装 Rust nightly + 目标
         # pin 到本地开发 nightly(2025-08-08):最新 nightly 的 core::num trait
-        # 演进会使 checkpoint 依赖的 x86_64 crate 旧版编译失败(E0046)
+        # 演进会使旧 x86_64 crate 编译失败(E0046)
         uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2025-08-08
-          # checkpoint 目标集:riscv32imac(gd32/qemu 全链) + thumbv7em(ch16
-          # checkpoint);host 测试与 [3/5] 示例链接共用 riscv32imac
-          targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
+          # 内核门禁目标集:riscv32imac(gd32/qemu 示例全链);host 回归用宿主
+          # 工具链自带目标;R5 门禁独立在 r52.yml(armv7r)
+          targets: riscv32imac-unknown-none-elf
 
-      - name: 安装 QEMU(riscv32)与 mdbook
+      - name: 安装 QEMU(riscv32)
         run: |
           # runner 可能自带 qemu-system-riscv32;没有则 apt 尽力安装
           # (qemu-system-misc 的 postinst 在容器里调 systemctl 会失败,
@@ -33,13 +33,7 @@ jobs:
               qemu-system-misc 2>&1 | tail -3 || echo "(apt install 非零——postinst systemctl 在容器内失败,检查二进制)"
           fi
           command -v qemu-system-riscv32 || { echo "qemu-system-riscv32 不可用" >&2; exit 1; }
-          # mdbook:cargo install(latest/download 资产名带版本前缀,wget 裸名
-          # 404;cargo install 编译 ~2-3 分钟,换取不猜资产名)
-          if ! command -v mdbook >/dev/null 2>&1; then
-            cargo install mdbook --locked
-          fi
-          mdbook --version
           qemu-system-riscv32 --version | head -1
 
-      - name: 主门禁(book/ci/check.sh 五步)
-        run: bash book/ci/check.sh
+      - name: 内核门禁(ci/gate.sh:host 回归 + 示例链接 + QEMU 执行)
+        run: bash ci/gate.sh
