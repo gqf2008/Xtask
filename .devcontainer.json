@@ -1,0 +1,10 @@
+{
+  "name": "Xtask dev (Rust + QEMU riscv32)",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+  "postCreateCommand": "rustup target add riscv32imac-unknown-none-elf && (command -v qemu-system-riscv32 >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-system-misc) || bash ci/get-qemu.sh)",
+  "customizations": {
+    "vscode": {
+      "extensions": ["rust-lang.rust-analyzer"]
+    }
+  }
+}
