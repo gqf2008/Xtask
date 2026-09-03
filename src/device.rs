@@ -478,6 +478,24 @@ pub fn find_event(name: &str) -> Option<&'static dyn EventDevice> {
     REGISTRY.find_event(name)
 }
 
+/// 能力下转型 helper：新增能力只需实现本 trait，无需改注册表/清单。
+pub trait Capability: 'static {
+    fn downcast(dev: &'static dyn Device) -> Option<&'static Self>;
+}
+
+/// 泛型按能力查找：`find_capability::<dyn StreamDevice>("uart0")`。
+/// 现有 `find_stream/find_block/...` 都是它的便捷薄封装。
+pub fn find_capability<C: Capability + ?Sized>(name: &str) -> Option<&'static C> {
+    let dev = find(name)?;
+    C::downcast(dev)
+}
+
+impl Capability for dyn StreamDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_stream() } }
+impl Capability for dyn BlockDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_block() } }
+impl Capability for dyn Control { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_control() } }
+impl Capability for dyn BusDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_bus() } }
+impl Capability for dyn EventDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_event() } }
+
 #[cfg(test)]
 mod tests {
     use super::*;
