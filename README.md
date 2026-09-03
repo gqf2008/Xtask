@@ -25,7 +25,7 @@
 
 ### 验证体系
 
-- [x] 宿主回归：`cargo test --lib` 默认 features 实测 **80 passed**;门禁全特征组合(见 `ci/gate.sh`,含 fs/net/usb/ble)实测 **157 passed**(2026-09-02,rustc 1.97;旧计数 148 已按实测修正,历史见 issue #11)
+- [x] 宿主回归：`cargo test --lib` 默认 features 实测 **80 passed**;门禁全特征组合(见 `ci/gate.sh`,含 fs/net/usb/ble)实测 **158 passed**(2026-09-03,rustc 1.97;旧计数 148 已按实测修正,历史见 issue #11;计数随新增测试浮动,以 `ci/gate.sh` 实测为准)
 - [x] QEMU 执行级：`ci/gate.sh` 在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 24 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(24/24 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
 - [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、esp32c3 待上板
 

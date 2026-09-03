@@ -25,6 +25,9 @@ esac
 EXT="tar.gz"; [ "$OS" = "win32" ] && EXT="zip"
 NAME="xpack-qemu-riscv-${VER}-${OS}-${ARCH}"
 EXE="qemu-system-riscv32"; [ "$OS" = "win32" ] && EXE="${EXE}.exe"
+# xPack 压缩包的解压根目录**不带平台后缀**(win32/linux/darwin 三平台实测一致):
+# 统一是 xpack-qemu-riscv-<ver>——曾误用带后缀的 $NAME 做 mv,导致引导全平台失败。
+SHORT="xpack-qemu-riscv-${VER}"
 
 DIR="$ROOT/.tools/qemu"
 if [ -x "$DIR/bin/$EXE" ]; then
@@ -39,9 +42,11 @@ mkdir -p "$ROOT/.tools" && cd "$ROOT/.tools"
 curl -fL --retry 3 -o "$NAME.$EXT" "$BASE_URL/$NAME.$EXT" \
   || { echo "下载失败: $BASE_URL/$NAME.$EXT"; exit 1; }
 
+# 清掉上次失败残留的解压根目录,避免 unzip 对已有文件交互式询问
+rm -rf "$ROOT/.tools/$SHORT"
 if [ "$EXT" = "zip" ]; then
   if command -v unzip >/dev/null 2>&1; then
-    unzip -q "$NAME.$EXT"
+    unzip -qo "$NAME.$EXT"
   elif command -v powershell >/dev/null 2>&1; then
     powershell -NoProfile -Command "Expand-Archive -Force '$NAME.$EXT' ."
   else
@@ -52,8 +57,8 @@ else
 fi
 rm -f "$NAME.$EXT"
 
-# 统一目录名(解压目录可能含版本号)
-if [ -d "$ROOT/.tools/$NAME" ]; then mv "$ROOT/.tools/$NAME" "$DIR"; fi
+# 统一目录名(解压根目录 = $SHORT,无平台后缀)
+if [ -d "$ROOT/.tools/$SHORT" ]; then mv "$ROOT/.tools/$SHORT" "$DIR"; fi
 [ -x "$DIR/bin/$EXE" ] || { echo "解压后未找到 $DIR/bin/$EXE"; ls "$ROOT/.tools"; exit 1; }
 echo "OK: $DIR/bin/$EXE"
 "$DIR/bin/$EXE" --version | head -1
