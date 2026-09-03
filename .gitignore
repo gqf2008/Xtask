@@ -1,2 +1,5 @@
 target
 Cargo.lock
+
+# 自动引导的 QEMU(xPack 静态包)
+.tools/

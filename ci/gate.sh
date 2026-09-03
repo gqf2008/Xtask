@@ -8,6 +8,12 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # 全脚本统一构建目录 = 主 target:与各步硬编码的 ELF 探测路径始终一致。
 export CARGO_TARGET_DIR="$ROOT_DIR/target"
 
+# --- 预检:riscv32imac target(读者环境通常未装)---
+if command -v rustup >/dev/null 2>&1     && ! rustup target list --installed | grep -q '^riscv32imac-unknown-none-elf$'; then
+    echo "== 安装缺失的 riscv32imac-unknown-none-elf target =="
+    rustup target add riscv32imac-unknown-none-elf
+fi
+
 echo "== [1/3] 内核 host 回归测试(阳性对照守卫)=="
 HOST_TRIPLE="$(rustc -vV | sed -n "s/^host: //p")"
 cargo test --manifest-path "$ROOT_DIR/Cargo.toml" --lib --target "$HOST_TRIPLE" \
@@ -40,6 +46,30 @@ echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍�
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
 if [ -z "$QEMU_BIN" ] && [ -x "/c/Program Files/QEMU/qemu-system-riscv32.exe" ]; then
     QEMU_BIN="/c/Program Files/QEMU/qemu-system-riscv32.exe"
+fi
+# 仓库自带 xPack 静态版(.tools/,由 ci/get-qemu.sh 自动引导,读者零安装)
+if [ -z "$QEMU_BIN" ] && [ -x "$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32" ]; then
+    QEMU_BIN="$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32"
+fi
+if [ -z "$QEMU_BIN" ] && [ -x "$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32.exe" ]; then
+    QEMU_BIN="$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32.exe"
+fi
+# 都没有:自动下载(约 90MB,仅首次);失败给出读者通道提示
+if [ -z "$QEMU_BIN" ]; then
+    echo "== 未找到 qemu-system-riscv32,尝试自动引导(ci/get-qemu.sh) =="
+    if bash "$ROOT_DIR/ci/get-qemu.sh"; then
+        if [ -x "$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32.exe" ]; then
+            QEMU_BIN="$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32.exe"
+        else
+            QEMU_BIN="$ROOT_DIR/.tools/qemu/bin/qemu-system-riscv32"
+        fi
+    else
+        echo "自动引导失败。可选通道:" >&2
+        echo "  1. 手动安装 QEMU 后重跑" >&2
+        echo "  2. GitHub Codespaces(.devcontainer.json,打开即跑)" >&2
+        echo "  3. 直接查看 CI 门禁结果: https://github.com/gqf2008/Xtask/actions" >&2
+        exit 1
+    fi
 fi
 if [ -n "$QEMU_BIN" ]; then
     # qemu_pingpong:两任务 200 轮乒乓 + tick 心跳;跑满写 SiFive test 自退出
