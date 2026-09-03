@@ -406,32 +406,39 @@ impl DriverRegistry {
         })
     }
 
-    // ---- 能力级便捷查找（薄包装：find + as_*）----
+    // ---- 能力级便捷查找（薄包装：find_capability）----
+
+    /// 泛型按能力查找：所有 `find_xxx` 的公共实现（开闭原则的落点——新增能力只需
+    /// `impl Capability for dyn Xxx`，本方法与注册表/清单零改动）。
+    pub fn find_capability<C: Capability + ?Sized>(&self, name: &str) -> Option<&'static C> {
+        let dev = self.find(name)?;
+        C::downcast(dev)
+    }
 
     /// 按名取字节流能力；名字不存在或设备无此能力时返回 None
     /// （用 `find` 可区分"没有"与"能力不符"）
     pub fn find_stream(&self, name: &str) -> Option<&'static dyn StreamDevice> {
-        self.find(name).and_then(|d| d.as_stream())
+        self.find_capability(name)
     }
 
     /// 按名取块设备能力
     pub fn find_block(&self, name: &str) -> Option<&'static dyn BlockDevice> {
-        self.find(name).and_then(|d| d.as_block())
+        self.find_capability(name)
     }
 
     /// 按名取控制面能力
     pub fn find_control(&self, name: &str) -> Option<&'static dyn Control> {
-        self.find(name).and_then(|d| d.as_control())
+        self.find_capability(name)
     }
 
     /// 按名取总线能力
     pub fn find_bus(&self, name: &str) -> Option<&'static dyn BusDevice> {
-        self.find(name).and_then(|d| d.as_bus())
+        self.find_capability(name)
     }
 
     /// 按名取事件/唤醒能力
     pub fn find_event(&self, name: &str) -> Option<&'static dyn EventDevice> {
-        self.find(name).and_then(|d| d.as_event())
+        self.find_capability(name)
     }
 }
 
@@ -484,10 +491,10 @@ pub trait Capability: 'static {
 }
 
 /// 泛型按能力查找：`find_capability::<dyn StreamDevice>("uart0")`。
-/// 现有 `find_stream/find_block/...` 都是它的便捷薄封装。
+/// 现有 `find_stream/find_block/...` 都是它的便捷薄封装（方法级 `find_*`
+/// 同样经 `DriverRegistry::find_capability` 收敛到同一条 `find + downcast` 路径）。
 pub fn find_capability<C: Capability + ?Sized>(name: &str) -> Option<&'static C> {
-    let dev = find(name)?;
-    C::downcast(dev)
+    REGISTRY.find_capability(name)
 }
 
 impl Capability for dyn StreamDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_stream() } }
@@ -752,6 +759,37 @@ mod tests {
         assert_eq!(xfer.load(Ordering::SeqCst), 3);
         assert_eq!(rx, [0xA5; 4]);
         assert_eq!(reg.find("spi1").unwrap().kind(), DeviceKind::Bus);
+    }
+
+    /// 回归：泛型能力入口 `find_capability`——所有 `find_*` 的公共底。
+    /// 现有 `find_*` 用例经薄封装已传导覆盖它，此测试再直接点名验证
+    /// （阳性对照：防 `Capability::downcast` 实现笔误导致静默返回 None）。
+    #[test]
+    fn find_capability_generic_entry() {
+        let reg = DriverRegistry::new();
+        let (dev, written, registered, _woken) = MockStream::new();
+        dev.rx.borrow_mut().extend([7u8, 8]);
+        let dev: &'static dyn Device = Box::leak(Box::new(dev));
+        reg.register("uart0", dev).unwrap();
+
+        // 泛型取流能力：透传到同一实例
+        let s = reg
+            .find_capability::<dyn StreamDevice>("uart0")
+            .expect("泛型查找应命中流能力");
+        assert_eq!(s.available(), 2);
+        s.write_all(b"xy").unwrap();
+        assert_eq!(written.load(Ordering::SeqCst), 2);
+
+        // 复合设备：同一注册项也能泛型取事件能力
+        reg.find_capability::<dyn EventDevice>("uart0")
+            .expect("同一设备应能泛型取事件能力")
+            .register_waiter(0x99)
+            .unwrap();
+        assert_eq!(registered.load(Ordering::SeqCst), 0x99);
+
+        // 能力不符（未 override as_control）→ None；名字不存在 → None
+        assert!(reg.find_capability::<dyn Control>("uart0").is_none());
+        assert!(reg.find_capability::<dyn StreamDevice>("ghost").is_none());
     }
 
     /// 回归：重名必须拒绝——同名二次注册 Err(Duplicate)，第一个设备不受影响。
