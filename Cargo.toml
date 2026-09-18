@@ -64,6 +64,8 @@ qemu_riscv = ["riscv-rt"]  # 零 PAC:标准 CLINT/UART 直址
 qemu_arm_r52 = []  # 零 PAC、零运行时:R5 无 cortex-r-rt,启动/链接脚本自备(chip 内)
 ch32v203 = ["ch32v2", "riscv-rt"]
 ch32v307 = ["ch32v3", "riscv-rt"]
+# CH583(QingKe V4A):CH58x 无现成 ch32-rs PAC,零 PAC 直址访问(见 chip/ch583/mod.rs)
+ch583 = ["riscv-rt"]
 #ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
 #AT 命令编解码 + GATT 服务建模,纯 Rust 零新依赖
 ble=[]

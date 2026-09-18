@@ -9,6 +9,8 @@ pub mod ch32v307;
 pub mod ch32v203;
 #[cfg(feature = "ch32v103")]
 pub mod ch32v103;
+#[cfg(feature = "ch583")]
+pub mod ch583;
 #[cfg(feature = "esp32c3")]
 pub mod esp32c3;
 #[cfg(feature = "qemu_riscv")]
