@@ -26,6 +26,8 @@ fn main() {
     fs::copy("src/chip/ch32v203/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "ch32v103")]
     fs::copy("src/chip/ch32v103/memory.x", out_dir.join("memory.x")).unwrap();
+    #[cfg(feature = "ch583")]
+    fs::copy("src/chip/ch583/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "esp32c3")]
     fs::copy("src/chip/esp32c3/memory.x", out_dir.join("memory.x")).unwrap();
     #[cfg(feature = "qemu_riscv")]
@@ -49,6 +51,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/chip/ch32v307/memory.x");
     println!("cargo:rerun-if-changed=src/chip/ch32v203/memory.x");
     println!("cargo:rerun-if-changed=src/chip/ch32v103/memory.x");
+    println!("cargo:rerun-if-changed=src/chip/ch583/memory.x");
     println!("cargo:rerun-if-changed=src/chip/esp32c3/memory.x");
     println!("cargo:rerun-if-changed=src/chip/qemu_riscv/memory.x");
     println!("cargo:rerun-if-changed=src/chip/qemu_arm_r52/memory.x");

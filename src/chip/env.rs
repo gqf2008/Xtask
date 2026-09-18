@@ -34,6 +34,13 @@ pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 pub const CPU_CLOCK_HZ: usize = 8_000_000;
 #[cfg(feature = "ch32v103")]
 pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
+/// CH583(QingKe V4A):默认主频取官方 `CH58x_common.h` 的 `FREQ_SYS` 默认值
+/// 60MHz(⚠️ 真机核对点——本口无 BSP/时钟初始化,按官方默认配;
+/// PLL 配置后须同步改这里与 STCLK 语义,见 memory.x/mod.rs 注)
+#[cfg(feature = "ch583")]
+pub const CPU_CLOCK_HZ: usize = 60_000_000;
+#[cfg(feature = "ch583")]
+pub const SYSTICK_CLOCK_HZ: usize = 60_000_000; // STCLK=1 → HCLK(=60M)
 // ESP32-C3:复位默认 CPU 80MHz(TRM;PLL 160M 配好后同步改);
 // SYSTICK 是独立 16MHz 时基(与 CPU 时钟无关—— 调研已核)
 #[cfg(feature = "esp32c3")]

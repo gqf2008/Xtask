@@ -1,0 +1,213 @@
+//! CH583 移植模块实现(QingKe V4A(第三代以上 PFIC 内核,SysTick 独立外设) 内核,
+//! PFIC + WCH 自有 SysTick 模型)。以 `ch32v103`(V3A)为模板——两者架构同源:
+//! 都用 `STK_CTLR.SWIE` 触发软中断、都是 36 字纯软件全保存帧、都是 Direct mtvec。
+//!
+//! 与 `ch32v103` 的关键差异:
+//! - **代码基址 = `0x00000000`**(不是 `0x08000000`!),见 `memory.x`;
+//!   官方 EVT 只给 448K,尾部 64K 留给 BootLoader/ISP/配置区。
+//! - **私有 CSR `0xbc0`**:`_setup_interrupts` 多一条 `csrw 0xbc0, 0x1f`
+//!   (流水线控制 + 动态分支预测控制位,官方 `startup_CH583.S` 固定写法)。
+//! - **SysTick 是 64 位**(CH572 是 32 位),但寄存器字偏移与 V3A 一致:
+//!   CTLR@+0 SR@+4 CNT@+8(64 位,字 2/3) CMP@+16(64 位,字 4/5)。
+//!
+//! 本口按**标准 RV32 机器模式**设计(与现有 RISC-V 口一致):
+//!
+//! - **HPE 关闭**:`_setup_interrupts` 显式写 `intsyscr(0x804)=0`(CH583 的
+//!   HWSTKEN 在 bit0),上下文切换回到**纯软件全保存**模型(36 字帧)。
+//! - **mtvec = Direct 模式**:单入口 `_start_trap` 读 `mcause` 分发——
+//!   中断号 12 = SysTick;其余走 `DefaultHandler`。
+//! - **软中断(yield/抢占请求)复用 SysTick 入口**:`STK_CTLR.SWIE`(bit31)
+//!   写 1 立即触发 SysTick 中断——ISR 读 `STK_SR.CNTIF` 区分真 tick 与
+//!   软中断请求。**与 ch32v103 完全同款**(CH572 的 SWIE 在 `SR` 而非
+//!   `CTLR`,故 CH572 需要另写,本 CH583 口可直接复用)。
+//! - **SysTick@0xE000F000**(WCH 自有,非 CLINT mtime);`SR.CNTIF` 写 0 清零。
+//! - **无 A 扩展退路**:若真机实测无 `A` 扩展,改用
+//!   `--target riscv32imc-unknown-none-elf`(CH57x 的退路 target)。
+//!
+//! ⚠️ 真机核对点(构建级验证,板上行为待验):
+//! ①`0x00000000` 是否可写 / 是否有 `0x08000000` 别名;
+//! ②默认主频 = 60MHz(官方 `CH58x_common.h` 的 `FREQ_SYS` 默认值;env 常数按此配,
+//!   PLL 配好后须同步改);
+//! ③`csrw 0xbc0, 0x1f` 是否在 CH583 上必须;
+//! ④`0x804=0` 后异常/中断入口是否确实不再硬件压栈(决定 36 字帧成立);
+//! ⑤`STK_CTLR.SWIE` 置 1 后是否即刻进 `SysTick`、`CNTIF` 是否仍为 0;
+//! ⑥`mcycle` 是否实现(决定 `delay_us`,见下)。
+//! BootLoader 默认开启,量产配置里关掉(或接受代码从 0 起、向量表第 5 字保持
+//! `0xF3F9BDA9`)。
+//!
+//! **零 PAC 依赖**:CH58x 无现成 `ch32-rs` PAC,本口全量直址访问
+//! (与 `qemu_riscv` 口的思路一致),`Cargo.toml` 只挂 `riscv-rt`。
+
+mod port;
+
+use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
+use crate::port::Portable;
+use crate::prelude::CriticalSection;
+use crate::task::Task;
+use core::arch::asm;
+
+/// SysTick 寄存器基址(WCH 自有,非 CLINT;CH583 为 64 位计数器)
+pub(crate) const STK_BASE: usize = 0xE000_F000;
+
+/// PFIC 寄存器基址(CH583 与 CH572/ch32v103/ch32v307 同址)
+pub(crate) const PFIC_BASE: usize = 0xE000_E000;
+
+/// 配置 SysTick 与 PFIC(在 start_scheduler 里、restore_ctx 之前调用)。
+/// CH583 的 SysTick 与 V3A 同布局,只是计数器/比较值 64 位;
+/// PFIC 无 PAC,直接访问 `IENR[0]`(offset 0x100)使能 SysTick。
+#[inline]
+pub(crate) fn setup_intrrupt() {
+    let stk = STK_BASE as *mut u32;
+    unsafe {
+        // 1. 停计数(CTLR=0)、清 SR.CNTIF(写 0)、CNT/CMP 清零装初值(高字先写)
+        stk.write_volatile(0);
+        stk.add(1).write_volatile(0); // SR:CNTIF 写 0 清
+        stk.add(2).write_volatile(0); // CNTL
+        stk.add(3).write_volatile(0); // CNTH
+        const TICKS: u32 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u32 - 1;
+        stk.add(5).write_volatile(0); // CMPHR
+        stk.add(4).write_volatile(TICKS); // CMPLR
+        // 2. CTLR = SWIE(31)|INIT(5)|STRE(3)|STCLK(HCLK,2)|STIE(1)|STE(0)
+        //    = 0x8000_002F(官方 SysTick_Config 惯用法 + SWIE 初始触发一次)
+        stk.write_volatile(0x8000_002F);
+    }
+    // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
+    let ienr0 = (PFIC_BASE + 0x100) as *mut u32;
+    unsafe {
+        ienr0.write_volatile(1 << 12);
+    }
+}
+
+/// 清 SysTick 的 CNTIF(写 0)——真 tick 路径调用
+#[inline]
+pub(crate) fn reset_systick() {
+    let stk = STK_BASE as *mut u32;
+    unsafe {
+        stk.add(1).write_volatile(0); // SR @ +4
+    }
+}
+
+/// CH583 芯片移植层实现
+pub struct Ch583Porting;
+
+// port.S 蹦床 `_task_entry_trampoline` 依赖的 Task 布局偏移(失配编译期炸)
+const _: () = assert!(core::mem::offset_of!(Task, sp) == 0);
+const _: () = assert!(core::mem::offset_of!(Task, entry) == 8);
+
+impl Portable for Ch583Porting {
+    /// 完全内存屏障
+    #[inline]
+    fn barrier() {
+        unsafe {
+            // CH583 无 MMU/虚存,通用 fence(iorw) 即可
+            core::arch::asm!("fence iorw, iorw");
+        }
+    }
+    /// 临界区保护(本核 mstatus.MIE——单核语义与 gd32 同)
+    #[inline]
+    fn free<F, R>(f: F) -> R
+    where
+        F: FnOnce(&CriticalSection) -> R,
+    {
+        riscv::interrupt::free(f)
+    }
+
+    /// 开全局中断
+    #[inline]
+    fn enable_interrupt() {
+        unsafe {
+            riscv::interrupt::enable();
+        }
+    }
+    /// 关全局中断
+    #[inline]
+    fn disable_interrupt() {
+        unsafe {
+            riscv::interrupt::disable();
+        }
+    }
+
+    /// 启动调度器:配置 SysTick/PFIC → 恢复第一个任务(汇编,不返回)
+    fn start_scheduler() -> ! {
+        setup_intrrupt();
+        log::info!("Start scheduler");
+        unsafe { asm!(include_str!("restore_ctx.S"), options(noreturn, raw)) };
+    }
+
+    /// 软中断(调度请求):写 STK_CTLR.SWIE(bit31)触发 SysTick 入口。
+    /// ISR 读 SR.CNTIF 区分真 tick 与本请求(见 port.rs 的 SysTick 处理)。
+    /// **与 ch32v103 同款**(CH572 的 SWIE 在 SR,本口不适用)
+    #[inline]
+    fn irq() {
+        let ctlr = STK_BASE as *mut u32;
+        unsafe {
+            ctlr.write_volatile(ctlr.read_volatile() | (1 << 31));
+        }
+    }
+    /// 关闭软中断(SWIE 是触发位,自清;防御性清一下)
+    #[inline]
+    fn disable_irq() {
+        let ctlr = STK_BASE as *mut u32;
+        unsafe {
+            ctlr.write_volatile(ctlr.read_volatile() & !(1 << 31));
+        }
+    }
+
+    /// 读 SysTick 64 位计数器(高:低:高重读防翻转;CH583 是 64 位)
+    #[inline]
+    fn systick() -> u64 {
+        let stk = STK_BASE as *mut u32;
+        loop {
+            unsafe {
+                let hi = stk.add(3).read_volatile();
+                let lo = stk.add(2).read_volatile();
+                if hi == stk.add(3).read_volatile() {
+                    return ((hi as u64) << 32) | lo as u64;
+                }
+            }
+        }
+    }
+
+    /// 硬件延时,单位 us。
+    ///
+    /// ⚠️ **暂沿 `ch32v103` 用 `mcycle` 实现**——CH583 是否实现 `mcycle`
+    /// (Zicntr)待上板核对:若未实现则读出恒为常量,本函数会死循环。届时
+    /// **必须**改为 SysTick/TMR 计时(CH57x 无 DWT,不能照搬 ARM 的 DWT_CYCCNT
+    /// 或 ch32v307 的 DWT)。主频按 env 的 `CPU_CLOCK_HZ`(默认 60MHz)。
+    #[inline]
+    fn delay_us(us: u64) {
+        let t0 = riscv::register::mcycle::read64();
+        let clock = (us * (CPU_CLOCK_HZ as u64)) / 1_000_000;
+        while riscv::register::mcycle::read64().wrapping_sub(t0) <= clock {}
+    }
+
+    /// 任务创建时为 CPU 准备任务现场(36 字帧,与 port.S 的保存宏互为镜像):
+    /// [35]=mcause(0x8000_000C)[34]=0(mcause 保留槽)
+    /// [33]=mepc=_task_entry_trampoline [32]=mstatus=0x1880(MPP=M|MPIE=1)
+    /// [10]=a0=args [1]=ra=task_exit,任务块 sp 指向帧底
+    #[inline]
+    fn save_context(task: &mut Task) {
+        unsafe {
+            let sp = task.stack.add(task.stack_size - 1);
+            sp.offset(-1).write_volatile(0x8000_000C); // mcause:中断|12(SysTick)
+            sp.offset(-2).write_volatile(0); // 保留槽(无 msubm)
+            // mepc = 首调蹦床:经标准 jalr 进入 task.entry(mret 直入会被
+            // 编译器 outlined 的入口 stub 坑到野跳,见 port.S 蹦床注)
+            unsafe extern "C" {
+                fn _task_entry_trampoline();
+            }
+            sp.offset(-3)
+                .write_volatile((_task_entry_trampoline as *const ()).addr()); // mepc
+            sp.offset(-4).write_volatile(0x0000_1880); // mstatus:MPP=M, MPIE=1
+            for i in 0..32usize {
+                if i != 1 && i != 10 {
+                    sp.offset(i as isize - 36).write_volatile(0);
+                }
+            }
+            sp.offset(-26).write_volatile(task.args.addr()); // a0
+            sp.offset(-35)
+                .write_volatile((port::task_exit as *const ()).addr()); // ra
+            task.sp = sp.offset(-36).addr();
+        }
+    }
+}
