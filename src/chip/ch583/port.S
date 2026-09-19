@@ -169,14 +169,17 @@ _switch_and_restore:
 .section .text
 .global _setup_interrupts
 _setup_interrupts:
-  // CH57x 私有 CSR 0xbc0:流水线控制位 + 动态分支预测控制位。
-  // 官方 startup_CH583.S 复位序列固定写 0x1f(⚠️ CH572 是 0x25+0xbc1=1,
-  // CH583 只写 0xbc0=0x1f)。真机核对点:若 CH583 上不需要,可去掉这一条。
+  // 私有 CSR 0xbc0(流水线控制 + 动态分支预测控制位),取值与官方
+  // `EVT/EXAM/SRC/Startup/startup_CH583.S` 的 reset 序列逐字一致:
+  //     li t0, 0x1f
+  //     csrw 0xbc0, t0
+  // (CH572 为 0x25 且另有 0xbc1=1,本口不适用)
   li t0, 0x1f
   csrw 0xbc0, t0
-  // 显式关闭 HPE(QingKe 自定义 CSR 0x804:intsyscr;CH583 硬件压栈由
-  // bit0 HWSTKEN 控制,写 0 = 纯软件全保存模型)——
-  // 硬件序言是 WCH 私有工具链特性,与 riscv-rt/裸 Rust 不兼容
+  // 关闭 HPE:CH583 的 INTSYSCR(自定义 CSR 0x804)bit0=HWSTKEN、
+  // bit1=INESTEN。官方 startup 写 0x3(开硬件压栈 + 中断嵌套,配 HPE 序言),
+  // 本口写 0 = 纯软件全保存模型(硬件序言是 WCH 私有工具链特性,与
+  // riscv-rt/裸 Rust 不兼容),这也是本口 36 字帧成立的前提。
   csrw 0x804, zero
   // mtvec = _start_trap,Direct 模式(低位 0)
   la t0, _start_trap
@@ -200,3 +203,36 @@ _task_entry_trampoline:
   lw t1, 8(t0)              // Task.entry(offset 8,见 mod.rs 布局断言)
   jalr t1                   // 标准调用:a0=args(帧设置),ra=返回蹦床
   j task_exit               // 入口跑完 → 退出路径(不返回)
+
+/*
+  启动头(flash 0x00..0x17,由 memory.x 的 SECTIONS 显式摆位 + 链接期 ASSERT):
+
+  WCH ROM 从 flash 0x0 取指,并按"向量表第 5 个字 = boot option"识别有效用户
+  程序。官方 `EVT/EXAM/SRC/Startup/startup_CH583.S` 的 `.vector` 段:
+
+      .word   0
+      .word   0
+      .word   NMI_Handler
+      .word   HardFault_Handler
+      .word   0xF3F9BDA9        // boot option, can't modify
+
+  官方 `Ld/Link.ld` 把 `.vector` 的 flash LMA 紧跟在 `.init` 的
+  `_start: j handle_reset` 之后(即 flash 0x04),所以魔数落在 flash **0x14**。
+  本口保持 Direct mtvec(CPU 不读这张表),这里只为对齐 ROM 的启动头布局:
+  入口跳转接 riscv-rt 的 `_start`,随后 5 字复刻官方向量表前 5 项。
+*/
+.section .bootvec, "ax", @progbits
+.option push
+.option norvc                // 4 字节定长(官方 .vector 亦 .option norvc)
+.align 2
+.global _bootvec
+_bootvec:
+  j _start                   // 0x00:ROM 入口(官方 .init 的 `j handle_reset` 同位)
+  .word 0                    // 0x04:向量表[0](官方为 0)
+  .word 0                    // 0x08:向量表[1](官方为 0)
+  .word _start_trap          // 0x0c:向量表[2] NMI
+  .word _start_trap          // 0x10:向量表[3] HardFault
+  .global _boot_magic
+_boot_magic:
+  .word 0xF3F9BDA9           // 0x14:向量表[4] boot option, can't modify
+.option pop
