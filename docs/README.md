@@ -39,6 +39,7 @@ DDI0403(v7-M) 当前网络无法直连 developer.arm.com 获取，上表两份 S
 | Nuclei N200 ISA 架构手册 CN / Bumblebee ISA 架构手册 CN | gd32vf103 与 cm32m4 的 ECLIC、嵌套深度 CSR(0x7ED)、msubm(0x7C4) —— `src/chip/{gd32vf103,cm32m4}/port.S` | [nucleisys.com 文档页](https://www.nucleisys.com/)（导航 Developer→Document；Nuclei 官网） |
 | Nuclei N200 Brief Datasheet CN / Bumblebee Brief Datasheet CN(+EN 架构手册) | 同上两口的内核数据面 | 同上（Nuclei 官网文档页） |
 | WCH 青稞 V4 处理器手册 CN | ch32v203/ch32v307 的 PFIC/SysTick/Stk 模型 —— `src/chip/ch32v20{3,7}/port*` | [ch32-riscv-ug GitHub 组织](https://github.com/ch32-riscv-ug)（镜像收全套装；wch.cn 官网为 SPA 拿不到直链） |
+| 青稞 V4A 启动/中断实装（源码即手册） | ch583 的 PFIC/SysTick/`0xbc0`/`0x804` 与 ROM 启动头(`.vector` 第 5 字 boot option `0xF3F9BDA9`) —— `src/chip/ch583/port.{S,rs}` | [openwch/ch583](https://github.com/openwch/ch583)（官方 EVT：`EXAM/SRC/{Startup,Ld,RVMSIS,StdPeriphDriver}`；本地核对版已随本仓注释标注文件路径） |
 
 ## 芯片手册
 
@@ -48,6 +49,7 @@ DDI0403(v7-M) 当前网络无法直连 developer.arm.com 获取，上表两份 S
 | ch32v103 | CH32V103 DS0 CN + CH32xRM 参考手册 CN/EN | `ch32v103`（青稞 V3A） | [ch32-riscv-ug/CH32V103 镜像](https://github.com/ch32-riscv-ug/CH32V103) |
 | ch32v20x | CH32V20x DS0 CN | `ch32v203` | [ch32-riscv-ug 组织](https://github.com/ch32-riscv-ug) |
 | ch32v30x | CH32V30x DS0 EN | `ch32v307` | [ch32-riscv-ug 组织](https://github.com/ch32-riscv-ug) |
+| ch58x | 官方 EVT 源码包（本仓按源码核对：`Startup/startup_CH583.S`、`Ld/Link.ld`、`RVMSIS/core_riscv.h`、`StdPeriphDriver/inc/CH583SFR.h、CH58x_common.h`） | `ch583`（青稞 V4A；DS/PM 正式手册未入库，寄存器语义以官方 EVT 源码为准） | [openwch/ch583](https://github.com/openwch/ch583) |
 | stm32f1 | RM0008（参考手册）+ DS5319（F103C8 数据手册） | `stm32f1`（bluepill） | [st.com RM0008](https://www.st.com/resource/en/reference_manual/rm0008-stm32f101xx-stm32f102xx-stm32f103xx-stm32f105xx-and-stm32f107xx-advanced-armbased-32bit-mcus-stmicroelectronics.pdf) / [DS5319](https://www.st.com/resource/en/datasheet/stm32f103c8.pdf) |
 | stm32f4 | RM0368（F401 参考手册）+ DS8626（F401CC 数据手册） | `stm32f4`（greenpill） | [st.com RM0368](https://www.st.com/resource/en/reference_manual/rm0368-stm32f401xbc-and-stm32f401xde-advanced-armbased-32bit-mcus-stmicroelectronics.pdf) / [DS8626](https://www.st.com/resource/en/datasheet/stm32f401cc.pdf) |
 | stm32h7 | RM0455（H7B0 参考手册）+ H7B0 DS | `stm32h7`（注意是 H7B0, 非常见 H743） | [st.com RM0455](https://www.st.com/resource/en/reference_manual/rm0455-stm32h7b0xx-and-stm32h7b1xx-arm-cortex-m7-32bit-mcu-stmicroelectronics.pdf) |
