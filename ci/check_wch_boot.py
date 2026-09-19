@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""校验 CH583 启动头字节布局(WCH ROM 认的硬要求)。
+"""校验 WCH CH57x/CH58x 启动头字节布局(WCH ROM 认的硬要求)。
 
 WCH ROM 从 flash 0x0 取指,并按"向量表第 5 个字 = boot option"识别有效用户
 程序:官方 EVT/EXAM/SRC/Startup/startup_CH583.S 的 `.vector` 段第 5 个字固定
 0xF3F9BDA9(注释 "boot option, can't modify"),官方 Ld/Link.ld 把 `.vector`
 的 flash LMA 紧跟在 `.init` 的 `j handle_reset` 之后 → 魔数落在 flash 0x14。
+CH572 的 `startup_CH572.S` / `Ld/Link.ld` 是同布局(用官方 Link.ld 现场链接
+实测:`.highcode` 里那句 `. = ALIGN(1024)` 因 RAM 基址本就对齐而无效果,
+魔数同样落在 flash 0x14),故 ch583 与 ch572 共用本脚本。
 
-本口用 `.bootvec` 段复刻同一布局(src/chip/ch583/port.S 内容 + memory.x 摆位,
-另有链接期 ASSERT);本脚本做**产物级**终检:段地址/大小、入口跳转、魔数字节。
-少了它,板上表现是"停在 ISP、不进用户程序",而构建与门禁全绿。
+各口用 `.bootvec` 段复刻同一布局(src/chip/{ch583,ch572}/port.S 内容 +
+memory.x 摆位,另有链接期 ASSERT);本脚本做**产物级**终检:段地址/大小、
+入口跳转、魔数字节。少了它,板上表现是"停在 ISP、不进用户程序",而构建与
+门禁全绿。
 
-用法: python3 ci/check_wch_boot.py <target/.../examples/multitask_ch583>
+用法: python3 ci/check_wch_boot.py <target/.../examples/multitask_{ch583,ch572}>
 """
 import struct
 import sys
@@ -46,7 +50,8 @@ def main():
 
     boot = [s for i, s in enumerate(secs) if sname(i) == ".bootvec"]
     if not boot:
-        print("FAIL: 没有 .bootvec 段——ROM 认的启动头缺失(见 src/chip/ch583/port.S)")
+        print("FAIL: 没有 .bootvec 段——ROM 认的启动头缺失"
+              "(见 src/chip/{ch583,ch572}/port.S)")
         return 1
     addr, size = boot[0][3], boot[0][5]
     if addr != 0 or size != BOOT_LEN:

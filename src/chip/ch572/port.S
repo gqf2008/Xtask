@@ -181,6 +181,9 @@ _setup_interrupts:
   csrw 0xbc0, t0
   li t0, 1
   csrw 0xbc1, t0
+  // 注:官方 reset 序列的顺序是 0xbc0 → 0x804=0x3 → 0xbc1,本口把 0x804 放最后
+  // (写 0 关 HPE)。三条都是独立的 CSR 直写、互相不读改写,顺序不影响最终落值;
+  // 让"关 HPE"紧挨后面的 mtvec 设置,读代码时更容易看出 36 字软件全保存的前提。
   // 关闭 HPE:INTSYSCR(自定义 CSR 0x804)bit0=HWSTKEN、bit1=INESTEN。
   // 官方 startup 写 0x3(开硬件压栈 + 中断嵌套,配 HPE 序言),本口写 0 =
   // 纯软件全保存模型(硬件序言是 WCH 私有工具链特性,与 riscv-rt/裸 Rust
