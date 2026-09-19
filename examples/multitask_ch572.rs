@@ -2,9 +2,6 @@
 #![no_main]
 
 extern crate alloc;
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
 
 // CH572(QingKe 无 A 扩展,RV32IMC)多任务示例 —— 以 ch583 示例为模板,按 12K SRAM 缩编。
 //
