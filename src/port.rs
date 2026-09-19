@@ -65,10 +65,11 @@ pub use HostPorting as Porting;
 use crate::task::Task;
 use bare_metal::CriticalSection;
 
-/// 内核数组定界用的核数上限——实际参与调度的核数由 `Porting::core_count()`
-/// 运行期决定(≤ MAX_HARTS)。CURRENT_TASK/IDLE_TASKS/临界区深度等
-/// 每核数组一律按此定界(ch25 改造路线②)
-pub(crate) const MAX_HARTS: usize = 16;
+/// 内核数组定界用的核数上限(实际参与调度的核数由 `Porting::core_count()`
+/// 运行期决定,恒 ≤ 本值)。**定义在 `chip/env.rs` 里按芯片取值**(单核 WCH 口
+/// 为 1,省下 `READYQ` 的 4K 静态;多核口 16),这里 re-export 保持
+/// `crate::port::MAX_HARTS` 这个既有引用路径不变(ch25 改造路线②)
+pub(crate) use crate::chip::MAX_HARTS;
 
 /// 移植层接口定义
 pub trait Portable {
