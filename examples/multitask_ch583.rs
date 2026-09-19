@@ -31,7 +31,13 @@ fn main() -> ! {
         static _sheap: u8;
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
-    xtask::init_heap(start_addr, 16 * 1024); // 32K SRAM:静态+栈后保守 16 堆
+    // 32K SRAM:静态(data 4.1K + bss 0.3K)后到 _stack_start 还有 ~27.6K。
+    // 本示例要起的任务栈(全部从堆上分配):15 个默认任务 ×256 字(≈1.03K)
+    // + 软件定时器任务 1024 字(≈4.1K),加 Task 结构与同步对象 ≈21.5K,
+    // 故取 24K(堆顶 0x20007188,距 _stack_start 0x20008000 仍留 3.6K)。
+    // ⚠️ 若把堆改回 16K(本 PR 之前的值),上板第一次创建任务就会
+    // `panic!("memory out")`——会被误判成移植层的寄存器问题。
+    xtask::init_heap(start_addr, 24 * 1024);
 
     //example_notify();
     //example_broadcast();
