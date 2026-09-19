@@ -20,9 +20,16 @@
 //!   写 1 立即触发 SysTick 中断——ISR 读 `STK_SR.CNTIF` 区分真 tick 与
 //!   软中断请求。**与 ch32v103 完全同款**(CH572 的 SWIE 在 `SR` 而非
 //!   `CTLR`,故 CH572 需要另写,本 CH583 口可直接复用)。
+//!   ⚠️ 但官方 CH583 的 FreeRTOS / RT-Thread / HarmonyOS 三套移植**都不走
+//!   `CTLR.SWIE`**(SDK 里只定义、零使用):它们一律用 QingKe 专用
+//!   `SWI_IRQn=14` + `SW_Handler`(FreeRTOS `portYIELD()` =
+//!   `PFIC_SetPendingIRQ(SWI_IRQn)`)。本口沿用 ch32v103 模板的 SWIE 路线,
+//!   上板须确认(示例头部核对点④);若 SWIE 无效果,备选即改走 IRQ 14。
 //! - **SysTick@0xE000F000**(WCH 自有,非 CLINT mtime);`SR.CNTIF` 写 0 清零。
-//! - **无 A 扩展退路**:若真机实测无 `A` 扩展,改用
-//!   `--target riscv32imc-unknown-none-elf`(CH57x 的退路 target)。
+//! - **无 A 扩展(如 CH572)不是换个 target 的事**:`riscv32imc-unknown-none-elf`
+//!   实测只有 `target_has_atomic_load_store`、没有 `target_has_atomic`,内核里
+//!   `fetch_add`/`swap` 这类 RMW 编不过——需要先做"关中断/自旋锁"原子垫片;
+//!   CH583(V4A)有 A 扩展,本口不受影响。
 //!
 //! ⚠️ 真机核对点(构建级验证,板上行为待验):
 //! ①`0x00000000` 是否可写 / 是否有 `0x08000000` 别名;
@@ -145,20 +152,29 @@ impl Portable for Ch583Porting {
 
     /// 软中断(调度请求):写 STK_CTLR.SWIE(bit31)触发 SysTick 入口。
     /// ISR 读 SR.CNTIF 区分真 tick 与本请求(见 port.rs 的 SysTick 处理)。
-    /// **与 ch32v103 同款**(CH572 的 SWIE 在 SR,本口不适用)
+    /// 官方 CH583 三套移植走 `SWI_IRQn=14`(见模块头注),本口沿用模板的 SWIE。
+    ///
+    /// 读改写时**显式掩掉 INIT(bit5)**:INIT 与 SWIE 同寄存器,而它是否为
+    /// 自清触发位没有一手证据(官方 `SysTick_Config` 只在初始化写一次 CTLR、
+    /// 之后从不读改写,SDK 给不出答案)。若它是电平位,回写会让每次 yield 都
+    /// 重新装载 64 位计数器 → tick 账漂移;掩掉后两种情况都安全。
     #[inline]
     fn irq() {
+        const SWIE: u32 = 1 << 31;
+        const INIT: u32 = 1 << 5;
         let ctlr = STK_BASE as *mut u32;
         unsafe {
-            ctlr.write_volatile(ctlr.read_volatile() | (1 << 31));
+            ctlr.write_volatile((ctlr.read_volatile() & !INIT) | SWIE);
         }
     }
-    /// 关闭软中断(SWIE 是触发位,自清;防御性清一下)
+    /// 关闭软中断(SWIE 是触发位,自清;防御性清一下——同样掩掉 INIT)
     #[inline]
     fn disable_irq() {
+        const SWIE: u32 = 1 << 31;
+        const INIT: u32 = 1 << 5;
         let ctlr = STK_BASE as *mut u32;
         unsafe {
-            ctlr.write_volatile(ctlr.read_volatile() & !(1 << 31));
+            ctlr.write_volatile(ctlr.read_volatile() & !(SWIE | INIT));
         }
     }
 
