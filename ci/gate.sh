@@ -8,10 +8,16 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # 全脚本统一构建目录 = 主 target:与各步硬编码的 ELF 探测路径始终一致。
 export CARGO_TARGET_DIR="$ROOT_DIR/target"
 
-# --- 预检:riscv32imac target(读者环境通常未装)---
-if command -v rustup >/dev/null 2>&1     && ! rustup target list --installed | grep -q '^riscv32imac-unknown-none-elf$'; then
-    echo "== 安装缺失的 riscv32imac-unknown-none-elf target =="
-    rustup target add riscv32imac-unknown-none-elf
+# --- 预检:门禁要用的 riscv target(读者环境通常未装)---
+# 与下面的步骤一一对应:漏一个,读者跑"一条命令复现"时就会在编译期撞 E0463
+# (本机/CI 恰好装过时不现形,只有冷环境才露)。
+if command -v rustup >/dev/null 2>&1; then
+    for t in riscv32imac-unknown-none-elf riscv32imc-unknown-none-elf; do
+        if ! rustup target list --installed | grep -q "^${t}$"; then
+            echo "== 安装缺失的 ${t} target =="
+            rustup target add "$t"
+        fi
+    done
 fi
 
 echo "== [1/3] 内核 host 回归测试(阳性对照守卫)=="

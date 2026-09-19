@@ -5,9 +5,13 @@
 pub use riscv::*;
 pub use riscv_rt as rt;
 
-/// `critical-section` 的 RISC-V 实现:无硬件原子的目标(riscv32imc/CH572、
-/// esp32c3)靠它让 `atomic-polyfill` 的兜底路径链得上——详见本文件内注释。
-#[cfg(any(feature = "esp32c3", not(target_has_atomic = "ptr")))]
+/// `critical-section` 的 RISC-V 实现:所有 riscv32 目标都要提供——详见本文件内注释。
+///
+/// 门控**不能**写成 `not(target_has_atomic = "ptr")`:`atomic-polyfill` 的表是
+/// (≤32 位/指针档, u64/i64 档) 二元组,`riscv32imac-*` 是 `(Native, Polyfill)`
+/// ——有 A 扩展的口上 `AtomicU64`/`AtomicI64` 仍走 critical-section
+/// (2026-09-19 实测:imac 用一次 `AtomicU64::fetch_add` 即链接缺符号)。
+#[cfg(any(feature = "esp32c3", target_arch = "riscv32"))]
 mod critical;
 
 /// 异常处理函数
