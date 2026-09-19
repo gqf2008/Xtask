@@ -49,12 +49,12 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example ble_gatt \
     --features gd32vf103,ble --target riscv32imac-unknown-none-elf --release
 # CH583(QingKe V4A)零 PAC 口:QEMU 没有对应的机器可跑(见第 3 步),门禁做
 # 构建级 + 启动头产物级终检——WCH ROM 按向量表第 5 字 boot option 0xF3F9BDA9
-# 识别有效用户程序,缺了它板上停在 ISP 而构建/门禁全绿(见 check_ch583_boot.py)
+# 识别有效用户程序,缺了它板上停在 ISP 而构建/门禁全绿(见 check_wch_boot.py)
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
     --features ch583,timer --target riscv32imac-unknown-none-elf --release
 CH583_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/multitask_ch583"
 if [ -n "${PY:-}" ]; then
-    "$PY" "$ROOT_DIR/ci/check_ch583_boot.py" "$CH583_ELF"
+    "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$CH583_ELF"
 else
     echo "python 未安装,跳过 CH583 启动头校验(仅保留构建门禁)"
 fi
@@ -66,7 +66,16 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
 IMC_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multitask_ch583"
 if [ -n "${PY:-}" ]; then
     # 启动头布局与目标 ISA 无关,同一脚本顺带钉住 imc 产物
-    "$PY" "$ROOT_DIR/ci/check_ch583_boot.py" "$IMC_ELF"
+    "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$IMC_ELF"
+fi
+# CH572(QingKe **无 A 扩展**,12K SRAM):与 ch583 共用同一套启动头布局
+# (官方 Link.ld 现场链接实测:魔数同样落在 flash 0x14),但目标是 riscv32imc;
+# 示例按 12K 的实测内存账缩编(idle/软件定时器任务栈在 env.rs 里压到 256 字)
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch572 \
+    --features ch572 --target riscv32imc-unknown-none-elf --release
+CH572_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multitask_ch572"
+if [ -n "${PY:-}" ]; then
+    "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$CH572_ELF"
 fi
 
 echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="

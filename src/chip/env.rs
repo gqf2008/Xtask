@@ -41,6 +41,13 @@ pub const SYSTICK_CLOCK_HZ: usize = 8_000_000;
 pub const CPU_CLOCK_HZ: usize = 60_000_000;
 #[cfg(feature = "ch583")]
 pub const SYSTICK_CLOCK_HZ: usize = 60_000_000; // STCLK=1 → HCLK(=60M)
+/// CH572(QingKe 无 A 扩展):默认主频取官方 `CH57x_common.h` 的 `FREQ_SYS`
+/// 默认值 100MHz(⚠️ 真机核对点——本口无 BSP/时钟初始化,SAM 解锁与 PLL 未做,
+/// 复位默认频率须实测校正;PLL 配置后同样同步改这里)
+#[cfg(feature = "ch572")]
+pub const CPU_CLOCK_HZ: usize = 100_000_000;
+#[cfg(feature = "ch572")]
+pub const SYSTICK_CLOCK_HZ: usize = 100_000_000; // STCLK=1 → HCLK(=100M)
 // ESP32-C3:复位默认 CPU 80MHz(TRM;PLL 160M 配好后同步改);
 // SYSTICK 是独立 16MHz 时基(与 CPU 时钟无关—— 调研已核)
 #[cfg(feature = "esp32c3")]
@@ -91,5 +98,22 @@ pub const SYSTICK_CLOCK_HZ: usize = 125_000_000; // SysTick clock_source=Core;�
 /// 每秒产生多少次中断，没一次中断间隔就是任务能获得的时间片
 pub const TICK_CLOCK_HZ: usize = 1000;
 
-/// 软件定时器任务栈大小（单位：字长），默认1k字节栈空间
+/// 软件定时器任务栈大小（单位：字长）。
+///
+/// 默认 1024 字(4K)——定时器任务要走 `do_tick` → 软定时器堆 → 唤醒链,栈较深。
+/// **CH572(12K SRAM)按 256 字(1K)**:它还要与 idle 任务、应用任务共挤 12K
+/// (见 `examples/multitask_ch572.rs` 的实测账);256 字是否够由 QEMU 口的
+/// 24 项内核自测(其中多项专测软定时器/延时)与栈围栏守卫兜住。
+#[cfg(not(feature = "ch572"))]
 pub const TIMER_STACK_SIZE_WORD: usize = 1024;
+#[cfg(feature = "ch572")]
+pub const TIMER_STACK_SIZE_WORD: usize = 256;
+
+/// idle 任务栈大小（单位：字长）。
+///
+/// 默认 512 字(2K)——idle 走 tickless 决策/让出链。**CH572(12K SRAM)按 256 字**,
+/// 理由同上(12K 上 idle 独占 2K 太奢侈)。
+#[cfg(not(feature = "ch572"))]
+pub const IDLE_STACK_SIZE_WORD: usize = 512;
+#[cfg(feature = "ch572")]
+pub const IDLE_STACK_SIZE_WORD: usize = 256;
