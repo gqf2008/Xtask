@@ -82,6 +82,13 @@ fi
 # 真芯片执行到就是非法指令;按真 ISA 构建后为 0 条(原子走 critical-section 垫片)
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_esp32c3 \
     --features esp32c3,timer --target riscv32imc-unknown-none-elf --release
+# 上板自检例程(ch57x 家族共用,依赖 src/bsp/ch57x 的轮询控制台):
+# 把 issue #14 里"只能上板回答"的核对点收敛成一次烧写——先扫主频假设,
+# 再打印启动头/STK/PFIC/INTSYSCR 回读与 SWI pending 归宿,最后两任务活性测试
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example board_check_ch57x \
+    --features ch583,timer --target riscv32imac-unknown-none-elf --release
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example board_check_ch57x \
+    --features ch572 --target riscv32imc-unknown-none-elf --release
 
 echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
