@@ -28,12 +28,15 @@
 //! ①`0x00000000` 是否可写 / 是否有 `0x08000000` 别名;
 //! ②默认主频 = 60MHz(官方 `CH58x_common.h` 的 `FREQ_SYS` 默认值;env 常数按此配,
 //!   PLL 配好后须同步改);
-//! ③`csrw 0xbc0, 0x1f` 是否在 CH583 上必须;
+//! ③`csrw 0xbc0, 0x1f`(官方 `startup_CH583.S` 的 reset 序列同款,已按 SDK
+//!   源码核对;上板只需确认不触发 Illegal Instruction);
 //! ④`0x804=0` 后异常/中断入口是否确实不再硬件压栈(决定 36 字帧成立);
 //! ⑤`STK_CTLR.SWIE` 置 1 后是否即刻进 `SysTick`、`CNTIF` 是否仍为 0;
 //! ⑥`mcycle` 是否实现(决定 `delay_us`,见下)。
-//! BootLoader 默认开启,量产配置里关掉(或接受代码从 0 起、向量表第 5 字保持
-//! `0xF3F9BDA9`)。
+//! BootLoader 默认开启:本口已在 flash `0x0` 复刻官方启动头(`.bootvec` =
+//! 入口跳转 + 向量表前 5 字,第 5 字为 boot option `0xF3F9BDA9`;见 `port.S`
+//! 与 `memory.x` 的链接期 ASSERT)。若上板仍停在 ISP,则改用关闭 BootLoader 的
+//! 配置字。
 //!
 //! **零 PAC 依赖**:CH58x 无现成 `ch32-rs` PAC,本口全量直址访问
 //! (与 `qemu_riscv` 口的思路一致),`Cargo.toml` 只挂 `riscv-rt`。
@@ -67,9 +70,15 @@ pub(crate) fn setup_intrrupt() {
         const TICKS: u32 = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u32 - 1;
         stk.add(5).write_volatile(0); // CMPHR
         stk.add(4).write_volatile(TICKS); // CMPLR
-        // 2. CTLR = SWIE(31)|INIT(5)|STRE(3)|STCLK(HCLK,2)|STIE(1)|STE(0)
-        //    = 0x8000_002F(官方 SysTick_Config 惯用法 + SWIE 初始触发一次)
-        stk.write_volatile(0x8000_002F);
+        // 2. CTLR = INIT(5)|STRE(3)|STCLK(HCLK,2)|STIE(1)|STE(0) = 0x2F
+        //    ——逐位对齐官方 `EVT/EXAM/SRC/RVMSIS/core_riscv.h` 的
+        //    `SysTick_Config()`:`SysTick->CMP = ticks - 1;` 然后
+        //    `CTLR = INIT|STRE|STCLK|STIE|STE`。
+        //    **官方不带 SWIE(bit31)**:SWIE 只在运行期用于请求切换(见 `irq()`)。
+        //    若初始化时置 SWIE,第一个任务 `mret`(MIE←MPIE=1)后会立刻多进
+        //    一次 trap,而该 trap 早于 restore_ctx.S 写 mscratch → 隐含依赖
+        //    "进入 setup_intrrupt 时 mstatus.MIE=0";去掉后无此依赖。
+        stk.write_volatile(0x0000_002F);
     }
     // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
     let ienr0 = (PFIC_BASE + 0x100) as *mut u32;
