@@ -11,12 +11,12 @@ use alloc::vec::Vec;
 // (intsyscr 0x804 写 0 + 私有 CSR 0xbc0=0x1f);②mtvec Direct 分发与
 // mcause=12(SysTick);③SysTick CTLR=0x2F(INIT|STRE|STCLK|STIE|STE,
 // **不含 SWIE**——与官方 SysTick_Config 同值) + SR.CNTIF 写 0 清零;
-// ④yield 走 **`SWI_IRQn=14`**(置 PFIC `IPSR` pending,官方 FreeRTOS/
-// RT-Thread/HarmonyOS 三套移植同款;`CTLR.SWIE` 已不使用)后,是否即刻进 trap
-// 并沿 mcause=14 完成切换;
+// ④yield 走 **`SWI_IRQn=14`**(置 PFIC `IPSR` pending;该 IRQ 已在 `IENR` 里与
+// SysTick 并列使能,官方 FreeRTOS/RT-Thread/HarmonyOS 三套移植同款;
+// `CTLR.SWIE` 已不使用)后,是否即刻进 trap 并沿 mcause=14 完成切换;
 // ⑤flash 基址 0x00000000(尾部 64K 留给 BootLoader);⑥默认主频 60MHz
-// (env 按此配);⑦`mcycle` 是否实现(决定 `delay_us`,未实现则 `delay_us`
-// 会死循环——见 chip/ch583/mod.rs 注);⑧栈账:12 任务+timer+idle 实测
+// (env 按此配);⑦`delay_us` 的实测精度(已改用 SysTick 计数,不再赌 `mcycle`;
+// 前置是 SysTick 已在跑——见 chip/ch583/mod.rs 注);⑧栈账:12 任务+timer+idle 实测
 // ≈20.9K 堆(见 main 注释,别再往上加任务)。
 //
 // TODO(CH583 外设,待上板核对后补):

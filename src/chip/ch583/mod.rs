@@ -24,6 +24,9 @@
 //!   一处都没用 `STK_CTLR.SWIE`(SDK 里只定义、零使用),yield 一律
 //!   `PFIC_SetPendingIRQ(SWI_IRQn)` + `SW_Handler`。改走它之后,"SWIE 在真机上
 //!   到底灵不灵"这个只能上板才能排除的赌注就没了——本口初始化与运行期都不碰 SWIE。
+//!   同时必须在 `IENR[0]` 里**使能 IRQ14**(= bit12|bit14,见 `setup_intrrupt`):
+//!   PFIC 的 pending 与 enable 分离,官方同一函数里的 `PFIC_EnableIRQ(SWI_IRQn)`
+//!   就是这一步;只置 pending 不使能,请求会挂在一个永不被取走的中断上。
 //!   (ch32v103/ch32v203/ch32v307 三口仍沿模板的 SWIE 路线,见各口注。)
 //! - **SysTick@0xE000F000**(WCH 自有,非 CLINT mtime);`SR.CNTIF` 写 0 清零。
 //! - **无 A 扩展(如 CH572)用 `riscv32imc-unknown-none-elf`**:该 target 实测只有
@@ -53,6 +56,7 @@
 
 mod port;
 
+use super::wch_pfic;
 use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
@@ -90,10 +94,16 @@ pub(crate) fn setup_intrrupt() {
         //    restore_ctx.S 写 mscratch → 依赖"进入 setup_intrrupt 时 mstatus.MIE=0"。
         stk.write_volatile(0x0000_002F);
     }
-    // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
-    let ienr0 = (PFIC_BASE + 0x100) as *mut u32;
+    // 3. PFIC:使能 **SysTick(bit12) + 软中断(bit14)** —— pending 与 enable 是
+    //    两组分离的寄存器:`irq()` 只负责置 pending(`IPSR[0]`),中断要被取走还得
+    //    在 `IENR[0]` 里使能该 IRQ。官方 `EVT/EXAM/FreeRTOS/.../port.c` 的
+    //    `vPortSetupTimerInterrupt()` 里 `PFIC_EnableIRQ(SWI_IRQn)` 与
+    //    `SysTick_Config()` 内的 `PFIC_EnableIRQ(SysTick_IRQn)` 是同一件事的两半。
+    //    漏掉 bit14 → `irq()` 的 pending 永远不被取走(yield/抢占只剩 tick 兜底),
+    //    而构建/门禁/host 测试全绿——2026-09-19 PR #19 独立审查实测。
+    let ienr0 = (PFIC_BASE + wch_pfic::IENR_OFFSET) as *mut u32;
     unsafe {
-        ienr0.write_volatile(1 << 12);
+        ienr0.write_volatile(wch_pfic::ienr_enable_mask());
     }
 }
 
@@ -156,11 +166,13 @@ impl Portable for Ch583Porting {
     /// 软中断(调度请求):置 PFIC 的 `SWI_IRQn=14` pending
     /// (`IPSR[0] @0xE000E200` bit14)——官方三套 RTOS 移植的 yield 机制
     /// (`PFIC_SetPendingIRQ(SWI_IRQn)`),见模块头注。
+    /// 注意:置 pending 只是"举手",该 IRQ 的使能位在 `setup_intrrupt()` 里
+    /// 与 SysTick 一并置上(`IENR[0]` bit14)——两者缺一,本函数就是空操作。
     #[inline]
     fn irq() {
-        let ipsr0 = (PFIC_BASE + 0x200) as *mut u32;
+        let ipsr0 = (PFIC_BASE + wch_pfic::IPSR_OFFSET) as *mut u32;
         unsafe {
-            ipsr0.write_volatile(1 << 14);
+            ipsr0.write_volatile(wch_pfic::irq_bit(wch_pfic::SWI_IRQ));
         }
     }
     /// 关闭软中断:清 `SWI_IRQn=14` 的 pending(`IPRR[0] @0xE000E280` bit14)。
@@ -168,9 +180,9 @@ impl Portable for Ch583Porting {
     /// 防御性再清一次——残留 pending 会让 trap 出口立刻重入。
     #[inline]
     fn disable_irq() {
-        let iprr0 = (PFIC_BASE + 0x280) as *mut u32;
+        let iprr0 = (PFIC_BASE + wch_pfic::IPRR_OFFSET) as *mut u32;
         unsafe {
-            iprr0.write_volatile(1 << 14);
+            iprr0.write_volatile(wch_pfic::irq_bit(wch_pfic::SWI_IRQ));
         }
     }
 
@@ -196,6 +208,9 @@ impl Portable for Ch583Porting {
     /// SysTick 则是内核点拍赖以工作的外设,必然实现,故改用它的自由计数:
     /// 计数器按 `CMP` 自动重装,等待按"到下次重装还剩多少"分块(跨重装差值见
     /// `crate::chip::delay`,有 host 单测钉边界)。
+    ///
+    /// ⚠️ **前置条件:SysTick 已在跑**(即 `start_scheduler()` 之后)。计数器停着时
+    /// `elapsed()` 恒为 0,等待不会结束——`start_scheduler()` 之前需要延时用忙等。
     #[inline]
     fn delay_us(us: u64) {
         let period = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64; // = TICKS + 1

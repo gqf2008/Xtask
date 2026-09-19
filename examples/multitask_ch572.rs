@@ -9,11 +9,13 @@ extern crate alloc;
 // (intsyscr 0x804 写 0 + 私有 CSR `0xbc0=0x25` 与 **`0xbc1=1`**);
 // ②mtvec Direct 分发与 mcause=12(SysTick);③SysTick `CTLR=0x0F`
 // (STRE|STCLK|STIE|STE,官方 `SysTick_Config` 同值;**CH572 的 CTLR 无 INIT 位**)
-// + `SR.CNTIF` 写 0 清零;④yield 走 **`SWI_IRQn=14`**(置 PFIC `IPSR` pending,
-// 官方三套移植同款;`SR.SWIE` 已不使用)后是否即刻进 trap 并沿 mcause=14 完成切换;
+// + `SR.CNTIF` 写 0 清零;④yield 走 **`SWI_IRQn=14`**(置 PFIC `IPSR` pending;
+// 该 IRQ 已在 `IENR` 里与 SysTick 并列使能,官方三套移植同款;`SR.SWIE` 已不使用)
+// 后是否即刻进 trap 并沿 mcause=14 完成切换;
 // ⑤flash 基址 0x00000000,启动头 boot option
 // `0xF3F9BDA9` @flash 0x14(官方 Link.ld 实测);⑥默认主频 100MHz(env 按官方
-// `FREQ_SYS` 配,复位默认频率待实测);⑦`mcycle` 是否实现(决定 `delay_us`);
+// `FREQ_SYS` 配,复位默认频率待实测);⑦`delay_us` 的实测精度(已改用 SysTick
+// 计数,不再赌 `mcycle`;前置是 SysTick 已在跑——见 chip/ch572/mod.rs 注);
 // ⑧SysTick 计数器是 **32 位**(与 ch583 的 64 位读法不同)。
 //
 // TODO(CH572 外设,待上板核对后补):GPIO/1×UART/1×SPI/1×TMR 的 BSP 层定义;
