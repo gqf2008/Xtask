@@ -41,6 +41,17 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example usb_cdc \
     --features gd32vf103,usb --target riscv32imac-unknown-none-elf --release
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example ble_gatt \
     --features gd32vf103,ble --target riscv32imac-unknown-none-elf --release
+# CH583(QingKe V4A)零 PAC 口:QEMU 没有对应的机器可跑(见第 3 步),门禁做
+# 构建级 + 启动头产物级终检——WCH ROM 按向量表第 5 字 boot option 0xF3F9BDA9
+# 识别有效用户程序,缺了它板上停在 ISP 而构建/门禁全绿(见 check_ch583_boot.py)
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
+    --features ch583,timer --target riscv32imac-unknown-none-elf --release
+CH583_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/multitask_ch583"
+if [ -n "${PY:-}" ]; then
+    "$PY" "$ROOT_DIR/ci/check_ch583_boot.py" "$CH583_ELF"
+else
+    echo "python 未安装,跳过 CH583 启动头校验(仅保留构建门禁)"
+fi
 
 echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
