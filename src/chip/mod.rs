@@ -2,6 +2,7 @@
 
 include!("env.rs");
 pub mod delay;
+pub mod wch_pfic;
 #[cfg(feature = "cm32m4")]
 pub mod cm32m4;
 #[cfg(feature = "ch32v307")]

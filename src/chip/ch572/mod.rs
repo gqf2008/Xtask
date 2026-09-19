@@ -12,13 +12,17 @@
 //!   **不用它**:yield/抢占请求走官方三套 RTOS 移植的 `SWI_IRQn=14`(见 `irq()`),
 //!   `SWIE` 在初始化与运行期都不碰。`CTLR` 里也**没有 INIT 位**
 //!   (官方 `SysTick_Config` 写 `0x0F` = STRE|STCLK|STIE|STE)。
+//!   该 IRQ 与 SysTick 一样要在 `IENR[0]` 里**使能**(= bit12|bit14,见
+//!   `setup_intrrupt`)——PFIC 的 pending 与 enable 分离,只置 pending 不使能,
+//!   请求会挂在一个永不被取走的中断上(而构建/门禁仍全绿)。
 //! - **私有 CSR 多一条**:官方 reset 序列为 `0xbc0=0x25` **且 `0xbc1=1`**
 //!   (ch583/ch32v* 只有 `0xbc0=0x1f`)。
 //! - **12K SRAM / 240K CODE**:任务栈账比 ch583 紧得多(见示例注释)。
 //!
 //! 与 `ch583` 相同、已按官方源码确认的部分:
-//! - PFIC/SysTick 基址同址(`0xE000E000`/`0xE000F000`),`IENR[0]@0x100` bit12
-//!   使能核中断 12(= `PFIC_EnableIRQ(SysTick_IRQn)`,CH572 `SysTick_IRQn=12`);
+//! - PFIC/SysTick 基址同址(`0xE000E000`/`0xE000F000`),`IENR[0]@0x100` 的
+//!   bit12|bit14 使能核中断 12 与 14(两个 `PFIC_EnableIRQ`,
+//!   `SysTick_IRQn=12` + `SWI_IRQn=14`——后者官方三套移植都有,漏了 yield 失效);
 //! - `SR.CNTIF`(bit0)区分真 tick 与软中断请求,**写 0 清**(WCH 惯例,待上板复核);
 //! - ROM 启动头:官方 `startup_CH572.S` 的 `.vector` 第 5 字同样是
 //!   `0xF3F9BDA9`,用官方 `Link.ld` 现场链接实测**同样落在 flash 0x14**
@@ -37,6 +41,7 @@
 
 mod port;
 
+use super::wch_pfic;
 use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
@@ -69,10 +74,14 @@ pub(crate) fn setup_intrrupt() {
         //    (SWIE 在 SR.bit31,但本口不用它——yield 走 SWI_IRQn=14,见 irq())
         stk.write_volatile(0x0000_000F);
     }
-    // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
-    let ienr0 = (PFIC_BASE + 0x100) as *mut u32;
+    // 3. PFIC:使能 **SysTick(bit12) + 软中断(bit14)** —— pending 与 enable 是
+    //    两组分离的寄存器:`irq()` 只负责置 pending(`IPSR[0]`),中断要被取走还得
+    //    在 `IENR[0]` 里使能该 IRQ(官方 `PFIC_EnableIRQ(SWI_IRQn)` 就是这一步)。
+    //    漏掉 bit14 → `irq()` 的 pending 永远不被取走(yield/抢占只剩 tick 兜底),
+    //    而构建/门禁/host 测试全绿——2026-09-19 PR #19 独立审查实测。
+    let ienr0 = (PFIC_BASE + wch_pfic::IENR_OFFSET) as *mut u32;
     unsafe {
-        ienr0.write_volatile(1 << 12);
+        ienr0.write_volatile(wch_pfic::ienr_enable_mask());
     }
 }
 
@@ -139,20 +148,22 @@ impl Portable for Ch572Porting {
     /// 不用(全 SDK 零处调用),而官方三套 RTOS 移植的 yield 一律走
     /// `PFIC_SetPendingIRQ(SWI_IRQn)` + `SW_Handler`(CH572 的 `SWI_IRQn=14`);
     /// 走官方路径把"SWIE 到底灵不灵"这个只能上板排除的赌注消掉。
+    /// 该 IRQ 的使能位在 `setup_intrrupt()` 里与 SysTick 一并置上(`IENR[0]`
+    /// bit14)——置 pending 与使能缺一,本函数就是空操作。
     #[inline]
     fn irq() {
-        let ipsr0 = (PFIC_BASE + 0x200) as *mut u32;
+        let ipsr0 = (PFIC_BASE + wch_pfic::IPSR_OFFSET) as *mut u32;
         unsafe {
-            ipsr0.write_volatile(1 << 14);
+            ipsr0.write_volatile(wch_pfic::irq_bit(wch_pfic::SWI_IRQ));
         }
     }
     /// 关闭软中断:清 `SWI_IRQn=14` 的 pending(`IPRR[0] @0xE000E280` bit14),
     /// 防残留 pending 让 trap 出口立刻重入。
     #[inline]
     fn disable_irq() {
-        let iprr0 = (PFIC_BASE + 0x280) as *mut u32;
+        let iprr0 = (PFIC_BASE + wch_pfic::IPRR_OFFSET) as *mut u32;
         unsafe {
-            iprr0.write_volatile(1 << 14);
+            iprr0.write_volatile(wch_pfic::irq_bit(wch_pfic::SWI_IRQ));
         }
     }
 
@@ -167,6 +178,9 @@ impl Portable for Ch572Porting {
     /// CH572 是否实现它没有一手证据,未实现时读出恒为常量 → 死循环;SysTick 是
     /// 内核点拍赖以工作的外设,必然实现)。计数器 32 位、按 CMP 自动重装,
     /// 等待按"到下次重装还剩多少"分块(跨重装差值见 `crate::chip::delay`,有 host 单测)。
+    ///
+    /// ⚠️ **前置条件:SysTick 已在跑**(即 `start_scheduler()` 之后)。计数器停着时
+    /// `elapsed()` 恒为 0,等待不会结束——`start_scheduler()` 之前需要延时用忙等。
     #[inline]
     fn delay_us(us: u64) {
         let period = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64; // = TICKS + 1

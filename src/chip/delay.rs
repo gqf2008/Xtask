@@ -67,7 +67,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn chunk_never_equals_full_period() {
         // 回归:起点落在重装点上(room = 整周期)时必须钳到 period-1,
         // 否则 elapsed()(模运算,最大 period-1)永远够不到 chunk → 死循环
