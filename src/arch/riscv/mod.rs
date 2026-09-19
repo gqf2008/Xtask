@@ -5,6 +5,11 @@
 pub use riscv::*;
 pub use riscv_rt as rt;
 
+/// `critical-section` 的 RISC-V 实现:无硬件原子的目标(riscv32imc/CH572、
+/// esp32c3)靠它让 `atomic-polyfill` 的兜底路径链得上——详见本文件内注释。
+#[cfg(any(feature = "esp32c3", not(target_has_atomic = "ptr")))]
+mod critical;
+
 /// 异常处理函数
 #[allow(non_snake_case)]
 #[no_mangle]

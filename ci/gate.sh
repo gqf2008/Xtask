@@ -52,6 +52,16 @@ if [ -n "${PY:-}" ]; then
 else
     echo "python 未安装,跳过 CH583 启动头校验(仅保留构建门禁)"
 fi
+# 无 A 扩展目标(riscv32imc;CH572/青稞无 A 档位、esp32c3 真身):同一示例必须
+# 也能编译+链接——内核的 Arc/信号量原子走 atomic-polyfill 的 critical-section
+# 兜底(src/arch/riscv/critical.rs),缺那份实现时编译能过、链接缺符号
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
+    --features ch583,timer --target riscv32imc-unknown-none-elf --release
+IMC_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multitask_ch583"
+if [ -n "${PY:-}" ]; then
+    # 启动头布局与目标 ISA 无关,同一脚本顺带钉住 imc 产物
+    "$PY" "$ROOT_DIR/ci/check_ch583_boot.py" "$IMC_ELF"
+fi
 
 echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
