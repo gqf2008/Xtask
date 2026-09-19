@@ -77,6 +77,11 @@ CH572_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multita
 if [ -n "${PY:-}" ]; then
     "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$CH572_ELF"
 fi
+# ESP32-C3 真身是 **RV32IMC**(无 A 扩展):必须按 riscv32imc 构建——用 riscv32imac
+# 编出的同名产物实测含 12 条 A 扩展指令(amo/lr/sc,来自 Arc/信号量的读改写),
+# 真芯片执行到就是非法指令;按真 ISA 构建后为 0 条(原子走 critical-section 垫片)
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_esp32c3 \
+    --features esp32c3,timer --target riscv32imc-unknown-none-elf --release
 
 echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
