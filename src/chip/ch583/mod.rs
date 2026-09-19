@@ -26,9 +26,11 @@
 //!   `PFIC_SetPendingIRQ(SWI_IRQn)`)。本口沿用 ch32v103 模板的 SWIE 路线,
 //!   上板须确认(示例头部核对点④);若 SWIE 无效果,备选即改走 IRQ 14。
 //! - **SysTick@0xE000F000**(WCH 自有,非 CLINT mtime);`SR.CNTIF` 写 0 清零。
-//! - **无 A 扩展(如 CH572)不是换个 target 的事**:`riscv32imc-unknown-none-elf`
-//!   实测只有 `target_has_atomic_load_store`、没有 `target_has_atomic`,内核里
-//!   `fetch_add`/`swap` 这类 RMW 编不过——需要先做"关中断/自旋锁"原子垫片;
+//! - **无 A 扩展(如 CH572)用 `riscv32imc-unknown-none-elf`**:该 target 实测只有
+//!   `target_has_atomic_load_store`、没有 `target_has_atomic`,内核 `Arc`/信号量的
+//!   `fetch_add`/`swap` 由 `atomic-polyfill` 兜到 `critical-section`——RISC-V 侧那份
+//!   实现在 `src/arch/riscv/critical.rs`(`mstatus.MIE` 存取恢复,单核语义);
+//!   2026-09-19 起 `ci/gate.sh` 用同一示例构建该 target(产物 0 条 AMO/LR/SC)。
 //!   CH583(V4A)有 A 扩展,本口不受影响。
 //!
 //! ⚠️ 真机核对点(构建级验证,板上行为待验):
