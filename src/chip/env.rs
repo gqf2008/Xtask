@@ -117,3 +117,16 @@ pub const TIMER_STACK_SIZE_WORD: usize = 256;
 pub const IDLE_STACK_SIZE_WORD: usize = 512;
 #[cfg(feature = "ch572")]
 pub const IDLE_STACK_SIZE_WORD: usize = 256;
+
+/// 内核数组定界用的**核数上限**——实际参与调度的核数由 `Porting::core_count()`
+/// 运行期决定,恒 ≤ 本值;`CURRENT_TASK`/`IDLE_TASKS`/`READYQ`/`READY_BITS`
+/// 等每核数组一律按它定界。
+///
+/// **按芯片取值**:WCH 各口(ch32v103/203/307、ch583、ch572)都是单核,`READYQ`
+/// 的"每核 × 16 优先级桶"里那个"每核"维度留 1 份就够——按默认 16 算,它白占
+/// `16 × 16 × 16B = 4K`(实测符号大小 `READYQ = 0x1000`),在 12K RAM 的
+/// **CH572 上等于三分之一的 RAM**。多核口(qemu_riscv 的 SMP)保持 16。
+#[cfg(any(feature = "ch572", feature = "ch583"))]
+pub const MAX_HARTS: usize = 1;
+#[cfg(not(any(feature = "ch572", feature = "ch583")))]
+pub const MAX_HARTS: usize = 16;

@@ -2,6 +2,9 @@
 #![no_main]
 
 extern crate alloc;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 // CH572(QingKe 无 A 扩展,RV32IMC)多任务示例 —— 以 ch583 示例为模板,按 12K SRAM 缩编。
 //
@@ -34,14 +37,17 @@ fn main() -> ! {
     //   软件定时器任务 256 字 ≈ 1.16K(本口把默认 1024 字压到 256,已由 QEMU
     //     24 项内核自测 + 栈围栏守卫验证够用)
     //   idle 任务 256 字 ≈ 1.16K(默认 512 → 256,同上)
-    //   示例任务 192 字栈(768B)→ 每个 ≈ 0.93K
-    // 实测:3 个示例任务(无格式化调用)用到 ≈5.1K,故取 5.5K;堆顶距中断栈基
-    // (_stack_start-512)还有 ~1.6K。
+    //   示例任务用内核默认的 256 字栈(1K)→ 每个 ≈ 1.19K
+    // 实测:5 个示例任务 + timer + idle ≈ 8.3K,故取 9.5K(堆顶 0x200027B0,
+    // 距中断栈基 0x20002E00 还有 ~1.6K)。
+    // 相比最初版本能这么配,是因为 `MAX_HARTS` 在本口按 1 取值,`READYQ`
+    // 从 4K 缩到 256B(单核口那 16 份"每核"维度是白占;见 src/chip/env.rs)。
     // ⚠️ 再加任务、或在任务里做 `format!`/日志格式化,都要同步加大栈与堆
     //   (内核的栈围栏会以 `stack overflow <任务名>` panic 报出来,不会静默)。
-    xtask::init_heap(start_addr, 5 * 1024 + 512);
+    xtask::init_heap(start_addr, 9 * 1024 + 512);
 
     example_semaphore();
+    example_queue();
     xtask::start()
 }
 
@@ -52,28 +58,58 @@ fn example_semaphore() {
     // 1 个投递者 + 2 个同优先级等待者:覆盖 IPC 与同优先级时间片
     TaskBuilder::new()
         .name("sem.poster")
-        .stack_size(192)
+        .stack_size(256)
         .spawn(move || loop {
             sender.post();
             xtask::sleep_ms(200);
         });
     TaskBuilder::new()
         .name("sem.waiter1")
-        .stack_size(192)
+        .stack_size(256)
         .spawn(move || loop {
             recver.wait();
             log::info!("收到计数信号1 {}", xtask::tick());
         });
     TaskBuilder::new()
         .name("sem.waiter2")
-        .stack_size(192)
+        .stack_size(256)
         .spawn(move || loop {
             recver2.wait();
             log::info!("收到计数信号2 {}", xtask::tick());
         });
 }
 
-// 注:ch583 示例里的 Queue(消息队列)示例在 12K 档位上放不下——每个默认任务
-// (256 字栈)≈1.2K,而 idle+软件定时器已占 2.3K、总可用堆 ~6.3K;要演示队列
-// 得把示例任务栈压到 128 字(实测够,但不做格式化)并再减任务数。
-// 需要队列演示时按上面 main 里的实测账重新配。
+fn example_queue() {
+    #[derive(Debug, Clone)]
+    struct Message {
+        id: u64,
+        msg: String,
+        data: Vec<u8>,
+    }
+    let qsender = Queue::new();
+    let qrecv = qsender.clone();
+    TaskBuilder::new()
+        .name("queue.sender")
+        .stack_size(256)
+        .spawn(move || {
+            let mut id = 0;
+            loop {
+                id += 1;
+                let msg = Message {
+                    id,
+                    msg: format!("消息 {}", xtask::tick()),
+                    data: Vec::new(),
+                };
+                qsender.push_back(msg);
+                xtask::sleep_ms(200);
+            }
+        });
+    TaskBuilder::new()
+        .name("queue.recv")
+        .stack_size(256)
+        .spawn(move || loop {
+            if let Some(msg) = qrecv.pop_front() {
+                log::info!("收到消息 id={}", msg.id);
+            }
+        });
+}
