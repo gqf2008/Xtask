@@ -15,8 +15,15 @@
 //! - mcause code = CPU 中断号(直接分发,无需查状态寄存器)。
 //!
 //! ⚠️ 真机核对点(构建级验证 2026-08-23,板上行为待验):
-//! ①启动方式——riscv-rt 直链需要 C3 的 **direct boot** 模式(flash 头部
-//!   magic;常规经 ROM bootloader 需要 esp镜像头,本口未做);
+//! ①启动方式——两条路都留着:**(a) direct boot**:把 ELF 直接烧到 flash `0x0`
+//!   (ROM 读 0x0 的镜像头并跳到 entry);**(b) 常规路径**:用 esptool 把本 ELF
+//!   转成 esp 镜像,配合 esp-idf 的 bootloader + 分区表把 app 烧到 `0x10000`。
+//!   (b) 的**格式已在本机验证**(2026-09-19,esptool 5.4.0):
+//!   `esptool --chip esp32c3 elf2image <本口 imc ELF>` 直接成功,产物经
+//!   `esptool image_info` 复核 = magic `0xE9` / 3 段 / entry `0x42000000` /
+//!   Chip ID 5(ESP32-C3) / WP 禁用。
+//!   ⚠️ 走 (b) 时 IDF bootloader 还会校验 **app 描述符**(`esp_app_desc_t`,
+//!   通常在 `.flash.appdesc` 段),本口尚未提供——上板前要么补它,要么走 (a);
 //! ②复位默认 CPU 时钟 80MHz(env 按此配;PLL 160M 配好后同步改);
 //! ③SYSTIMER 16MHz 时基与周期模式寄存器序列;
 //! ④中断矩阵 map/cpu_int_enable 的位语义(5 位 map 值 = CPU 中断号);
