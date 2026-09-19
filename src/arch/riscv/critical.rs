@@ -2,21 +2,27 @@
 //!
 //! # 谁需要它
 //!
-//! - **无硬件原子**的 RISC-V 目标:`atomic-polyfill` 的 `build.rs` 对
-//!   `riscv32*`(除 `riscv32imac-*` / `riscv32gc-*` / `*-espidf`)一律启用
-//!   polyfill —— 用 `critical-section` 把读改写包起来。缺这份实现时
-//!   **编译能过、链接报** `undefined symbol: _critical_section_1_0_acquire`
-//!   (2026-09-19 在 `riscv32imc-unknown-none-elf` 上实测复现;
-//!   CH572/无 A 档位、以及 esp32c3 真身都是这一类目标)。
-//! - **esp32c3**:其 PAC 自身引用 `critical-section`,故该 feature 下无论目标
-//!   有没有 A 扩展都要提供(ARM 侧不走这里,由 `cortex-m` 的
-//!   `critical-section-single-core` feature 提供)。
+//! 凡是 riscv32 目标都要提供,门控见 `src/arch/riscv/mod.rs`。原因:`atomic-polyfill`
+//! 的 `build.rs` 表是 **(≤32 位/指针档, u64/i64 档) 二元组**:
+//!
+//! ```text
+//! ("riscv32imac-*", (Native, Polyfill))   // 有 A:仅 ≤32 位/指针走原生
+//! ("riscv32*",      (Polyfill, Polyfill)) // 无 A:两档都走 polyfill
+//! ```
+//!
+//! 即 `AtomicU64`/`AtomicI64` 在任何 riscv32 档位上都经 `critical-section`;
+//! ≤32 位原子在有 A 的口上不需要它,在无 A 的口上需要。缺这份实现的症状是
+//! **编译过、链接报** `undefined symbol: _critical_section_1_0_acquire/release`
+//! (2026-09-19 在 `riscv32imc-unknown-none-elf` 全量构建、以及
+//! `riscv32imac-unknown-none-elf` 的 `AtomicU64` 探针上各实测复现一次)。
+//! esp32c3 另有理由:其 PAC 自身引用 `critical-section`(ARM 侧不走这里,
+//! 由 `cortex-m` 的 `critical-section-single-core` feature 提供)。
 //!
 //! # 语义
 //!
-//! 存 `mstatus.MIE` → 关中断 → 临界区 → 按旧值恢复,与 `Porting::free` 同款。
+//! 存 `mstatus.MIE` → 关中断 → 临界区 → 按旧值恢复,与 `Porting::free` 同款;
+//! 嵌套天然正确(内层 acquire 存到的是"已关",释放不会提前开中断)。
 //! **单核假设**:多核口必须换成自旋锁版本,只关本核中断挡不住别核。
-//! 有 A 扩展的 RISC-V 口不需要它(`atomic-polyfill` 直接复用 `core::sync::atomic`)。
 
 /// 进临界区:返回"进入前中断是否开着"
 #[no_mangle]
