@@ -1,57 +1,60 @@
 //! 移植层定义&配置
 
-#[cfg(all(feature = "gd32vf103", not(test)))]
-pub use crate::chip::gd32vf103::Gd32vf103Porting as Porting;
+// ---- 芯片移植实现的**单一来源清单** ----------------------------------------
+// 每个芯片在这里登记一次(feature 名 => 实现类型),下面由宏一次性生成:
+//   ① 正选别名 `pub use <实现类型> as Porting`;
+//   ② 兜底桩的 feature 名单(`not(any(...))` → `DefaultPorting`);
+//   ③ 编译期守卫:`RealPorting` 标记实现 + "选了芯片就不许落兜底桩"断言。
+//
+// 为什么收成一处:①与②原本是两份手写名单,新增芯片时只改一份,`Porting`
+// 就静默落到 `DefaultPorting`(各方法 `unimplemented!()`),构建与门禁全绿、
+// 直到运行期 `xtask::start()` 才 panic——2026-09-18 的 ch583 骨架 PR 实测
+// 踩过此坑(见 PR #15 自审节 / issue #14)。
+macro_rules! chip_portings {
+    ($($feat:literal => $ty:path),* $(,)?) => {
+        $(
+            #[cfg(all(feature = $feat, not(test)))]
+            pub use $ty as Porting;
+        )*
 
-#[cfg(all(feature = "stm32f4", not(test)))]
-pub use crate::chip::stm32f4::STM32F4Porting as Porting;
+        #[cfg(all(not(test), not(any($(feature = $feat),*))))]
+        pub use DefaultPorting as Porting;
 
-#[cfg(all(feature = "stm32f1", not(test)))]
-pub use crate::chip::stm32f1::STM32F1Porting as Porting;
+        /// 真实芯片移植实现的标记 trait:兜底桩(`DefaultPorting`)与 host
+        /// mock(`HostPorting`)故意不实现——配合下面的编译期断言,把"选了
+        /// 芯片 feature 却落到兜底桩"钉成编译错误(否则要等运行期
+        /// `unimplemented!()` 才暴露)。
+        pub trait RealPorting {}
 
-#[cfg(all(feature = "rp2040", not(test)))]
-pub use crate::chip::rp2040::RP2040Porting as Porting;
+        $(
+            #[cfg(all(feature = $feat, not(test)))]
+            impl RealPorting for $ty {}
+        )*
 
-#[cfg(all(feature = "stm32h7", not(test)))]
-pub use crate::chip::stm32h7::STM32H7Porting as Porting;
+        // 编译期守卫:选了任一芯片 feature 时,`Porting` 必须是真实实现
+        #[cfg(all(not(test), any($(feature = $feat),*)))]
+        const _: fn() = {
+            fn assert_real_porting<T: RealPorting>() {}
+            assert_real_porting::<Porting>
+        };
+    };
+}
 
-#[cfg(all(feature = "cm32m4", not(test)))]
-pub use crate::chip::cm32m4::CM32M4Porting as Porting;
-#[cfg(all(feature = "ch32v307", not(test)))]
-pub use crate::chip::ch32v307::Ch32v307Porting as Porting;
-#[cfg(all(feature = "ch32v203", not(test)))]
-pub use crate::chip::ch32v203::Ch32v203Porting as Porting;
-#[cfg(all(feature = "ch32v103", not(test)))]
-pub use crate::chip::ch32v103::Ch32v103Porting as Porting;
-#[cfg(all(feature = "ch583", not(test)))]
-pub use crate::chip::ch583::Ch583Porting as Porting;
-#[cfg(all(feature = "esp32c3", not(test)))]
-pub use crate::chip::esp32c3::Esp32c3Porting as Porting;
-#[cfg(all(feature = "qemu_riscv", not(test)))]
-pub use crate::chip::qemu_riscv::QemuRiscvPorting as Porting;
-
-#[cfg(all(feature = "qemu_arm_r52", not(test)))]
-pub use crate::chip::qemu_arm_r52::QemuArmR52Porting as Porting;
-
-#[cfg(all(
-    not(test),
-    not(any(
-        feature = "gd32vf103",
-        feature = "stm32f4",
-        feature = "stm32f1",
-        feature = "rp2040",
-        feature = "stm32h7",
-        feature = "cm32m4",
-        feature = "ch32v307",
-        feature = "ch32v203",
-        feature = "ch32v103",
-        feature = "ch583",
-        feature = "esp32c3",
-        feature = "qemu_riscv",
-        feature = "qemu_arm_r52"
-    ))
-))]
-pub use DefaultPorting as Porting;
+chip_portings! {
+    "gd32vf103" => crate::chip::gd32vf103::Gd32vf103Porting,
+    "stm32f4" => crate::chip::stm32f4::STM32F4Porting,
+    "stm32f1" => crate::chip::stm32f1::STM32F1Porting,
+    "rp2040" => crate::chip::rp2040::RP2040Porting,
+    "stm32h7" => crate::chip::stm32h7::STM32H7Porting,
+    "cm32m4" => crate::chip::cm32m4::CM32M4Porting,
+    "ch32v307" => crate::chip::ch32v307::Ch32v307Porting,
+    "ch32v203" => crate::chip::ch32v203::Ch32v203Porting,
+    "ch32v103" => crate::chip::ch32v103::Ch32v103Porting,
+    "ch583" => crate::chip::ch583::Ch583Porting,
+    "esp32c3" => crate::chip::esp32c3::Esp32c3Porting,
+    "qemu_riscv" => crate::chip::qemu_riscv::QemuRiscvPorting,
+    "qemu_arm_r52" => crate::chip::qemu_arm_r52::QemuArmR52Porting,
+}
 
 // host 测试环境：提供一个可运行的 Porting mock，让纯逻辑（信号量、队列、总线、延时队列）
 // 能在 `cargo test` 下被驱动。单线程语义下临界区只是一个标记，无需真实关中断。
