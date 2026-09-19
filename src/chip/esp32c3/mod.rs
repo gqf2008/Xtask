@@ -79,22 +79,9 @@ pub(crate) fn reset_systick() {
     syst.int_clr.write(|w| w.target0_int_clr().set_bit());
 }
 
-// critical-section 1.x 的 RISC-V 裸实现(ARM 侧由 cortex-m 的
-// critical-section-single-core feature 提供;PAC 引用了 critical-section,
-// 这里用本核 mstatus.MIE 实现同一语义——与 Porting::free 一致)
-#[no_mangle]
-unsafe extern "C" fn _critical_section_1_0_acquire() -> bool {
-    let was_enabled = riscv::register::mstatus::read().mie();
-    riscv::interrupt::disable();
-    was_enabled
-}
-
-#[no_mangle]
-unsafe extern "C" fn _critical_section_1_0_release(was_enabled: bool) {
-    if was_enabled {
-        riscv::interrupt::enable();
-    }
-}
+// critical-section 1.x 的 RISC-V 实现已收归 `src/arch/riscv/critical.rs`
+// (那份按 `feature = "esp32c3"` 或无硬件原子目标统一提供;本文件不再自持一份,
+// 避免将来无 A 档位(riscv32imc/CH572)漏链接)
 
 /// ESP32-C3 芯片移植层实现
 pub struct Esp32c3Porting;

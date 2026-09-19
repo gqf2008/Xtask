@@ -28,6 +28,7 @@
 - [x] 宿主回归：`cargo test --lib` 默认 features 实测 **82 passed**(2026-09-19 实测,旧记 80 已修正);门禁全特征组合(见 `ci/gate.sh`,含 fs/net/usb/ble)实测 **159 passed**(2026-09-03,rustc 1.97;旧计数 148 已按实测修正,历史见 issue #11;计数随新增测试浮动,以 `ci/gate.sh` 实测为准)
 - [x] QEMU 执行级：`ci/gate.sh` 在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 24 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(24/24 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
 - [x] 产物级：`ci/gate.sh` 另校验 `ch583`(QingKe V4A,无 QEMU 机器可跑)的 ROM 启动头——flash `0x00..0x17` 的入口跳转 + 向量表第 5 字 boot option `0xF3F9BDA9` @`0x14`(官方 `startup_CH583.S`/`Link.ld` 的位置);链接期 `ASSERT` 钉地址、`ci/check_ch583_boot.py` 钉产物字节,缺了它板上停在 ISP 而构建/门禁全绿
+- [x] 无 A 扩展目标：`riscv32imc-unknown-none-elf`(CH572/青稞无 A 档位、esp32c3 真身)也能编译+链接同一示例——内核的原子读改写本就包在 `atomic-polyfill` 里(arc/semaphore/notify),缺的 `critical-section` RISC-V 实现已收归 `src/arch/riscv/critical.rs`(`mstatus.MIE` 存取恢复,单核语义);实测 **imc 产物 0 条 AMO/LR/SC**,有 A 的 imac 产物 12 条作阳性对照(即无 A 机器上不会踩非法指令),门禁含该构建步骤
 - [ ] 真机验证：gd32vf103 已验；f4/f1 常数、h7 时序、cm32m4、rp2040、ch32 系、ch58x、esp32c3 待上板
 
 ### 移植的芯片

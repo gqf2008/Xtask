@@ -17,9 +17,10 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2025-08-08
-          # 内核门禁目标集:riscv32imac(gd32/qemu 示例全链);host 回归用宿主
-          # 工具链自带目标;R5 门禁独立在 r52.yml(armv7r)
-          targets: riscv32imac-unknown-none-elf
+          # 内核门禁目标集:riscv32imac(gd32/qemu 示例全链)+ riscv32imc
+          # (无 A 扩展档位:CH572/esp32c3 真身的原子垫片路径,见 ci/gate.sh);
+          # host 回归用宿主工具链自带目标;R5 门禁独立在 r52.yml(armv7r)
+          targets: riscv32imac-unknown-none-elf riscv32imc-unknown-none-elf
 
       - name: 安装 QEMU(riscv32)
         run: |
