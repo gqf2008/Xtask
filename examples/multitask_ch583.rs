@@ -32,11 +32,15 @@ fn main() -> ! {
     }
     let start_addr = unsafe { &_sheap as *const u8 as usize };
     // 32K SRAM:静态(data 4.1K + bss 0.3K)后到 _stack_start 还有 ~27.6K。
-    // 本示例要起的任务栈(全部从堆上分配):15 个默认任务 ×256 字(≈1.03K)
-    // + 软件定时器任务 1024 字(≈4.1K),加 Task 结构与同步对象 ≈21.5K,
-    // 故取 24K(堆顶 0x20007188,距 _stack_start 0x20008000 仍留 3.6K)。
-    // ⚠️ 若把堆改回 16K(本 PR 之前的值),上板第一次创建任务就会
-    // `panic!("memory out")`——会被误判成移植层的寄存器问题。
+    // 任务栈全部从堆上分配,实测(QEMU 探针:同一 32 位分配器/同一 Task 布局,
+    // 方法见 PR #15 评论——WCH 侧无法仿真,只能这样取数):
+    //   默认任务(256 字栈 + Task 112B + 名字)≈ 1.19K
+    //   软件定时器任务(1024 字,timer 特征)≈ 4.4K
+    //   idle 任务(512 字)≈ 2.2K
+    // 12 个示例任务 + timer + idle ≈ 20.9K,故取 24K(堆顶 0x20007188,
+    // 距中断栈基 0x20007E00 还有 3.2K,首次上板余量约 3.6K)。
+    // ⚠️ 不要再往本示例加任务:15 个任务时实测需 24.4K,24K 堆会在 start()
+    // 里 `panic!("memory out")`——会被误判成移植层的寄存器问题。
     xtask::init_heap(start_addr, 24 * 1024);
 
     //example_notify();
@@ -192,33 +196,14 @@ fn example_semaphore() {
 }
 
 fn example_task() {
+    // 只保留 2 个(原 ch32v103 示例是 5 个):32K SRAM 上 12 个示例任务 +
+    // timer + idle 实测 20.9K,再加任务会在 24K 堆上 OOM(见 main 里的实测注)
     xtask::spawn(|| {
         for i in 0..10 {
             log::info!("{} 循环测试任务0", i + 1);
             xtask::sleep_ms(1000);
         }
     });
-    xtask::spawn(|| {
-        for i in 0..50 {
-            log::info!("{} 循环测试任务1", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
-
-    xtask::spawn(|| {
-        for i in 0..100 {
-            log::info!("{} 循环测试任务2", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
-
-    xtask::spawn(|| {
-        for i in 0..500 {
-            log::info!("{} 循环测试任务4", i + 1);
-            xtask::sleep_ms(1000);
-        }
-    });
-
     xtask::spawn(|| loop {
         log::info!("死循环测试任务 {}", tick());
         xtask::sleep_ms(10000);
