@@ -24,7 +24,13 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else \
         "target/riscv32imac-unknown-none-elf/release/examples/multitask_ch583"
     data = open(path, "rb").read()
-    assert data[:4] == b"\x7fELF", "不是 ELF 文件"
+    # 显式判断而非 assert:-O 下 assert 会被关掉,校验不能依赖它
+    if len(data) < 0x34 or data[:4] != b"\x7fELF":
+        print("FAIL: 不是 ELF 文件")
+        return 1
+    if data[4] != 1 or data[5] != 1:
+        print(f"FAIL: 期望 32 位小端 ELF,实测 class={data[4]} endian={data[5]}")
+        return 1
 
     e_shoff = struct.unpack_from("<I", data, 0x20)[0]
     e_shentsize = struct.unpack_from("<H", data, 0x2E)[0]
@@ -67,8 +73,12 @@ def main():
         return struct.unpack_from("<I", data, seg[0] + a)[0]
 
     w0 = word(0)
-    if w0 & 0x7F != 0x6F:  # JAL(x0, off):ROM 从 0x0 取指,首字必须是 4 字节跳转
-        print(f"FAIL: flash 0x0 不是 4 字节跳转指令(0x{w0:08X})——ROM 取指入口失效")
+    # ROM 从 0x0 取指:首字必须是跳转(JAL,或 2 字节 c.j —— 两种都合法;
+    # 真正钉死布局的是上面的 .bootvec 段地址/长度与下面的魔数偏移)
+    is_jal = w0 & 0x7F == 0x6F
+    is_cj = w0 & 0xE003 == 0xA001
+    if not (is_jal or is_cj):
+        print(f"FAIL: flash 0x0 不是跳转指令(JAL/c.j),实测 0x{w0:08X}——ROM 取指入口失效")
         return 1
     for a in (0x04, 0x08):
         if word(a) != 0:
