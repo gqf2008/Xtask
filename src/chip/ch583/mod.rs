@@ -1,6 +1,7 @@
 //! CH583 移植模块实现(QingKe V4A(第三代以上 PFIC 内核,SysTick 独立外设) 内核,
 //! PFIC + WCH 自有 SysTick 模型)。以 `ch32v103`(V3A)为模板——两者架构同源:
-//! 都用 `STK_CTLR.SWIE` 触发软中断、都是 36 字纯软件全保存帧、都是 Direct mtvec。
+//! 都是 36 字纯软件全保存帧、都是 Direct mtvec(模板用 `STK_CTLR.SWIE` 请求切换,
+//! 本口改成官方 RTOS 移植的 `SWI_IRQn=14`,见下)。
 //!
 //! 与 `ch32v103` 的关键差异:
 //! - **代码基址 = `0x00000000`**(不是 `0x08000000`!),见 `memory.x`;
@@ -16,15 +17,14 @@
 //!   HWSTKEN 在 bit0),上下文切换回到**纯软件全保存**模型(36 字帧)。
 //! - **mtvec = Direct 模式**:单入口 `_start_trap` 读 `mcause` 分发——
 //!   中断号 12 = SysTick;其余走 `DefaultHandler`。
-//! - **软中断(yield/抢占请求)复用 SysTick 入口**:`STK_CTLR.SWIE`(bit31)
-//!   写 1 立即触发 SysTick 中断——ISR 读 `STK_SR.CNTIF` 区分真 tick 与
-//!   软中断请求。**与 ch32v103 完全同款**(CH572 的 SWIE 在 `SR` 而非
-//!   `CTLR`,故 CH572 需要另写,本 CH583 口可直接复用)。
-//!   ⚠️ 但官方 CH583 的 FreeRTOS / RT-Thread / HarmonyOS 三套移植**都不走
-//!   `CTLR.SWIE`**(SDK 里只定义、零使用):它们一律用 QingKe 专用
-//!   `SWI_IRQn=14` + `SW_Handler`(FreeRTOS `portYIELD()` =
-//!   `PFIC_SetPendingIRQ(SWI_IRQn)`)。本口沿用 ch32v103 模板的 SWIE 路线,
-//!   上板须确认(示例头部核对点④);若 SWIE 无效果,备选即改走 IRQ 14。
+//! - **软中断(yield/抢占请求)走 QingKe 专用 `SWI_IRQn=14`**:
+//!   `irq()` 置 `PFIC->IPSR[0]` 的 bit14(pending),trap 侧按 mcause=14 直接进
+//!   切换/恢复路径;`disable_irq()` 用 `IPRR[0]` 清 pending。
+//!   这是**官方**路径:官方 CH583 的 FreeRTOS / RT-Thread / HarmonyOS 三套移植
+//!   一处都没用 `STK_CTLR.SWIE`(SDK 里只定义、零使用),yield 一律
+//!   `PFIC_SetPendingIRQ(SWI_IRQn)` + `SW_Handler`。改走它之后,"SWIE 在真机上
+//!   到底灵不灵"这个只能上板才能排除的赌注就没了——本口初始化与运行期都不碰 SWIE。
+//!   (ch32v103/ch32v203/ch32v307 三口仍沿模板的 SWIE 路线,见各口注。)
 //! - **SysTick@0xE000F000**(WCH 自有,非 CLINT mtime);`SR.CNTIF` 写 0 清零。
 //! - **无 A 扩展(如 CH572)用 `riscv32imc-unknown-none-elf`**:该 target 实测只有
 //!   `target_has_atomic_load_store`、没有 `target_has_atomic`,内核 `Arc`/信号量的
@@ -40,8 +40,9 @@
 //! ③`csrw 0xbc0, 0x1f`(官方 `startup_CH583.S` 的 reset 序列同款,已按 SDK
 //!   源码核对;上板只需确认不触发 Illegal Instruction);
 //! ④`0x804=0` 后异常/中断入口是否确实不再硬件压栈(决定 36 字帧成立);
-//! ⑤`STK_CTLR.SWIE` 置 1 后是否即刻进 `SysTick`、`CNTIF` 是否仍为 0;
-//! ⑥`mcycle` 是否实现(决定 `delay_us`,见下)。
+//! ⑤置 `SWI_IRQn=14` pending 后是否即刻进 trap、并沿 mcause=14 走切换
+//!   (官方三套移植的 yield 路径;`SWIE` 已不使用);
+//! ⑥`delay_us` 的实测精度(现用 SysTick 计数,不再依赖 `mcycle`)。
 //! BootLoader 默认开启:本口已在 flash `0x0` 复刻官方启动头(`.bootvec` =
 //! 入口跳转 + 向量表前 5 字,第 5 字为 boot option `0xF3F9BDA9`;见 `port.S`
 //! 与 `memory.x` 的链接期 ASSERT)。若上板仍停在 ISP,则改用关闭 BootLoader 的
@@ -52,7 +53,7 @@
 
 mod port;
 
-use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
+use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
 use crate::task::Task;
@@ -83,10 +84,10 @@ pub(crate) fn setup_intrrupt() {
         //    ——逐位对齐官方 `EVT/EXAM/SRC/RVMSIS/core_riscv.h` 的
         //    `SysTick_Config()`:`SysTick->CMP = ticks - 1;` 然后
         //    `CTLR = INIT|STRE|STCLK|STIE|STE`。
-        //    **官方不带 SWIE(bit31)**:SWIE 只在运行期用于请求切换(见 `irq()`)。
-        //    若初始化时置 SWIE,第一个任务 `mret`(MIE←MPIE=1)后会立刻多进
-        //    一次 trap,而该 trap 早于 restore_ctx.S 写 mscratch → 隐含依赖
-        //    "进入 setup_intrrupt 时 mstatus.MIE=0";去掉后无此依赖。
+        //    **不含 SWIE(bit31)**:本口的 yield 走 `SWI_IRQn=14`(见 `irq()`),
+        //    初始化与运行期都不碰 SWIE。顺带免掉一个隐含依赖:若初始化就置 SWIE,
+        //    第一个任务 `mret`(MIE←MPIE=1)后会立刻多进一次 trap,而该 trap 早于
+        //    restore_ctx.S 写 mscratch → 依赖"进入 setup_intrrupt 时 mstatus.MIE=0"。
         stk.write_volatile(0x0000_002F);
     }
     // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
@@ -152,31 +153,24 @@ impl Portable for Ch583Porting {
         unsafe { asm!(include_str!("restore_ctx.S"), options(noreturn, raw)) };
     }
 
-    /// 软中断(调度请求):写 STK_CTLR.SWIE(bit31)触发 SysTick 入口。
-    /// ISR 读 SR.CNTIF 区分真 tick 与本请求(见 port.rs 的 SysTick 处理)。
-    /// 官方 CH583 三套移植走 `SWI_IRQn=14`(见模块头注),本口沿用模板的 SWIE。
-    ///
-    /// 读改写时**显式掩掉 INIT(bit5)**:INIT 与 SWIE 同寄存器,而它是否为
-    /// 自清触发位没有一手证据(官方 `SysTick_Config` 只在初始化写一次 CTLR、
-    /// 之后从不读改写,SDK 给不出答案)。若它是电平位,回写会让每次 yield 都
-    /// 重新装载 64 位计数器 → tick 账漂移;掩掉后两种情况都安全。
+    /// 软中断(调度请求):置 PFIC 的 `SWI_IRQn=14` pending
+    /// (`IPSR[0] @0xE000E200` bit14)——官方三套 RTOS 移植的 yield 机制
+    /// (`PFIC_SetPendingIRQ(SWI_IRQn)`),见模块头注。
     #[inline]
     fn irq() {
-        const SWIE: u32 = 1 << 31;
-        const INIT: u32 = 1 << 5;
-        let ctlr = STK_BASE as *mut u32;
+        let ipsr0 = (PFIC_BASE + 0x200) as *mut u32;
         unsafe {
-            ctlr.write_volatile((ctlr.read_volatile() & !INIT) | SWIE);
+            ipsr0.write_volatile(1 << 14);
         }
     }
-    /// 关闭软中断(SWIE 是触发位,自清;防御性清一下——同样掩掉 INIT)
+    /// 关闭软中断:清 `SWI_IRQn=14` 的 pending(`IPRR[0] @0xE000E280` bit14)。
+    /// 取中断时 PFIC 一般已自动清 pending(官方 `SW_Handler` 不显式清),这里
+    /// 防御性再清一次——残留 pending 会让 trap 出口立刻重入。
     #[inline]
     fn disable_irq() {
-        const SWIE: u32 = 1 << 31;
-        const INIT: u32 = 1 << 5;
-        let ctlr = STK_BASE as *mut u32;
+        let iprr0 = (PFIC_BASE + 0x280) as *mut u32;
         unsafe {
-            ctlr.write_volatile(ctlr.read_volatile() & !(SWIE | INIT));
+            iprr0.write_volatile(1 << 14);
         }
     }
 
@@ -195,17 +189,23 @@ impl Portable for Ch583Porting {
         }
     }
 
-    /// 硬件延时,单位 us。
+    /// 硬件延时,单位 us —— **用 SysTick 计数器**实现。
     ///
-    /// ⚠️ **暂沿 `ch32v103` 用 `mcycle` 实现**——CH583 是否实现 `mcycle`
-    /// (Zicntr)待上板核对:若未实现则读出恒为常量,本函数会死循环。届时
-    /// **必须**改为 SysTick/TMR 计时(CH57x 无 DWT,不能照搬 ARM 的 DWT_CYCCNT
-    /// 或 ch32v307 的 DWT)。主频按 env 的 `CPU_CLOCK_HZ`(默认 60MHz)。
+    /// 为什么不再用 `mcycle`(ch32v103 模板的做法):"CH583 是否实现 Zicntr"没有
+    /// 一手证据,而未实现时 `mcycle` 读出恒为常量 → 本函数死循环(上板才能发现)。
+    /// SysTick 则是内核点拍赖以工作的外设,必然实现,故改用它的自由计数:
+    /// 计数器按 `CMP` 自动重装,等待按"到下次重装还剩多少"分块(跨重装差值见
+    /// `crate::chip::delay`,有 host 单测钉边界)。
     #[inline]
     fn delay_us(us: u64) {
-        let t0 = riscv::register::mcycle::read64();
-        let clock = (us * (CPU_CLOCK_HZ as u64)) / 1_000_000;
-        while riscv::register::mcycle::read64().wrapping_sub(t0) <= clock {}
+        let period = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64; // = TICKS + 1
+        let mut remaining = us * (SYSTICK_CLOCK_HZ as u64) / 1_000_000;
+        while remaining > 0 {
+            let start = Self::systick();
+            let chunk = crate::chip::delay::next_chunk(remaining, start, period);
+            while crate::chip::delay::elapsed(start, Self::systick(), period) < chunk {}
+            remaining -= chunk;
+        }
     }
 
     /// 任务创建时为 CPU 准备任务现场(36 字帧,与 port.S 的保存宏互为镜像):

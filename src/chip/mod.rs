@@ -1,6 +1,7 @@
 //! 芯片移植模块
 
 include!("env.rs");
+pub mod delay;
 #[cfg(feature = "cm32m4")]
 pub mod cm32m4;
 #[cfg(feature = "ch32v307")]
