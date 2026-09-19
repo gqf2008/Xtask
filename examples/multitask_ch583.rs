@@ -9,10 +9,15 @@ use alloc::vec::Vec;
 // CH583(QingKe V4A,RISC-V RV32IMAC softfp)多任务示例 —— 以 ch32v103 为模板。
 // ⚠️ 真机核对点(构建级验证已过,板上行为待验):①HPE 关闭路径
 // (intsyscr 0x804 写 0 + 私有 CSR 0xbc0=0x1f);②mtvec Direct 分发与
-// mcause=12(SysTick);③SysTick CTLR=0x8000_002F + SR.CNTIF 写 0 清零;
-// ④SWIE(bit31)触发软中断语义;⑤flash 基址 0x00000000(尾部 64K 留给
-// BootLoader);⑥默认主频 60MHz(env 按此配);⑦`mcycle` 是否实现(决定
-// `delay_us`,未实现则 `delay_us` 会死循环——见 chip/ch583/mod.rs 注)。
+// mcause=12(SysTick);③SysTick CTLR=0x2F(INIT|STRE|STCLK|STIE|STE,
+// **不含 SWIE**——与官方 SysTick_Config 同值) + SR.CNTIF 写 0 清零;
+// ④运行期 CTLR.SWIE(bit31)请求切换的语义(**官方 CH583 的 FreeRTOS/
+// RT-Thread/HarmonyOS 三套移植都不用它,一律走 SWI_IRQn=14 + SW_Handler;
+// 本口沿用 ch32v103 模板的 SWIE,待上板确认,备选即改 IRQ 14**);
+// ⑤flash 基址 0x00000000(尾部 64K 留给 BootLoader);⑥默认主频 60MHz
+// (env 按此配);⑦`mcycle` 是否实现(决定 `delay_us`,未实现则 `delay_us`
+// 会死循环——见 chip/ch583/mod.rs 注);⑧栈账:12 任务+timer+idle 实测
+// ≈20.9K 堆(见 main 注释,别再往上加任务)。
 //
 // TODO(CH583 外设,待上板核对后补):
 //   - GPIO:R32_PA_DIR/R32_PA_OUT @0x400010A0..(与 CH572 窗口大小不同),
