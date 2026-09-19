@@ -37,7 +37,7 @@
   - [x] GD32VF103xx
   - [x] qemu_riscv: QEMU virt 机(标准 CLINT+NS16550;**执行级验证** 2026-08-24——15 项自测 ×10 连稳定,2026-08-26 扩至 23 项(新增 PCP 天花板阻塞、PI 交叉持锁死锁确认、TLSF 碎片共限、TLSF 分配确定性、tickless 错峰唤醒、远期期限单次到点、UART RX 外部中断冻眠唤醒 + 早醒弹墙钟拍账——ch29 章末练习 1 兑现,stdin 喂字节握手),2026-09-02 扩至 24 项(噪声风暴停留 idle 不漂移——tickless 踩坑 5 下半场专项守卫);**SMP 多核执行验证** 2026-08-26——`smp::enable()` 显式开启,从核参与调度,qemu_smp 9 项在 -smp 2/3/4/8 全绿;`TaskBuilder::affinity` 绑核确定性放置)
   - [x] CM32M4xxR(RISC-V/N308;构建级验证 2026-08-23,真机待验)
-  - [x] ESP32C3: esp32c3(PAC 直依赖;构建级验证 2026-08-23,真机待验——启动需 direct boot/镜像头)
+  - [x] ESP32C3: esp32c3(PAC 直依赖;**真身是 RV32IMC,按 `riscv32imc` 构建**(2026-09-19 起进门禁)——同示例用 `riscv32imac` 编出的产物实测含 12 条 A 扩展指令,真芯片会非法指令,改用真 ISA 后 0 条;真机待验,启动需 direct boot/镜像头)
   - [x] CH32V3: ch32v307(QingKe V4F;构建级验证 2026-08-23,真机待验)
   - [x] CH32V2: ch32v203(QingKe V4B;构建级验证 2026-08-23,真机待验)
   - [x] CH32V1: ch32v103(QingKe V3A;构建级验证 2026-08-23,真机待验)
