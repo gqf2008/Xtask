@@ -11,7 +11,7 @@ WCH ROM 从 flash 0x0 取指,并按"向量表第 5 个字 = boot option"识别�
 另有链接期 ASSERT);本脚本做**产物级**终检:段地址/大小、入口跳转、魔数字节。
 少了它,板上表现是"停在 ISP、不进用户程序",而构建与门禁全绿。
 
-用法: python3 ci/check_ch583_boot.py <target/.../examples/multitask_ch583>
+用法: python3 ci/check_wch_boot.py <target/.../examples/multitask_ch583>
 """
 import struct
 import sys

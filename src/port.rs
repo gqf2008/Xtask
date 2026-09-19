@@ -51,6 +51,7 @@ chip_portings! {
     "ch32v203" => crate::chip::ch32v203::Ch32v203Porting,
     "ch32v103" => crate::chip::ch32v103::Ch32v103Porting,
     "ch583" => crate::chip::ch583::Ch583Porting,
+    "ch572" => crate::chip::ch572::Ch572Porting,
     "esp32c3" => crate::chip::esp32c3::Esp32c3Porting,
     "qemu_riscv" => crate::chip::qemu_riscv::QemuRiscvPorting,
     "qemu_arm_r52" => crate::chip::qemu_arm_r52::QemuArmR52Porting,

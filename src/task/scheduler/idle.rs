@@ -7,6 +7,7 @@ use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::scheduler::xtask::{self, IDLE_TASKS};
 use crate::task::scheduler;
+use crate::chip::IDLE_STACK_SIZE_WORD;
 use crate::{Task, IDLE_TASK_NAME};
 
 /// tickless 空闲三态决策(第 29 章)——纯函数,host 可测:
@@ -67,7 +68,13 @@ pub(crate) fn start_idle_task() {
 
     let n = Porting::core_count().min(MAX_HARTS as u16);
     for h in 0..n {
-        let task = Task::new(IDLE_TASK_NAME, 512, 16, idle_task, core::ptr::null_mut());
+        let task = Task::new(
+            IDLE_TASK_NAME,
+            IDLE_STACK_SIZE_WORD,
+            16,
+            idle_task,
+            core::ptr::null_mut(),
+        );
         unsafe {
             IDLE_TASKS[h as usize] = task;
         }

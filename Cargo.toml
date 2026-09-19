@@ -66,6 +66,9 @@ ch32v203 = ["ch32v2", "riscv-rt"]
 ch32v307 = ["ch32v3", "riscv-rt"]
 # CH583(QingKe V4A):CH58x 无现成 ch32-rs PAC,零 PAC 直址访问(见 chip/ch583/mod.rs)
 ch583 = ["riscv-rt"]
+# CH572(QingKe,无 A 扩展):零 PAC 直址访问;目标 riscv32imc,原子走
+# atomic-polyfill 的 critical-section 兜底(见 chip/ch572/mod.rs)
+ch572 = ["riscv-rt"]
 #ble 蓝牙(第 24 章):协议栈在 E104-BT5032A 模组固件内——我们的活是
 #AT 命令编解码 + GATT 服务建模,纯 Rust 零新依赖
 ble=[]
