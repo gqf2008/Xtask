@@ -9,9 +9,9 @@ extern crate alloc;
 // (intsyscr 0x804 写 0 + 私有 CSR `0xbc0=0x25` 与 **`0xbc1=1`**);
 // ②mtvec Direct 分发与 mcause=12(SysTick);③SysTick `CTLR=0x0F`
 // (STRE|STCLK|STIE|STE,官方 `SysTick_Config` 同值;**CH572 的 CTLR 无 INIT 位**)
-// + `SR.CNTIF` 写 0 清零;④运行期用 **`SR.SWIE`(bit31)** 请求切换
-// (CH572 的 SWIE 在 SR 不在 CTLR;官方 SDK 的 SysTick 只定义不用,待上板确认,
-// 备选是改走 `SWI_IRQn=14`);⑤flash 基址 0x00000000,启动头 boot option
+// + `SR.CNTIF` 写 0 清零;④yield 走 **`SWI_IRQn=14`**(置 PFIC `IPSR` pending,
+// 官方三套移植同款;`SR.SWIE` 已不使用)后是否即刻进 trap 并沿 mcause=14 完成切换;
+// ⑤flash 基址 0x00000000,启动头 boot option
 // `0xF3F9BDA9` @flash 0x14(官方 Link.ld 实测);⑥默认主频 100MHz(env 按官方
 // `FREQ_SYS` 配,复位默认频率待实测);⑦`mcycle` 是否实现(决定 `delay_us`);
 // ⑧SysTick 计数器是 **32 位**(与 ch583 的 64 位读法不同)。

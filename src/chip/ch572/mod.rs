@@ -8,8 +8,10 @@
 //!   实测产物 0 条 AMO/LR/SC(见 README「无 A 扩展目标」一条)。
 //! - **SysTick 是 32 位**:`CNT`@+8、`CMP`@+16 各只有低字(无 CNTH/CMPHR),
 //!   读法与 `ch583` 的 64 位高低重读不同。
-//! - **软中断触发位在 `SR`(bit31)而非 `CTLR`**:`SysTick_SR_SWIE`,见 `irq()`;
-//!   `CTLR` 里**没有 INIT 位**(官方 `SysTick_Config` 写 `0x0F` = STRE|STCLK|STIE|STE)。
+//! - **软中断触发位在 `SR`(bit31)而非 `CTLR`**(`SysTick_SR_SWIE`)——但本口
+//!   **不用它**:yield/抢占请求走官方三套 RTOS 移植的 `SWI_IRQn=14`(见 `irq()`),
+//!   `SWIE` 在初始化与运行期都不碰。`CTLR` 里也**没有 INIT 位**
+//!   (官方 `SysTick_Config` 写 `0x0F` = STRE|STCLK|STIE|STE)。
 //! - **私有 CSR 多一条**:官方 reset 序列为 `0xbc0=0x25` **且 `0xbc1=1`**
 //!   (ch583/ch32v* 只有 `0xbc0=0x1f`)。
 //! - **12K SRAM / 240K CODE**:任务栈账比 ch583 紧得多(见示例注释)。
@@ -28,15 +30,14 @@
 //! ②复位默认主频(env 按官方 `CH57x_common.h` 的 `FREQ_SYS=100MHz` 配置;
 //!   本口无 BSP/时钟初始化,SAM 解锁与 PLL 未做,须实测校正);
 //! ③`0x804=0` 后异常/中断入口是否确实不再硬件压栈(决定 36 字帧成立);
-//! ④`SR.SWIE` 置 1 后是否即刻进 `SysTick` 入口、`SR.CNTIF` 是否仍为 0;
-//!   (官方 CH572 SDK 的 SysTick 只定义不用——若 SWIE 无效,备选是走
-//!   QingKe 专用 `SWI_IRQn=14` + `_int_dispatch` 里加一条分发)
-//! ⑤`mcycle` 是否实现(决定 `delay_us`,未实现则读出恒 0 → 死循环);
+//! ④置 `SWI_IRQn=14` pending 后是否即刻进 trap、并在 `_start_trap` 里按
+//!   mcause=14 走切换(官方三套移植的 yield 路径;`SWIE` 已不使用);
+//! ⑤`delay_us` 的实测精度(现用 SysTick 计数,不再依赖 `mcycle`);
 //! ⑥BootLoader 是否放行(启动头已复刻,仍需实板确认)。
 
 mod port;
 
-use super::{CPU_CLOCK_HZ, SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
+use super::{SYSTICK_CLOCK_HZ, TICK_CLOCK_HZ};
 use crate::port::Portable;
 use crate::prelude::CriticalSection;
 use crate::task::Task;
@@ -55,7 +56,8 @@ pub(crate) const PFIC_BASE: usize = 0xE000_E000;
 pub(crate) fn setup_intrrupt() {
     let stk = STK_BASE as *mut u32;
     unsafe {
-        // 1. 停表(CTLR=0)、清 SR(CNTIF/SWIE 写 0 清)、CNT=0、CMP=TICKS-1
+        // 1. 停表(CTLR=0)、清 SR(CNTIF 写 0 清;SWIE 本口不用,一并清)、
+        //    CNT=0、CMP=TICKS-1
         //    ——CH572 的 CNT/CMP 只有低字(32 位),没有 CNTH/CMPHR
         stk.write_volatile(0);
         stk.add(1).write_volatile(0); // SR
@@ -64,7 +66,7 @@ pub(crate) fn setup_intrrupt() {
         stk.add(4).write_volatile(TICKS); // CMPL(32 位比较值)
         // 2. CTLR = STRE(3)|STCLK(HCLK,2)|STIE(1)|STE(0) = 0x0F
         //    ——官方 `SysTick_Config` 同值;**CH572 的 CTLR 没有 INIT 位**,
-        //    SWIE 也不在这里(在 SR.bit31,见 irq())
+        //    (SWIE 在 SR.bit31,但本口不用它——yield 走 SWI_IRQn=14,见 irq())
         stk.write_volatile(0x0000_000F);
     }
     // 3. PFIC:使能 SysTick(IENR[0] @0xE000E100,bit12 = 核中断号 12)
@@ -79,7 +81,7 @@ pub(crate) fn setup_intrrupt() {
 pub(crate) fn reset_systick() {
     let stk = STK_BASE as *mut u32;
     unsafe {
-        stk.add(1).write_volatile(0); // SR @ +4(顺带清 SWIE)
+        stk.add(1).write_volatile(0); // SR @ +4
     }
 }
 
@@ -130,29 +132,27 @@ impl Portable for Ch572Porting {
         unsafe { asm!(include_str!("restore_ctx.S"), options(noreturn, raw)) };
     }
 
-    /// 软中断(调度请求):写 **`STK_SR.SWIE`(bit31)** 触发 SysTick 入口
-    /// ——这是 CH572 与 ch583 最大的机制差异(ch583 在 `CTLR`;CH572 的
-    /// `CTLR` 根本没有 SWIE 位)。ISR 读 `SR.CNTIF` 区分真 tick 与本请求。
+    /// 软中断(调度请求):置 PFIC 的 `SWI_IRQn=14` pending
+    /// (`IPSR[0] @0xE000E200` bit14)。
     ///
-    /// 读改写保留 SR 其它位:CNTIF(bit0)若已置位,写回 0/1 的效果取决于它的
-    /// 清法(写 0 清 或 W1C),两种情况下都不会误报真 tick——若写回的是 1 且
-    /// 它是"写 0 清",则 CNTIF 仍置位,ISR 会按真 tick 记一次账(与 ch583 口
-    /// 同款行为,上板核对点④)。
+    /// 为什么不用 CH572 自己的 `SR.SWIE`:官方 CH572 SDK 的 SysTick 只**定义**
+    /// 不用(全 SDK 零处调用),而官方三套 RTOS 移植的 yield 一律走
+    /// `PFIC_SetPendingIRQ(SWI_IRQn)` + `SW_Handler`(CH572 的 `SWI_IRQn=14`);
+    /// 走官方路径把"SWIE 到底灵不灵"这个只能上板排除的赌注消掉。
     #[inline]
     fn irq() {
-        const SWIE: u32 = 1 << 31;
-        let sr = (STK_BASE + 4) as *mut u32;
+        let ipsr0 = (PFIC_BASE + 0x200) as *mut u32;
         unsafe {
-            sr.write_volatile(sr.read_volatile() | SWIE);
+            ipsr0.write_volatile(1 << 14);
         }
     }
-    /// 关闭软中断(SWIE 是触发位,自清;防御性清一下)
+    /// 关闭软中断:清 `SWI_IRQn=14` 的 pending(`IPRR[0] @0xE000E280` bit14),
+    /// 防残留 pending 让 trap 出口立刻重入。
     #[inline]
     fn disable_irq() {
-        const SWIE: u32 = 1 << 31;
-        let sr = (STK_BASE + 4) as *mut u32;
+        let iprr0 = (PFIC_BASE + 0x280) as *mut u32;
         unsafe {
-            sr.write_volatile(sr.read_volatile() & !SWIE);
+            iprr0.write_volatile(1 << 14);
         }
     }
 
@@ -163,16 +163,20 @@ impl Portable for Ch572Porting {
         unsafe { stk.add(2).read_volatile() as u64 }
     }
 
-    /// 硬件延时,单位 us。
-    ///
-    /// ⚠️ 沿用 `ch32v103`/`ch583` 的 `mcycle` 实现——CH572 是否实现 `mcycle`
-    /// (Zicntr)待上板核对:若未实现则读出恒为常量,本函数会死循环。
-    /// 届时须改 SysTick/TMR 计时(CH57x 无 DWT)。主频按 env 的 `CPU_CLOCK_HZ`。
+    /// 硬件延时,单位 us —— **用 SysTick 计数器**实现(不再赌 `mcycle`/Zicntr:
+    /// CH572 是否实现它没有一手证据,未实现时读出恒为常量 → 死循环;SysTick 是
+    /// 内核点拍赖以工作的外设,必然实现)。计数器 32 位、按 CMP 自动重装,
+    /// 等待按"到下次重装还剩多少"分块(跨重装差值见 `crate::chip::delay`,有 host 单测)。
     #[inline]
     fn delay_us(us: u64) {
-        let t0 = riscv::register::mcycle::read64();
-        let clock = (us * (CPU_CLOCK_HZ as u64)) / 1_000_000;
-        while riscv::register::mcycle::read64().wrapping_sub(t0) <= clock {}
+        let period = (SYSTICK_CLOCK_HZ / TICK_CLOCK_HZ) as u64; // = TICKS + 1
+        let mut remaining = us * (SYSTICK_CLOCK_HZ as u64) / 1_000_000;
+        while remaining > 0 {
+            let start = Self::systick();
+            let chunk = crate::chip::delay::next_chunk(remaining, start, period);
+            while crate::chip::delay::elapsed(start, Self::systick(), period) < chunk {}
+            remaining -= chunk;
+        }
     }
 
     /// 任务创建时为 CPU 准备任务现场(36 字帧,与 port.S 的保存宏互为镜像):

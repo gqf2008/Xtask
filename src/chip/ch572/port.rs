@@ -1,6 +1,6 @@
-//! CH572 中断胶水:SysTick 二合一处理(真 tick / SWIE 软中断)与切换入口。
-//! 与 ch583/port.rs 同构——差别只在 **软中断触发位在 `SR` 而非 `CTLR`**
-//! (见 `Ch572Porting::irq()`),dispatch 与切换路径完全一致。
+//! CH572 中断胶水:真 tick 处理与切换入口。
+//! 与 ch583/port.rs 完全同构——yield/抢占请求走 **`SWI_IRQn=14`**
+//! (官方三套 RTOS 移植的做法,见 `Ch572Porting::irq()`),SysTick 入口只由真 tick 触发。
 
 use super::Ch572Porting;
 use crate::port::Portable;

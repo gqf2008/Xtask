@@ -143,6 +143,9 @@ _int_dispatch:
   and t0, t0, t1        // 取中断号(去 bit31)
   li t1, 12             // SysTick
   beq t0, t1, _isr_systick
+  li t1, 14             // SWI(软中断):官方三套 RTOS 移植的 yield 机制
+                        // (irq() 置 IPSR bit14 pending);只请求切换,不做时间账
+  beq t0, t1, _switch_and_restore
   // 未接入的外设中断/其它核心中断 → DefaultHandler(BSP 扩展点)
   jal ra, DefaultHandler
   j _switch_and_restore

@@ -4,8 +4,8 @@
   (0x804=0),mtvec=Direct 单入口分发。相对 ch583 的增量只有:
     ①`_setup_interrupts` 写 `0xbc0=0x25` **且多一条 `0xbc1=1`**(官方
       `startup_CH572.S` reset 序列同款;CH583 是 `0xbc0=0x1f`、无 0xbc1);
-    ②软中断触发位在 `SR.bit31` 而非 `CTLR.bit31`(见 mod.rs 的 irq());
-    ③SysTick 计数器/比较值 32 位(见 mod.rs)。
+    ②SysTick 计数器/比较值 32 位(见 mod.rs);
+    ③yield 走 `SWI_IRQn=14`(与 ch583 一样,已在 `_int_dispatch` 加分发)。
   启动头与代码基址(flash 0)与 CH583 一致:实测官方 `Link.ld` 下 boot option
   同样落在 flash 0x14(见 memory.x 注)。
 
@@ -147,6 +147,9 @@ _int_dispatch:
   and t0, t0, t1        // 取中断号(去 bit31)
   li t1, 12             // SysTick
   beq t0, t1, _isr_systick
+  li t1, 14             // SWI(软中断):官方三套 RTOS 移植的 yield 机制
+                        // (irq() 置 IPSR bit14 pending);只请求切换,不做时间账
+  beq t0, t1, _switch_and_restore
   // 未接入的外设中断/其它核心中断 → DefaultHandler(BSP 扩展点)
   jal ra, DefaultHandler
   j _switch_and_restore
