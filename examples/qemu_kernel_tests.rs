@@ -1174,6 +1174,115 @@ fn test_tickless_early_wake_drift() {
     );
 }
 
+// ============ 测试 25-27:设备事件通道 EventChannel(v3 §5.8) ============
+// 执行级验证：post 唤醒在 recv 阻塞的任务 / close 唤醒并转 Cancelled /
+// recv_timeout 的超时与亚毫秒行为 / 满即 Full 且不覆盖旧事件。
+fn test_device_event_wake() {
+    use xtask::device::event::EventChannel;
+    static CH: EventChannel<u32, 4> = EventChannel::new();
+    clear_events();
+    TaskBuilder::new().name("t25.waiter").priority(5).spawn(|| {
+        ev("R1");
+        let v = CH.recv(); // 空通道 → 必须挂起，等 post 唤醒
+        ev("R2");
+        match v {
+            Ok(0xAB) => ev("OK"),
+            _ => ev("BAD"),
+        }
+    });
+    xtask::sleep_ms(20); // 让 waiter 先跑到 recv 里挂起
+    if !check(
+        events().len() == 1,
+        "device_event_wake",
+        format!("post 前应只到 R1:{:?}", events()),
+    ) {
+        return;
+    }
+    CH.post(0xAB).unwrap();
+    xtask::sleep_ms(20);
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    check(
+        seq == ["R1", "R2", "OK"],
+        "device_event_wake",
+        format!("post 唤醒后 {seq:?}(应 R1→R2→OK)"),
+    );
+}
+
+fn test_device_event_close() {
+    use xtask::device::event::EventChannel;
+    use xtask::device::DeviceError;
+    static CH: EventChannel<u8, 2> = EventChannel::new();
+    clear_events();
+    TaskBuilder::new().name("t26.waiter").priority(5).spawn(|| {
+        ev("R1");
+        let r = CH.recv();
+        ev("R2");
+        match r {
+            Err(DeviceError::Cancelled) => ev("CANCELLED"),
+            _ => ev("BAD"),
+        }
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        events().len() == 1,
+        "device_event_close",
+        format!("close 前应只到 R1:{:?}", events()),
+    ) {
+        return;
+    }
+    CH.close(); // 必须唤醒等待者（SMP 丢唤醒的直接回归点）
+    xtask::sleep_ms(20);
+    // close 后 post/post_isr 一律拒绝，且不得计入 overflow（关闭不是"满"）
+    let rejected = CH.post(1) == Err(DeviceError::Cancelled)
+        && CH.post_isr(2) == Err(DeviceError::Cancelled);
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    check(
+        seq == ["R1", "R2", "CANCELLED"] && rejected && CH.overflow_count() == 0 && CH.is_empty(),
+        "device_event_close",
+        format!(
+            "close 后 {seq:?} / rejected={rejected} / ovf={} / empty={}",
+            CH.overflow_count(),
+            CH.is_empty()
+        ),
+    );
+}
+
+fn test_device_event_timeout_full() {
+    use core::time::Duration;
+    use xtask::device::event::EventChannel;
+    use xtask::device::DeviceError;
+    static CH: EventChannel<u8, 2> = EventChannel::new();
+
+    // 亚毫秒超时不得退化成"不等待"（截断为 0 会一次 try_recv 失败就 Timeout）
+    let t0 = xtask::tick();
+    let r1 = CH.recv_timeout(Duration::from_micros(500));
+    let d1 = xtask::tick() - t0;
+    // 正常超时：10ms ≈ 10 tick（分片轮询，tick 精度）
+    let t1 = xtask::tick();
+    let r2 = CH.recv_timeout(Duration::from_millis(10));
+    let d2 = xtask::tick() - t1;
+
+    // 满即 Full，不覆盖旧事件，overflow 计数
+    CH.post(1).unwrap();
+    CH.post(2).unwrap();
+    let full = CH.post(3) == Err(DeviceError::Full);
+    let ovf = CH.overflow_count();
+    let fifo = CH.try_recv() == Some(1) && CH.try_recv() == Some(2) && CH.try_recv().is_none();
+
+    check(
+        r1 == Err(DeviceError::Timeout)
+            && r2 == Err(DeviceError::Timeout)
+            && d1 >= 1
+            && d2 >= 10
+            && d2 < 40
+            && full
+            && ovf == 1
+            && fifo,
+        "device_event_timeout_full",
+        format!("500us→{r1:?}/{d1}t 10ms→{r2:?}/{d2}t full={full} ovf={ovf} fifo={fifo}"),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -1227,6 +1336,9 @@ fn main() -> ! {
                 ("tickless_frozen_wake", test_tickless_frozen_wake),
                 ("tickless_early_wake_drift", test_tickless_early_wake_drift),
                 ("tickless_noise_stay_idle", test_tickless_noise_stay_idle),
+                ("device_event_wake", test_device_event_wake),
+                ("device_event_close", test_device_event_close),
+                ("device_event_timeout_full", test_device_event_timeout_full),
             ];
             let total = tests.len();
             let mut passed = 0usize;

@@ -49,7 +49,7 @@ pub use event::EventChannel;
 
 /// 设备分类标签——只回答"它是什么"，不携带任何能力。
 /// 消费方：诊断日志 / 设备清单 / 板级匹配；**不参与能力分发**（能力走 `as_*`）。
-/// 复合设备以"主类"报告（如 UART 报 Stream，尽管它同时有 Control/Event 能力）。
+/// 复合设备以"主类"报告（如 UART 报 Stream，尽管它同时有 Event 能力）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
     /// 字节流设备：UART / USB CDC / BLE 数据通道……
@@ -68,9 +68,10 @@ pub enum DeviceKind {
 pub enum DeviceError {
     /// 注册时名字重复（名字全局唯一，跨类同名也算）
     Duplicate,
-    /// 注册表已满（定长表，容量见 [`DEV_CAP`]）
+    /// 定长容器已满（注册表见 [`DEV_CAP`]；事件通道见 `device::event::EventChannel`
+    /// 的环容量；两者共用本变体——注释不得再写"注册表已满"）
     Full,
-    /// 参数非法（扇区越界 / seek 越界 / 未知控制命令）
+    /// 参数非法（扇区越界 / seek 越界 / 未知命令）
     InvalidInput,
     /// 控制命令 / 能力不被支持（`as_*` 返回 None 的设备、未实现的 op）
     Unsupported,
@@ -135,7 +136,7 @@ pub trait Device: DeviceBase + Sync {
     }
 }
 
-
+/// 字节流设备（数据面 = 连续字节流，边界由上层协议管理）。
 ///
 /// 对齐 `embedded_io::Read/Write` 的形状；因注册表返回的是共享 `&'static dyn`，
 /// 本内核用 `&self` + 内部可变性而不是 `&mut self`。
