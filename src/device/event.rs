@@ -44,6 +44,12 @@ pub struct EventChannel<T, const N: usize> {
 unsafe impl<T: Send, const N: usize> Send for EventChannel<T, N> {}
 unsafe impl<T: Send, const N: usize> Sync for EventChannel<T, N> {}
 
+/// `waiter` 槽的编码：最低位置 1 = 由 [`WaiterGuard`]（`recv` / `recv_timeout`）
+/// 持有，**被唤醒方自清**；置 0 = 驱动经 [`EventChannel::register_raw_waiter`]
+/// 裸登记，**唤醒方清槽**（沿用 `drv_uart` 的 `swap` 语义）。任务地址天然 ≥ 4
+/// 字节对齐，低位可借用。
+const GUARD_TAG: usize = 1;
+
 impl<T, const N: usize> EventChannel<T, N> {
     /// 零分配构造（可 const）。
     pub const fn new() -> Self {
@@ -84,6 +90,49 @@ impl<T, const N: usize> EventChannel<T, N> {
         self.overflow.load(Ordering::SeqCst)
     }
 
+    // ---------------------------------------------------------------------
+    // 裸等待者适配器：给实现 `EventDevice` 的驱动转发（C1 / ISR）
+    // ---------------------------------------------------------------------
+
+    /// 登记一个裸等待者（任务地址值），供驱动的 `EventDevice::register_waiter` 转发。
+    ///
+    /// 与 [`recv`](Self::recv) 的 [`WaiterGuard`] **共用同一个单等待者槽**：已有人在等
+    /// → `Busy`，绝不覆盖（否则两个消费者会瓜分同一条事件）。
+    ///
+    /// 槽会一直保留到**唤醒方**清掉（见 [`GUARD_TAG`]），所以驱动的 ISR 必须经
+    /// [`post`](Self::post) / [`post_isr`](Self::post_isr) 投递事件（内部唤醒并清槽），
+    /// 而不是自己 `wakeup`；两者混用会破坏单订阅契约。
+    pub(crate) fn register_raw_waiter(&self, waiter: usize) -> Result<(), DeviceError> {
+        sync::free(|_| {
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(DeviceError::Cancelled);
+            }
+            if waiter == 0 || waiter & GUARD_TAG != 0 {
+                return Err(DeviceError::InvalidInput);
+            }
+            self.waiter
+                .compare_exchange(0, waiter, Ordering::SeqCst, Ordering::SeqCst)
+                .map(|_| ())
+                .map_err(|_| DeviceError::Busy)
+        })
+    }
+
+    /// 裸唤醒：供驱动的 `EventDevice::wake` 转发（ISR 侧）。
+    ///
+    /// 走与 [`post`](Self::post) 内部**同一条**唤醒路径（含 `Porting::irq()`），
+    /// 驱动因此不必再自建 waiter 槽或手写软中断。
+    ///
+    /// `dead_code`：调用者是芯片 BSP（目前 `longan_nano::drv_uart`），host 单测
+    /// 构建不编 BSP，所以那一边看不到调用者。
+    #[cfg_attr(not(feature = "longan_nano"), allow(dead_code))]
+    pub(crate) fn wake_raw_waiter(&self) {
+        let w = sync::free(|_| self.waiter.swap(0, Ordering::SeqCst));
+        if w != 0 {
+            Self::wake_locked(w);
+            Porting::irq();
+        }
+    }
+
     /// 关闭通道：唤醒等待者；此后 `recv` → `Cancelled`，`post` → `Cancelled`。
     pub fn close(&self) {
         // `closed.store` 与 `waiter.swap` 必须在**同一临界区**：否则 SMP 下 `recv` 的
@@ -92,9 +141,14 @@ impl<T, const N: usize> EventChannel<T, N> {
         // → 任务永久 Suspended，且整条通道此后 recv 一律 Busy、无 API 可复位。
         let w = sync::free(|_| {
             self.closed.store(true, Ordering::SeqCst);
-            self.waiter.swap(0, Ordering::SeqCst)
+            let w = self.waiter.swap(0, Ordering::SeqCst);
+            Self::wake_locked(w);
+            w
         });
-        self.wake_waiting(w);
+        if w != 0 {
+            // 软中断出区后发（与 post/do_tick 同款：pending 在 mret 生效）
+            Porting::irq();
+        }
     }
 
     /// 投递一条事件（C1/C2，厂商回调线程）。满 → `Err(Full)`，不覆盖旧事件。
@@ -128,12 +182,35 @@ impl<T, const N: usize> EventChannel<T, N> {
             // 只读不 swap：waiter 槽同时是「谁有消费权」。若在投递时就 swap 清零，
             // `recv_timeout` 的 WaiterGuard 会在调用期间失去登记（事件一到槽就被
             // 抹掉），并发 recv 于是能登记进来、两个消费者瓜分事件——破坏 §5.8
-            // 单订阅契约。清槽由被唤醒方负责（recv 自愈 CAS / WaiterGuard::drop）。
-            Ok(self.waiter.load(Ordering::SeqCst))
+            // 单订阅契约。清槽由持有者负责（WaiterGuard::drop；close 例外）。
+            let w = self.waiter.load(Ordering::SeqCst);
+            // 裸登记（驱动适配器）没有 RAII 持有者，由**唤醒方**清槽——否则那条地址
+            // 会一直占着槽，下一次 `register_raw_waiter` 永远 `Busy`。CAS 失败说明槽
+            // 刚被换掉（另有登记者接管 / `close` 已取走），本次不唤醒。
+            let w = if w != 0 && w & GUARD_TAG == 0 {
+                match self
+                    .waiter
+                    .compare_exchange(w, 0, Ordering::SeqCst, Ordering::SeqCst)
+                {
+                    Ok(_) => w,
+                    Err(_) => 0,
+                }
+            } else {
+                w
+            };
+            // 唤醒必须与读取 waiter 同区：任务回收（do_schedule 对 Terminated
+            // 的 Box::from_raw）持同一把全局锁，同区「读+唤醒」才能保证解引用
+            // 前任务未被释放（槽现在会保留到被唤醒方自清，后续 post/close 可能
+            // 再次读到同一地址）。
+            Self::wake_locked(w);
+            Ok(w)
         });
         match outcome {
             Ok(w) => {
-                self.wake_waiting(w);
+                if w != 0 {
+                    // 软中断出区后发（与 close/do_tick 同款：pending 在 mret 生效）
+                    Porting::irq();
+                }
                 Ok(())
             }
             Err(DeviceError::Full) => {
@@ -163,13 +240,15 @@ impl<T, const N: usize> EventChannel<T, N> {
     /// 入口断言调用方不在 `sync::free` 内（R8）。
     pub fn recv(&self) -> Result<T, DeviceError> {
         sync::assert_c2("EventChannel::recv");
-        // 本任务在登记表里的值（只由自己/`wake_waiting` 清除）
-        let me = (xworker.current() as *mut Task).addr();
+        // 单订阅登记随本次调用持有（RAII）：并发的 recv/recv_timeout 拿到
+        // Busy，即使环里已有数据也不许偷——订阅权在谁手里，事件就归谁消费。
+        let _guard = WaiterGuard::acquire(self)?;
         loop {
             if let Some(v) = self.try_recv() {
                 return Ok(v);
             }
-            // 复查 + 登记 + 挂起在同一临界区（丢失唤醒免疫，同 read_blocking）
+            // 复查 + 挂起在同一临界区（丢失唤醒免疫，同 read_blocking）；
+            // 登记槽由 `_guard` 持有，这里不再写它。
             let ready = sync::free(|_| -> Result<bool, DeviceError> {
                 if self.closed.load(Ordering::SeqCst) {
                     return Err(DeviceError::Cancelled);
@@ -179,12 +258,7 @@ impl<T, const N: usize> EventChannel<T, N> {
                 if head != tail {
                     return Ok(true);
                 }
-                // 单等待者：已有等待者 → Busy
-                if self.waiter.load(Ordering::SeqCst) != 0 {
-                    return Err(DeviceError::Busy);
-                }
                 let t = xworker.current();
-                self.waiter.store(me, Ordering::SeqCst);
                 t.block();
                 Ok(false)
             })?;
@@ -192,12 +266,6 @@ impl<T, const N: usize> EventChannel<T, N> {
                 continue;
             }
             yield_now();
-            // 自愈：无论谁把我弄醒，回到任务上下文后幂等地清掉「我」这份登记。
-            // 否则任何非 `wake_waiting` 的退出（将来加取消/任务注销、或唤醒被谁抢走）
-            // 都会让 waiter 永久非 0 → 此后整条通道 recv 一律 Busy 且无 API 可复位。
-            let _ = self
-                .waiter
-                .compare_exchange(me, 0, Ordering::SeqCst, Ordering::SeqCst);
         }
     }
 
@@ -234,19 +302,25 @@ impl<T, const N: usize> EventChannel<T, N> {
         }
     }
 
-    /// 唤醒在登记表里等的那一个任务（`w = 0` 表示无等待者）。
+    /// 在 `sync::free` 内唤醒登记的任务（`w = 0` 表示无等待者）。
     ///
-    /// 必须在**取走登记之后、临界区之外**调用：`Task::wakeup` 内部自带临界区
-    /// （task.rs 的 F1 修复），且此刻任务必为 `Suspended` 不会自醒，
-    /// 所以「取登记」与「改状态」分两步不会丢唤醒。
-    fn wake_waiting(&self, w: usize) {
-        if w == 0 {
+    /// **必须与读取/取走 `waiter` 同在一次临界区**：任务回收路径（调度器
+    /// `do_schedule` 对 `Terminated` 的 `Box::from_raw`）持同一把全局锁，同区
+    /// 「读+唤醒」才能保证解引用前任务未被释放——`waiter` 槽现在会在唤醒后
+    /// 保留到被唤醒方自清，后续 `post`/`close` 可能再次读到同一地址；若在区外
+    /// 唤醒，第一个唤醒者可能已让该任务退出并被回收。
+    /// `Task::wakeup` 内部自带临界区（可重入，嵌套安全）。软中断 `Porting::irq()`
+    /// 仍由调用方出区后发出（pending 在 mret 生效）。
+    fn wake_locked(w: usize) {
+        // 掩掉 `GUARD_TAG` 后为空：登记发生在没有任务上下文的地方（host 单测 /
+        // 调度器未启动），没有可唤醒的对象。
+        let p = w & !GUARD_TAG;
+        if p == 0 {
             return;
         }
-        // SAFETY: waiter 存的是 `xworker.current()` 的有效任务指针；任务注销前不会被释放。
-        unsafe { &mut *(w as *mut Task) }.wakeup(); // 状态改回就绪
-        // 只在真有任务被唤醒时才踢调度器：无等待者时每次 post 都拉一次软中断是纯开销
-        Porting::irq();
+        // SAFETY: p 是同一次 `sync::free` 内从 `waiter` 读出的任务地址；任务内存
+        // 只在调度器持同一全局锁时回收，故本次临界区内该指针有效。
+        unsafe { &mut *(p as *mut Task) }.wakeup(); // 状态改回就绪
     }
 }
 
@@ -267,12 +341,13 @@ impl<T, const N: usize> Drop for EventChannel<T, N> {
     }
 }
 
-/// `recv_timeout` 期间占住单订阅登记位（RAII 释放）。
+/// `recv`/`recv_timeout` 全程占住单订阅登记位（RAII，返回即释放）。
 ///
-/// 它**不负责唤醒**：`recv_timeout` 走 `sleep_ms`，任务处于 `State::Blocked`，
-/// `Task::wakeup` 不会命中（见 `recv_timeout` 的 ⚠ 说明）；它的唯一作用是让并发的
-/// `recv` / `recv_timeout` 拿到 `Busy`——否则两个消费者会静默瓜分事件，与 v3 §5.8
-/// 的「单订阅」契约不符。
+/// 唤醒语义分两种挂起态：阻塞 `recv` 是 `State::Suspended`，`post`/`close` 的
+/// `wake_locked` 能把它推回就绪；`recv_timeout` 走 `sleep_ms`（`State::Blocked`），
+/// `Task::wakeup` 对它无效，靠 ≤1 tick 的轮询感知事件（见其 ⚠ 说明）。
+/// 它的主要作用是让并发的 `recv` / `recv_timeout` 拿到 `Busy`，**且消费也走这张
+/// 登记**——否则两个消费者会静默瓜分事件，与 v3 §5.8 的「单订阅」契约不符。
 struct WaiterGuard<'a, T, const N: usize> {
     ch: &'a EventChannel<T, N>,
     me: usize,
@@ -280,7 +355,7 @@ struct WaiterGuard<'a, T, const N: usize> {
 
 impl<'a, T, const N: usize> WaiterGuard<'a, T, N> {
     fn acquire(ch: &'a EventChannel<T, N>) -> Result<Self, DeviceError> {
-        let me = (xworker.current() as *mut Task).addr();
+        let me = (xworker.current() as *mut Task).addr() | GUARD_TAG;
         sync::free(|_| {
             if ch.closed.load(Ordering::SeqCst) {
                 return Err(DeviceError::Cancelled);
@@ -297,8 +372,9 @@ impl<'a, T, const N: usize> WaiterGuard<'a, T, N> {
 
 impl<T, const N: usize> Drop for WaiterGuard<'_, T, N> {
     fn drop(&mut self) {
-        // 只清「我」这份：期间可能已被 `wake_waiting` 取走（swap→0），
+        // 只清「我」这份：期间可能已被 `close` 取走（swap→0），
         // 也可能被别的任务重新占住——无条件 store(0) 会把别人的登记抹掉。
+        // `self.me` 已带 `GUARD_TAG`，与登记时写入的值逐位相同。
         let _ = self
             .ch
             .waiter
@@ -342,6 +418,33 @@ mod tests {
         assert!(ch.is_closed());
         assert_eq!(ch.try_recv(), Some(1));
         assert_eq!(ch.post(2), Err(DeviceError::Cancelled));
+    }
+
+    /// 裸等待者槽（驱动适配器转发 `EventDevice::register_waiter`）：
+    /// 同一槽只容一个登记者、非法值拒收、`close` 后拒收。
+    ///
+    /// 不在这里验证“投递后唤醒 + 清槽”：`post` 会解引用登记的任务地址，
+    /// host 上没有真实任务可唤醒（非法指针解引用）。那条路径由
+    /// `qemu_kernel_tests` 25–27 在真实任务上下文里跑。
+    #[test]
+    fn raw_waiter_slot_rules() {
+        let ch: EventChannel<u8, 4> = EventChannel::new();
+        // 0 与带 GUARD_TAG 的值都拒收（后者会被误认为 WaiterGuard 持有）
+        assert_eq!(ch.register_raw_waiter(0), Err(DeviceError::InvalidInput));
+        assert_eq!(
+            ch.register_raw_waiter(0x1001),
+            Err(DeviceError::InvalidInput)
+        );
+        // 首次登记成功，第二次 Busy（单等待者，绝不覆盖）
+        assert_eq!(ch.register_raw_waiter(0x1000), Ok(()));
+        assert_eq!(ch.register_raw_waiter(0x2000), Err(DeviceError::Busy));
+        // 关闭后拒收（另开一条通道：对带登记的通道 close 会去唤醒那个伪造地址）
+        let ch2: EventChannel<u8, 4> = EventChannel::new();
+        ch2.close();
+        assert_eq!(
+            ch2.register_raw_waiter(0x3000),
+            Err(DeviceError::Cancelled)
+        );
     }
 
     #[test]

@@ -1,24 +1,24 @@
-//! longan_nano UART0 设备：中断驱动接收 + 定长 SPSC 环形缓冲
+//! longan_nano UART0 设备：中断驱动接收，缓冲与唤醒都交给 `device::EventChannel`
 //!
-//! 读路径为什么自建环形缓冲而不是用内核 `Queue<u8>`：
-//! - `Queue` 的 `VecDeque` 首次 push 会触发堆分配，而**分配绝不能出现在
-//!   ISR 里**（堆不可重入：ISR 打断正在分配的任务会破坏堆）；
-//! - `Queue::clear()` 曾只清列表不清信号量计数，预热后 clear 会产生幽灵出队
-//!   （遗留问题 #7 已于 2026-08-22 修复：clear/trancate 现同步计数，
-//!   见第 20 章踩坑记录 3）。
-//! 因此这里用 64 字节定长环形缓冲：容量恒定、零分配，读写双方约定——
-//! **ISR 是唯一生产者**（写 head），**读任务是唯一消费者**（写 tail）。
+//! 为什么用 `EventChannel<u8, 64>` 而不是自建环形缓冲（v3 之前的写法）：
+//! - 定长、零分配（`[MaybeUninit; N]` 内联在通道里）——`Queue` 的 `VecDeque`
+//!   首次 push 会堆分配，而**分配绝不能出现在 ISR 里**（堆不可重入）；
+//! - 通道自带单等待者槽 + 唤醒（`post_isr` 内部即完成唤醒 + 软中断），驱动
+//!   不必再自己维护 `waiter: AtomicUsize` 与 `Porting::irq()`；
+//! - 同一台机器只留一份实现：满/关闭/溢出计数/`recv_timeout` 都是通道的既有
+//!   语义，`qemu_kernel_tests` 25–27 与 `event.rs` 单测在跑它们。
+//!
+//! 纪律：**ISR 是唯一生产者**（`post_isr`），**读任务是唯一消费者**
+//! （`StreamDevice::read` 经 `try_recv` 排空）。`EventDevice` 只是把裸等待者
+//! 登记转发给通道，供内核通用适配器 `device::read_blocking`（`&dyn` 路径）使用——
+//! “复查 + 登记 + 挂起”在同一临界区，丢失唤醒从根上消除。
 //!
 //! 能力组合（`device` 层）：`StreamDevice`（非阻塞读/轮询写）+ `EventDevice`
-//! （waiter 槽 + ISR 唤醒）；控制面已删除（v3：能力要么真能，要么不存在）。
-//! 阻塞读不在设备里——由内核通用适配器 `device::read_blocking` 组合这两件
-//! 能力实现（"等待即 Blocked"；复查+登记+挂起在同一临界区，丢失唤醒从根上
-//! 消除——反面教材：`sync::notify` 的 CAS 曾在临界区外，遗留问题 #6 已于
-//! 2026-08-22 修复，见第 20 章踩坑记录 2）。
+//! （裸等待者转发）；控制面已删除（v3：能力要么真能，要么不存在）。
 
 use alloc::boxed::Box;
 use core::cell::{RefCell, UnsafeCell};
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use gd32vf103xx_hal::afio::Afio;
 use gd32vf103xx_hal::eclic::*;
@@ -30,10 +30,9 @@ use gd32vf103xx_hal::rcu::Rcu;
 use gd32vf103xx_hal::serial::{Config, Parity, Rx, Serial, StopBits, Tx};
 use gd32vf103xx_hal::time::Bps;
 
+use crate::device::event::EventChannel;
 use crate::device::{Device, DeviceBase, DeviceError, DeviceKind, EventDevice, StreamDevice};
-use crate::port::{Portable, Porting};
 use crate::sync;
-use crate::task::Task;
 
 /// 环形缓冲长度（2 的幂，下标用 `& (BUF_LEN - 1)`）
 const BUF_LEN: usize = 64;
@@ -47,24 +46,16 @@ pub struct Uart0 {
     tx: RefCell<Tx<USART0>>,
     /// 接收侧硬件句柄：**只允许 ISR 读**（SPSC 的"唯一生产者"）
     rx: UnsafeCell<Rx<USART0>>,
-    /// 定长环形缓冲（零分配）
-    buf: [UnsafeCell<u8>; BUF_LEN],
-    /// 生产位置：仅 ISR 写（读任务只读）
-    head: AtomicUsize,
-    /// 消费位置：仅读任务写（ISR 只读）
-    tail: AtomicUsize,
-    /// 阻塞读者任务指针（0 = 无）：仅读任务（经 read_blocking）写、ISR 取走
-    waiter: AtomicUsize,
-    /// 缓冲满被丢弃的字节数（诊断用；目前只累计不读出）
-    #[allow(dead_code)]
-    dropped: AtomicUsize,
+    /// 接收事件通道（定长、零分配）：ISR `post_isr` 投递，读任务 `try_recv` 排空；
+    /// 满/关闭/溢出计数/唤醒都是它的既有语义
+    events: EventChannel<u8, BUF_LEN>,
 }
 
-// SAFETY: 单硬件线程 + SPSC 纪律（与内核信号量同款的并发放置方式）：
-// - `head` 仅 ISR 写、`tail` 仅任务写，两侧互不相交，原子读改写即可；
-// - `rx` 的访问只发生在 ISR（唯一读方），任务只消费环形缓冲；
-// - `tx`/`waiter`/缓冲槽的任务侧访问全部在 `sync::free`（MIE=0）临界区内，
-//   与 ISR 串行化——临界区同时保证"检查+登记+挂起"三步不可拆分。
+// SAFETY:
+// - `rx` 的访问只发生在 ISR（唯一读方），任务从不碰硬件句柄；
+// - `events` 自带原子游标与临界区（`EventChannel` 自身即 `Sync`）：ISR 侧
+//   `post_isr`、任务侧 `try_recv`、桥接的裸等待者登记都走它的临界区；
+// - `tx` 的任务侧访问全部在 `sync::free`（MIE=0）临界区内，与 ISR 串行化。
 unsafe impl Sync for Uart0 {}
 
 impl Uart0 {
@@ -100,11 +91,7 @@ impl Uart0 {
         let dev = Box::leak(Box::new(Self {
             tx: RefCell::new(tx),
             rx: UnsafeCell::new(rx),
-            buf: [const { UnsafeCell::new(0) }; BUF_LEN],
-            head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
-            waiter: AtomicUsize::new(0),
-            dropped: AtomicUsize::new(0),
+            events: EventChannel::new(),
         }));
         UART0_DEV.store(dev, Ordering::SeqCst);
 
@@ -123,62 +110,42 @@ impl Uart0 {
         dev
     }
 
+    /// 直接拿接收通道（typed 快速路径）：`recv` / `recv_timeout` / `len` / `close`
+    /// 都在通道上，不经 `&dyn`、不碰能力面。
+    /// **与 `read_blocking` / `StreamDevice::read` 二选一**：通道是单消费者
+    /// （SPSC）——同一时刻只允许一个任务消费它（§5.8 单订阅契约）。
+    pub fn events(&self) -> &EventChannel<u8, BUF_LEN> {
+        &self.events
+    }
+
+    /// 因通道满（已存 `BUF_LEN` 字节）而丢弃的字节数。诊断用，语义等同旧实现的
+    /// `dropped` 计数器；溢出时旧事件**不**被覆盖。
+    pub fn dropped(&self) -> usize {
+        self.events.overflow_count()
+    }
+
     /// 中断服务例程（由应用层的 `#[no_mangle] extern "C" fn USART0()` 转发调用）：
-    /// 排空接收寄存器进环形缓冲，随后经 `EventDevice::wake` 唤醒阻塞读者——
-    /// 内含**必须自己触发软中断**：port.S 的 ISR 返回路径直接恢复被中断任务、
-    /// 没有 schedule()（先例：定时器中断 port.rs）。
-    /// ISR 纪律：不允许临界区/阻塞/格式化/分配——本函数只用原子操作与硬件读。
+    /// 排空接收寄存器，逐字节投递给 `EventChannel`——**唤醒与软中断都由通道内部完成**
+    /// （`post_isr` → 唤醒单等待者 + `Porting::irq()`），驱动不再自己 `wakeup`。
+    /// ISR 纪律：不允许阻塞/格式化/分配；`post_isr` 内部只取一段**可重入**临界区
+    /// （MIE=0），在 ISR 里调用安全。
     #[inline]
     pub fn isr(&self) {
-        let mut got = false;
-        // SAFETY: `rx` 是"ISR 独占"：读任务从不碰硬件句柄，只消费环形缓冲
+        // SAFETY: `rx` 是"ISR 独占"：读任务从不碰硬件句柄，只消费事件通道
         let rx = unsafe { &mut *self.rx.get() };
         loop {
             match rx.read() {
+                // 满 → `Err(Full)`：通道自己累计 `overflow_count()`，旧事件不被覆盖，
+                // 本字节丢弃（与旧实现 `dropped` 计数同语义）。不 break：电平触发下
+                // 必须把硬件 FIFO 排空，否则中断源一直挂着。
                 Ok(b) => {
-                    got = true;
-                    if !self.try_enqueue(b) {
-                        self.dropped.fetch_add(1, Ordering::Relaxed);
-                    }
+                    let _ = self.events.post_isr(b);
                 }
                 Err(nb::Error::WouldBlock) => break,
                 // HAL 的错误返回已经把错误标志读清（stat+data 各读一次），继续排空
                 Err(nb::Error::Other(_)) => continue,
             }
         }
-        if got {
-            self.wake();
-        }
-    }
-
-    /// 生产一个字节（仅 ISR 侧调用）：满返回 false 并丢弃
-    #[inline]
-    fn try_enqueue(&self, b: u8) -> bool {
-        let head = self.head.load(Ordering::SeqCst);
-        let tail = self.tail.load(Ordering::SeqCst);
-        if head.wrapping_sub(tail) >= BUF_LEN {
-            return false;
-        }
-        // SAFETY: SPSC——head 槽只有唯一生产者（ISR）写，且槽位空闲
-        unsafe {
-            *self.buf[head & (BUF_LEN - 1)].get() = b;
-        }
-        self.head.store(head.wrapping_add(1), Ordering::SeqCst);
-        true
-    }
-
-    /// 消费一个字节（仅读任务侧调用）：空返回 None
-    #[inline]
-    fn try_pop(&self) -> Option<u8> {
-        let head = self.head.load(Ordering::SeqCst);
-        let tail = self.tail.load(Ordering::SeqCst);
-        if head == tail {
-            return None;
-        }
-        // SAFETY: SPSC——tail 槽只有唯一消费者（读任务）读
-        let b = unsafe { *self.buf[tail & (BUF_LEN - 1)].get() };
-        self.tail.store(tail.wrapping_add(1), Ordering::SeqCst);
-        Some(b)
     }
 }
 
@@ -210,21 +177,19 @@ impl Device for Uart0 {
 }
 
 impl StreamDevice for Uart0 {
-    /// 缓冲中待读字节数。**lock-free**（纯原子读）：内核阻塞适配器会在
-    /// `sync::free` 临界区内调用它，方法内再取锁即死锁（EventDevice 契约）。
+    /// 通道中待读字节数。通道内部取一次可重入临界区：内核阻塞适配器本就在
+    /// `sync::free` 内调它，临界区可重入，不会自锁。
     fn available(&self) -> usize {
-        self.head
-            .load(Ordering::SeqCst)
-            .wrapping_sub(self.tail.load(Ordering::SeqCst))
+        self.events.len()
     }
 
-    /// 非阻塞读：把缓冲现有字节尽量搬进 `buf`，返回实际字节数；无数据 Ok(0)。
-    /// **单读者契约**：同一时刻只允许一个任务读（SPSC 的唯一消费者）。
+    /// 非阻塞读：把通道里现有字节尽量搬进 `buf`，返回实际字节数；无数据 Ok(0)。
+    /// **单读者契约**：同一时刻只允许一个消费者（SPSC 的唯一消费者）。
     /// 阻塞读由内核 `read_blocking` 适配器实现（组合本方法与 EventDevice）。
     fn read(&self, buf: &mut [u8]) -> Result<usize, DeviceError> {
         let mut n = 0;
         while n < buf.len() {
-            match self.try_pop() {
+            match self.events.try_recv() {
                 Some(b) => {
                     buf[n] = b;
                     n += 1;
@@ -252,25 +217,17 @@ impl StreamDevice for Uart0 {
 }
 
 impl EventDevice for Uart0 {
-    /// 登记阻塞读者任务指针。**lock-free**（原子 store；重复登记覆盖旧等待者，
-    /// 单等待者契约）：内核阻塞适配器把它放在"复查 available + 挂起"的同一段
-    /// `sync::free` 里，ISR 不可能插进"发现空"与"挂起"之间。
+    /// 转发给通道的单等待者槽。**lock-free**（CAS）：内核阻塞适配器把它放在
+    /// "复查 available + 挂起"的同一段 `sync::free` 里，ISR 不可能插进"发现空"
+    /// 与"挂起"之间。已有人在等（含并发的 `recv`）→ `Busy`，绝不覆盖。
     fn register_waiter(&self, waiter: usize) -> Result<(), DeviceError> {
-        self.waiter.store(waiter, Ordering::SeqCst);
-        Ok(())
+        self.events.register_raw_waiter(waiter)
     }
 
-    /// 唤醒阻塞读者（ISR 侧调用）：waiter 是"检查+登记+挂起"同一临界区写下的，
-    /// 取到非零即对应一次真实的阻塞——不会唤醒到已不在等的人。
-    /// 唤醒后**必须自己触发软中断**（见 isr 的说明）。
+    /// 唤醒阻塞读者（ISR 侧调用）：走通道同一条唤醒路径（含软中断）。
+    /// 正常数据路径不需要它——`post_isr` 已经唤醒；保留它是为了 `EventDevice`
+    /// 契约完整（"状态就绪但无数据"类设备没有事件可投递）。
     fn wake(&self) {
-        let w = self.waiter.swap(0, Ordering::SeqCst);
-        if w != 0 {
-            // SAFETY: waiter 存的是 xworker.current() 的有效任务指针，
-            // 任务未 Terminated 前不会被释放；wakeup 只把状态改回就绪
-            unsafe { &mut *(w as *mut Task) }.wakeup();
-        }
-        // 必做：软中断唤醒内核调度器
-        Porting::irq();
+        self.events.wake_raw_waiter()
     }
 }
