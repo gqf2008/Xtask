@@ -465,6 +465,29 @@ mod tests {
         drop(gb);
     }
 
+    /// §5.15.1 验收①的 host 半边：事务期间必须真实持有那把**共享总线锁**
+    /// （release 串行化的唯一来源），事务结束必须释放。
+    /// 真正的「两个任务争同一总线不交错」需要调度器，只能在目标/QEMU 上验证
+    /// （host 无调度器，lock_core 的两方竞争会走 block() 而 host 无当前任务）。
+    #[test]
+    fn with_transaction_holds_shared_bus_lock() {
+        let bus = MockBus {
+            xfers: AtomicUsize::new(0),
+        };
+        let lock = test_lock();
+        let arb = BusArbiter::new(&bus, "bus.test.lock", lock);
+        arb.with_transaction(|_| {
+            assert!(
+                lock.try_lock().is_none(),
+                "事务闭包执行期间必须持有共享总线锁"
+            );
+        });
+        assert!(
+            lock.try_lock().is_some(),
+            "事务结束（含 panic 展开）必须释放共享总线锁"
+        );
+    }
+
     #[test]
     fn with_transaction_transfers_once() {
         let bus = MockBus {

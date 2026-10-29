@@ -21,9 +21,11 @@
 //!   `device.rs` 的 `BusDevice` 文档），tx 里再编一次地址字节会与驱动内的地址
 //!   阶段重复；[`RegMap::dev_addr`] 只供日志/断言。
 //! - **C2 纪律**：四个方法都不得在 `sync::free` 内调用（R8，入口 debug 断言）。
-//!   `read`/`write`/`update_bits` 不阻塞；`poll_bits` 会 `sleep_ms`，必须在调度器
-//!   启动后的任务上下文调用，且绝不能放进 [`BusArbiter::with_transaction`] 的
-//!   闭包——release 构建没有断言，在关中断的临界区里睡眠会直接挂死。
+//!   四个方法都经 [`BusArbiter::with_transaction`] 取**任务阻塞**的共享总线锁：
+//!   总线空闲时立即返回，同总线已有事务时会挂起等待——因此**只能在任务上下文**
+//!   调用（ISR / `sync::free` 内会破坏任务状态机）。`poll_bits` 还会 `sleep_ms`，
+//!   且绝不能放进 `with_transaction` 的闭包——release 构建没有断言，在关中断的
+//!   临界区里睡眠会直接挂死。
 //! - 零分配：全部缓冲是栈上定长数组；生产代码不含 unsafe。
 
 use core::time::Duration;

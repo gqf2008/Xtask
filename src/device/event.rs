@@ -126,9 +126,29 @@ impl<T, const N: usize> EventChannel<T, N> {
     /// 构建不编 BSP，所以那一边看不到调用者。
     #[cfg_attr(not(feature = "longan_nano"), allow(dead_code))]
     pub(crate) fn wake_raw_waiter(&self) {
-        let w = sync::free(|_| self.waiter.swap(0, Ordering::SeqCst));
+        let w = sync::free(|_| {
+            let w = self.waiter.load(Ordering::SeqCst);
+            // 只处理裸登记：guard 槽（`GUARD_TAG`）归 WaiterGuard 所有，
+            // 这里 swap/清掉会破坏 `recv`/`recv_timeout` 的单订阅权；
+            // 且 guard 的任务可能已被前面的 post 唤醒、正在退出，
+            // 区外再唤醒它就是悬垂指针。
+            if w == 0 || w & GUARD_TAG != 0 {
+                return 0;
+            }
+            match self
+                .waiter
+                .compare_exchange(w, 0, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => {
+                    // 与读取同区唤醒：任务回收（Terminated 的 Box::from_raw）
+                    // 持同一把全局锁。
+                    Self::wake_locked(w);
+                    w
+                }
+                Err(_) => 0,
+            }
+        });
         if w != 0 {
-            Self::wake_locked(w);
             Porting::irq();
         }
     }
@@ -182,7 +202,8 @@ impl<T, const N: usize> EventChannel<T, N> {
             // 只读不 swap：waiter 槽同时是「谁有消费权」。若在投递时就 swap 清零，
             // `recv_timeout` 的 WaiterGuard 会在调用期间失去登记（事件一到槽就被
             // 抹掉），并发 recv 于是能登记进来、两个消费者瓜分事件——破坏 §5.8
-            // 单订阅契约。清槽由持有者负责（WaiterGuard::drop；close 例外）。
+            // 单订阅契约。guard 槽由持有者自清（WaiterGuard::drop），裸登记槽
+            // 由唤醒方清（下面 CAS）——close 是终止态，两种都直接取走。
             let w = self.waiter.load(Ordering::SeqCst);
             // 裸登记（驱动适配器）没有 RAII 持有者，由**唤醒方**清槽——否则那条地址
             // 会一直占着槽，下一次 `register_raw_waiter` 永远 `Busy`。CAS 失败说明槽

@@ -103,7 +103,7 @@ pub const TICK_CLOCK_HZ: usize = 1000;
 /// 默认 1024 字(4K)——定时器任务要走 `do_tick` → 软定时器堆 → 唤醒链,栈较深。
 /// **CH572(12K SRAM)按 256 字(1K)**:它还要与 idle 任务、应用任务共挤 12K
 /// (见 `examples/multitask_ch572.rs` 的实测账);256 字是否够由 QEMU 口的
-/// 24 项内核自测(其中多项专测软定时器/延时)与栈围栏守卫兜住。
+/// 27 项内核自测(其中多项专测软定时器/延时)与栈围栏守卫兜住。
 #[cfg(not(feature = "ch572"))]
 pub const TIMER_STACK_SIZE_WORD: usize = 1024;
 #[cfg(feature = "ch572")]

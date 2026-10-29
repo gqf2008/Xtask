@@ -7,11 +7,11 @@
   - host 的 `size` 在 macOS / CI 上实现不一(LLVM vs GNU),输出列含义也有差异。
 段表是 ELF 规范的一部分,解析它只依赖 python 标准库,跨工具链/跨平台一致。
 
-计量口径:
-  flash = 所有 SHF_ALLOC 且非 SHT_NOBITS、非 SHF_WRITE 的段(.text/.rodata/.isr_vector)
+计量口径(与烧写占用一致):
+  flash = 所有 SHF_ALLOC 且 SHT_PROGBITS 的段(.text/.rodata/.data 载入镜像/.isr_vector)
   ram   = 所有 SHF_ALLOC 且(SHT_NOBITS 或 SHF_WRITE)的段(.data + .bss)
-  (.data 的载入镜像同时占 flash,但脚本把它整段计作 RAM;初始化数据的增长
-   由 RAM 阈值兜住,不需要两条阈值重复计账)
+  (.data 同时计入两边:载入镜像占 flash,运行时初始化数据占 RAM——与烧写/RAM 的真实
+   占用一致;.rodata 与 .data 之间搬家不会虚报 flash 变化)
 
 用法:
   python3 ci/check_size.py --baseline ci/size-baseline.txt driver target/.../driver
@@ -88,12 +88,15 @@ def measure(path):
             reserved += s["size"]
             detail.append(("stack", s["name"], s["size"]))
             continue
+        # flash = 烧写镜像里的所有可载入段:.text/.rodata/.isr_vector,以及
+        # .data 的初始化镜像(PROGBITS,LMA 在 flash)。NOBITS(.bss)不占 flash。
+        if s["type"] != SHT_NOBITS:
+            flash += s["size"]
+            detail.append(("flash", s["name"], s["size"]))
+        # RAM = .bss + .data(初始化数据运行时同样占 RAM)
         if s["type"] == SHT_NOBITS or (s["flags"] & SHF_WRITE):
             ram += s["size"]
             detail.append(("ram", s["name"], s["size"]))
-        else:
-            flash += s["size"]
-            detail.append(("flash", s["name"], s["size"]))
     return flash, ram, reserved, detail
 
 

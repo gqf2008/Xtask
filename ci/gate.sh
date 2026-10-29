@@ -101,8 +101,9 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example board_check_ch57x \
 echo "== [3/4] 体积门禁(flash/RAM 回归守卫)=="
 # 定位:设备的存储有限,抽象层/依赖只要默默胖起来,板子就烧不下。
 # 口径:ci/check_size.py 直接解 ELF 段表(不依赖 size/objdump 的具体实现,
-#       arm-none-eabi-size 读不了 riscv 产物);flash = 所有 SHF_ALLOC 的非写段,
-#       RAM = .data+.bss(链接脚本预留的 .stack 单独报出,不算门禁——否则调栈会误报)。
+#       arm-none-eabi-size 读不了 riscv 产物);flash = 所有可载入段(含 .data 的
+#       初始化镜像),RAM = .data+.bss(链接脚本预留的 .stack 单独报出,不算门禁——
+#       否则调栈会误报)。
 # 阈值:flash +5%/+256B、RAM +4%/+128B;真正的功能增量才更新基线:
 #       python3 ci/check_size.py <名字> <elf> --update
 SIZE_PY="${PY:-$(command -v python3 || command -v python || true)}"

@@ -192,9 +192,9 @@ define_capabilities! {
 /// 本内核用 `&self` + 内部可变性而不是 `&mut self`。
 pub trait StreamDevice: Device {
     /// 接收缓冲中当前可读字节数（非阻塞探测）。
-    /// **lock-free 硬约束**：实现必须纯原子操作、不得自取临界区——内核阻塞
-    /// 适配器 `read_blocking` 会在一段 `sync::free` 内调用它（宿主端 `free`
-    /// 是不可重入进程互斥锁，方法内再取锁即死锁）。
+    /// **不得阻塞**：内核阻塞适配器 `read_blocking` 会在一段 `sync::free` 内
+    /// 调用它。`sync::free` 可重入（深度计数），实现内部再取 `sync::free`
+    /// 是安全的；但不得睡眠、不得取任务阻塞锁——否则会把调度器卡在临界区里。
     fn available(&self) -> usize;
 
     /// 非阻塞读：最多读 `buf.len()`，返回实际字节数；无数据返回 `Ok(0)`。
@@ -260,11 +260,11 @@ pub trait BusDevice: Device {
 /// 事件/唤醒设备：为阻塞 I/O 提供 ISR 唤醒通道。
 ///
 /// 契约（每一条都有现 `drv_uart` 的踩坑记录背书）：
-/// - **单等待者**：重复 `register_waiter` 覆盖旧等待者（与 Uart0 的原子
-///   `store` 一致）；
-/// - **lock-free 硬约束**：`register_waiter` 必须纯原子操作、不得自取临界区——
-///   内核阻塞适配器 [`read_blocking`] 会在同一段 `sync::free` 内连续调用
-///   `available()` 与它（宿主端 `free` 不可重入，再取锁即死锁）；
+/// - **单等待者，绝不覆盖**：已有登记者（含并发的 `EventChannel::recv`）时
+///   再次 `register_waiter` 返回 `Busy`——覆盖会让先登记者永久丢失唤醒；
+/// - **不得阻塞**：内核阻塞适配器 [`read_blocking`] 会在同一段 `sync::free`
+///   内连续调用 `available()` 与它；`sync::free` 可重入，实现内部再取它安全，
+///   但不得睡眠/取任务阻塞锁；
 /// - `register_waiter` 由内核阻塞适配器使用，应用不直接调用；`wake` 由
 ///   设备侧（ISR / 状态变化）调用。
 pub trait EventDevice: Device {
@@ -292,6 +292,7 @@ pub trait EventDevice: Device {
 /// - **单读者**：同一设备同一时刻只允许一个任务调用——`EventDevice` 是
 ///   单等待者语义，并发调用互相覆盖 waiter，先登记者永久丢失唤醒。
 pub fn read_blocking(dev: &dyn Device, buf: &mut [u8]) -> Result<usize, DeviceError> {
+    sync::assert_c2("device::read_blocking");
     let stream = dev.as_stream().ok_or(DeviceError::Unsupported)?;
     let event = dev.as_event().ok_or(DeviceError::Unsupported)?;
     if buf.is_empty() {
