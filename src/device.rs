@@ -9,7 +9,9 @@
 //!   `BusDevice`（同步字节事务）、`EventDevice`（唤醒边沿）、`Switchable`（开关量；
 //!   supertrait 为 `DeviceBase`，`!Sync` 设备也可实现）；
 //! - **专用能力与逃生舱**（`device::caps`）：`IoCtl` 是每设备的厂商原始通道，
-//!   不经 `as_*` 分发——逃生舱存在，但不会被统一发现；
+//!   不经 `as_*` 分发——逃生舱存在，但不会被统一发现。**尚未接通**的（`IoCtl` +
+//!   §5.3 三型执行模型骨架）一律收在 `device::reserved` 子模块里，顶层路径取不到，
+//!   避免“文档里写了、`find_capability` 永远返回 None”的假能力面；
 //! - **阻塞读由内核适配器承接**：`read_blocking` 把 `StreamDevice + EventDevice`
 //!   组合出"等待即 Blocked"（复查+登记+挂起在同一临界区），trait 本体保持
 //!   非阻塞形态（对齐 embedded-io / Zephyr `uart_poll_in` 的真机实践）；
@@ -36,12 +38,16 @@ use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::{yield_now, Task};
 
+pub mod bus;
 pub mod caps;
 pub mod event;
+pub mod regmap;
 pub mod table;
 
-pub use caps::{EventSource, IoCtl, PollingAsyncOp, Switchable, SyncOp, TransactionOp};
+pub use bus::{claim_owner, BusArbiter, OwnerGuard};
+pub use caps::{reserved, Switchable};
 pub use event::EventChannel;
+pub use regmap::RegMap;
 
 // ---------------------------------------------------------------------------
 // 分类标签与统一错误
@@ -101,39 +107,71 @@ pub trait DeviceBase {
     fn kind(&self) -> DeviceKind;
 }
 
-/// 数据面设备的公共入口：`DeviceBase + Sync`。
+/// 能力清单的**单一事实源**。
 ///
-/// `Sync` 是硬约束（沿用旧 `BdDevice: Sync` 的论证）：设备句柄以
-/// `&'static dyn Device` 在任务间共享（文件系统链把它塞进静态
-/// `Mutex<Option<...>>`），`&dyn Device` 要 `Send` 必须先 `Device: Sync`。
-/// 实现方用 `RefCell`/原子自持可变状态；`RefCell` 设备需 `unsafe impl Sync`
-/// 并给出 SAFETY 论证（所有访问在 `sync::free` 临界区内，见 BSP 各驱动）。
-pub trait Device: DeviceBase + Sync {
+/// 一行 = 一个能力（`as_*` 方法名、`find_*` 查找名、trait 对象类型）。由它自动
+/// 生成四处机械代码：`Device::as_*` 默认方法、`impl Capability for …`（按能力
+/// 下转型）、`DriverRegistry::find_*`、自由函数 `find_*`。
+///
+/// **加能力只改这里一行**：旧写法要手工同步 3 处（`Device::as_*` / `impl
+/// Capability` / `find_*` 封皮），5 个能力就是 15 处手工点，漏一处要么编译错、
+/// 要么静默失效（能力查不到）。生成的四段见文件末尾同名块。
+macro_rules! define_capabilities {
+    ($(
+        $(#[$doc:meta])*
+        $as_fn:ident, $find_fn:ident => $cap:ty
+    ),* $(,)?) => {
+        /// 数据面设备的公共入口：`DeviceBase + Sync`。
+        ///
+        /// `Sync` 是硬约束（沿用旧 `BdDevice: Sync` 的论证）：设备句柄以
+        /// `&'static dyn Device` 在任务间共享（文件系统链把它塞进静态
+        /// `Mutex<Option<...>>`），`&dyn Device` 要 `Send` 必须先 `Device: Sync`。
+        /// 实现方用 `RefCell`/原子自持可变状态；`RefCell` 设备需 `unsafe impl Sync`
+        /// 并给出 SAFETY 论证（所有访问在 `sync::free` 临界区内，见 BSP 各驱动）。
+        pub trait Device: DeviceBase + Sync {
+            $(
+                $(#[$doc])*
+                fn $as_fn(&self) -> Option<&$cap> {
+                    None
+                }
+            )*
+        }
+
+        $(impl Capability for $cap {
+            fn downcast(dev: &'static dyn Device) -> Option<&'static Self> {
+                dev.$as_fn()
+            }
+        })*
+
+        impl DriverRegistry {
+            $(
+                /// 按名取能力；名字不存在或设备无此能力时返回 `None`
+                /// （用 `find` 可区分「没有这个设备」与「设备没这个能力」）
+                pub fn $find_fn(&self, name: &str) -> Option<&'static $cap> {
+                    self.find_capability(name)
+                }
+            )*
+        }
+
+        $(/// 从全局注册表按名取能力
+        pub fn $find_fn(name: &str) -> Option<&'static $cap> {
+            REGISTRY.$find_fn(name)
+        })*
+    };
+}
+
+define_capabilities! {
     /// 取字节流能力，不支持返回 None
-    fn as_stream(&self) -> Option<&dyn StreamDevice> {
-        None
-    }
-
+    as_stream, find_stream => dyn StreamDevice,
     /// 取块设备能力，不支持返回 None
-    fn as_block(&self) -> Option<&dyn BlockDevice> {
-        None
-    }
-
+    as_block, find_block => dyn BlockDevice,
     /// 取总线能力，不支持返回 None
-    fn as_bus(&self) -> Option<&dyn BusDevice> {
-        None
-    }
-
+    as_bus, find_bus => dyn BusDevice,
     /// 取事件/唤醒能力，不支持返回 None
-    fn as_event(&self) -> Option<&dyn EventDevice> {
-        None
-    }
-
+    as_event, find_event => dyn EventDevice,
     /// 取开关量能力，不支持返回 None。
     /// 返回 `&(dyn Switchable + Sync)`：经注册表取到的句柄必须能跨任务使用。
-    fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
-        None
-    }
+    as_switchable, find_switchable => (dyn Switchable + Sync),
 }
 
 /// 字节流设备（数据面 = 连续字节流，边界由上层协议管理）。
@@ -402,39 +440,13 @@ impl DriverRegistry {
         })
     }
 
-    // ---- 能力级便捷查找（薄包装：find_capability）----
+    // ---- 能力级查找（唯一入口；`find_*` 封皮由 define_capabilities! 生成）----
 
     /// 泛型按能力查找：所有 `find_xxx` 的公共实现（开闭原则的落点——新增能力只需
-    /// `impl Capability for dyn Xxx`，本方法与注册表/清单零改动）。
+    /// 在 `define_capabilities!` 清单加一行，本方法零改动）。
     pub fn find_capability<C: Capability + ?Sized>(&self, name: &str) -> Option<&'static C> {
         let dev = self.find(name)?;
         C::downcast(dev)
-    }
-
-    /// 按名取字节流能力；名字不存在或设备无此能力时返回 None
-    /// （用 `find` 可区分"没有"与"能力不符"）
-    pub fn find_stream(&self, name: &str) -> Option<&'static dyn StreamDevice> {
-        self.find_capability(name)
-    }
-
-    /// 按名取块设备能力
-    pub fn find_block(&self, name: &str) -> Option<&'static dyn BlockDevice> {
-        self.find_capability(name)
-    }
-
-    /// 按名取开关量能力
-    pub fn find_switchable(&self, name: &str) -> Option<&'static (dyn Switchable + Sync)> {
-        self.find_capability(name)
-    }
-
-    /// 按名取总线能力
-    pub fn find_bus(&self, name: &str) -> Option<&'static dyn BusDevice> {
-        self.find_capability(name)
-    }
-
-    /// 按名取事件/唤醒能力
-    pub fn find_event(&self, name: &str) -> Option<&'static dyn EventDevice> {
-        self.find_capability(name)
     }
 }
 
@@ -456,30 +468,8 @@ pub fn unregister(name: &str) -> bool {
     REGISTRY.unregister(name)
 }
 
-/// 从全局注册表按名取字节流能力
-pub fn find_stream(name: &str) -> Option<&'static dyn StreamDevice> {
-    REGISTRY.find_stream(name)
-}
-
-/// 从全局注册表按名取块设备能力
-pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
-    REGISTRY.find_block(name)
-}
-
-/// 从全局注册表按名取开关量能力
-pub fn find_switchable(name: &str) -> Option<&'static (dyn Switchable + Sync)> {
-    REGISTRY.find_switchable(name)
-}
-
-/// 从全局注册表按名取总线能力
-pub fn find_bus(name: &str) -> Option<&'static dyn BusDevice> {
-    REGISTRY.find_bus(name)
-}
-
-/// 从全局注册表按名取事件/唤醒能力
-pub fn find_event(name: &str) -> Option<&'static dyn EventDevice> {
-    REGISTRY.find_event(name)
-}
+// 能力级自由函数 `find_stream`/`find_block`/… 由 `define_capabilities!` 生成
+// （见文件开头的清单；此处只有通用入口）。
 
 /// 能力下转型 helper：新增能力只需实现本 trait，无需改注册表/清单。
 pub trait Capability: 'static {
@@ -493,11 +483,8 @@ pub fn find_capability<C: Capability + ?Sized>(name: &str) -> Option<&'static C>
     REGISTRY.find_capability(name)
 }
 
-impl Capability for dyn StreamDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_stream() } }
-impl Capability for dyn BlockDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_block() } }
-impl Capability for dyn Switchable + Sync { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_switchable() } }
-impl Capability for dyn BusDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_bus() } }
-impl Capability for dyn EventDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_event() } }
+// `impl Capability for …` 的 5 个实现由 `define_capabilities!` 自动生成。
+
 
 #[cfg(test)]
 mod tests {
@@ -797,6 +784,35 @@ mod tests {
         // 能力不符（未 override as_switchable）→ None；名字不存在 → None
         assert!(reg.find_switchable("uart0").is_none());
         assert!(reg.find_capability::<dyn StreamDevice>("ghost").is_none());
+    }
+
+    /// 回归：`define_capabilities!` 生成的两条路径必须指向同一实例——
+    /// `find_*` 封皮内部就是 `find_capability::<dyn X>`。
+    /// 守住「加能力只改清单一行」这条不变量：若有人改宏时把某个 `find_*` 接到
+    /// 别的方法上（或 `as_*`/`downcast` 写反），指针就不会相等，此测试红。
+    #[test]
+    fn capability_wrappers_match_generic_entry() {
+        let reg = DriverRegistry::new();
+        let (dev, ..) = MockStream::new();
+        let dev: &'static dyn Device = Box::leak(Box::new(dev));
+        reg.register("uart0", dev).unwrap();
+        let _led = mock_led("led0", &reg);
+
+        // 流：封皮 == 泛型入口（同一实例）
+        let via_wrapper = reg.find_stream("uart0").unwrap() as *const dyn StreamDevice;
+        let via_generic: &'static dyn StreamDevice = reg.find_capability("uart0").unwrap();
+        assert!(core::ptr::eq(via_wrapper, via_generic));
+
+        // 开关量：复合能力类型 `(dyn Switchable + Sync)` 同上
+        let via_wrapper = reg.find_switchable("led0").unwrap() as *const (dyn Switchable + Sync);
+        let via_generic: &'static (dyn Switchable + Sync) =
+            reg.find_capability("led0").unwrap();
+        assert!(core::ptr::eq(via_wrapper, via_generic));
+
+        // 清单里没有实现的能力：两条路径一致地返回 None（不静默命中错能力）
+        assert!(reg.find_block("uart0").is_none());
+        assert!(reg.find_bus("uart0").is_none());
+        assert!(reg.find_event("led0").is_none());
     }
 
     /// 回归：重名必须拒绝——同名二次注册 Err(Duplicate)，第一个设备不受影响。

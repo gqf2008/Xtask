@@ -158,7 +158,7 @@ impl<T, const N: usize> EventChannel<T, N> {
     /// 阻塞取一条（C2，仅任务上下文）。关闭 → `Cancelled`；已有等待者 → `Busy`。
     /// 入口断言调用方不在 `sync::free` 内（R8）。
     pub fn recv(&self) -> Result<T, DeviceError> {
-        debug_assert!(!sync::in_critical_section(), "C2 in sync::free");
+        sync::assert_c2("EventChannel::recv");
         // 本任务在登记表里的值（只由自己/`wake_waiting` 清除）
         let me = (xworker.current() as *mut Task).addr();
         loop {
@@ -207,7 +207,7 @@ impl<T, const N: usize> EventChannel<T, N> {
     /// 超时精度 = tick。期间仍占着单订阅登记位（`WaiterGuard`），所以并发
     /// `recv`/`recv_timeout` 照常 `Busy`。待内核补 timed-block 后改真阻塞（v3 §10.6 phase2）。
     pub fn recv_timeout(&self, timeout: Duration) -> Result<T, DeviceError> {
-        debug_assert!(!sync::in_critical_section(), "C2 in sync::free");
+        sync::assert_c2("EventChannel::recv_timeout");
         // 亚毫秒超时按 1 tick 计：tick 是本通道的时间精度上限；截断为 0 会
         // 静默退化成「不等待」（`elapsed >= 0` 恒真 → 一次 try_recv 失败就 Timeout）。
         let ms = (timeout.as_millis() as u64).max(1);

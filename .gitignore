@@ -3,3 +3,7 @@ Cargo.lock
 
 # 自动引导的 QEMU(xPack 静态包)
 .tools/
+
+# Python 缓存(ci/check_size.py 等被 gate 调用时生成)
+__pycache__/
+*.pyc

@@ -6,7 +6,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # 全脚本统一构建目录 = 主 target:与各步硬编码的 ELF 探测路径始终一致。
-export CARGO_TARGET_DIR="$ROOT_DIR/target"
+# 外部目标盘可 export CARGO_TARGET_DIR 覆盖(内盘吃紧的机器必须覆盖:门禁产物几个 GB);
+# 下面所有 ELF 探测路径都用 TARGET_DIR,别再写死 $ROOT_DIR/target。
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
+export CARGO_TARGET_DIR="$TARGET_DIR"
 
 # --- 预检:门禁要用的 riscv target(读者环境通常未装)---
 # 与下面的步骤一一对应:漏一个,读者跑"一条命令复现"时就会在编译期撞 E0463
@@ -28,7 +31,7 @@ cargo test --manifest-path "$ROOT_DIR/Cargo.toml" --lib --target "$HOST_TRIPLE" 
 echo "== [2/4] 示例链接(弱符号 ISR 绑定守卫 + fatfs 全链链接)=="
 # 用 build 不用 check:ch20 的 USART0 中断向量是 port.S 里的 .weak 符号,
 # 应用层 #[no_mangle] 定义后由链接器绑定——只有链接才能验证机制生效
-DRIVER_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/driver"
+DRIVER_ELF="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples/driver"
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example driver \
     --features gd32vf103 --target riscv32imac-unknown-none-elf --release
 if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
@@ -47,12 +50,17 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example usb_cdc \
     --features gd32vf103,usb --target riscv32imac-unknown-none-elf --release
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example ble_gatt \
     --features gd32vf103,ble --target riscv32imac-unknown-none-elf --release
+# qemu_pingpong:第 4 步要跑它,但第 3 步的体积门禁先要对它比基线——冷目录
+# (CARGO_TARGET_DIR 指向空目录、CI 首次构建)时若等到第 4 步才构建,第 3 步会
+# 报"找不到产物"。构建前置到本步,让门禁与构建顺序无关。
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_pingpong \
+    --features qemu_riscv --target riscv32imac-unknown-none-elf --release
 # CH583(QingKe V4A)零 PAC 口:QEMU 没有对应的机器可跑(见第 3 步),门禁做
 # 构建级 + 启动头产物级终检——WCH ROM 按向量表第 5 字 boot option 0xF3F9BDA9
 # 识别有效用户程序,缺了它板上停在 ISP 而构建/门禁全绿(见 check_wch_boot.py)
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
     --features ch583,timer --target riscv32imac-unknown-none-elf --release
-CH583_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/multitask_ch583"
+CH583_ELF="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples/multitask_ch583"
 if [ -n "${PY:-}" ]; then
     "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$CH583_ELF"
 else
@@ -63,7 +71,7 @@ fi
 # 兜底(src/arch/riscv/critical.rs),缺那份实现时编译能过、链接缺符号
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch583 \
     --features ch583,timer --target riscv32imc-unknown-none-elf --release
-IMC_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multitask_ch583"
+IMC_ELF="$TARGET_DIR/riscv32imc-unknown-none-elf/release/examples/multitask_ch583"
 if [ -n "${PY:-}" ]; then
     # 启动头布局与目标 ISA 无关,同一脚本顺带钉住 imc 产物
     "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$IMC_ELF"
@@ -73,7 +81,7 @@ fi
 # 示例按 12K 的实测内存账缩编(idle/软件定时器任务栈在 env.rs 里压到 256 字)
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example multitask_ch572 \
     --features ch572 --target riscv32imc-unknown-none-elf --release
-CH572_ELF="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples/multitask_ch572"
+CH572_ELF="$TARGET_DIR/riscv32imc-unknown-none-elf/release/examples/multitask_ch572"
 if [ -n "${PY:-}" ]; then
     "$PY" "$ROOT_DIR/ci/check_wch_boot.py" "$CH572_ELF"
 fi
@@ -101,8 +109,8 @@ SIZE_PY="${PY:-$(command -v python3 || command -v python || true)}"
 if [ -z "$SIZE_PY" ]; then
     echo "python 未安装,跳过体积门禁"
 else
-    RIMAC="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples"
-    RIMC="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples"
+    RIMAC="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples"
+    RIMC="$TARGET_DIR/riscv32imc-unknown-none-elf/release/examples"
     # 覆盖四种典型剖面:驱动能力面 / FS 全链 / 协议栈 / 小 flash 板 / 无 A 扩展
     "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" driver           "$DRIVER_ELF"
     "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" fatfs            "$RIMAC/fatfs"
@@ -143,7 +151,7 @@ if [ -z "$QEMU_BIN" ]; then
 fi
 if [ -n "$QEMU_BIN" ]; then
     # qemu_pingpong:两任务 200 轮乒乓 + tick 心跳;跑满写 SiFive test 自退出
-    QEMU_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/qemu_pingpong"
+    QEMU_ELF="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples/qemu_pingpong"
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_pingpong \
         --features qemu_riscv --target riscv32imac-unknown-none-elf --release
     QEMU_OUT="$( "$QEMU_BIN" -M virt -nographic -bios none -kernel "$QEMU_ELF" </dev/null 2>&1 || true )"
@@ -163,7 +171,7 @@ if [ -n "$QEMU_BIN" ]; then
         echo "python 未安装——qemu_kernel_tests 的 UART RX 喂字节握手无法执行;安装 python3 后重跑"
         exit 1
     fi
-    KTESTS_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests"
+    KTESTS_ELF="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests"
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_kernel_tests \
         --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
     KOUT="$( "$PYF" "$ROOT_DIR/ci/feed_qemu.py" 180 "$QEMU_BIN" "$KTESTS_ELF" | grep -v "GLib-GIO" || true )"
@@ -189,7 +197,7 @@ if [ -n "$QEMU_BIN" ]; then
         || { echo "qemu_kernel_tests(tlsf 全局后端)未全过;输出:"; echo "$TLSF_OUT" | tail -15; exit 1; }
     echo "qemu_kernel_tests(tlsf 全局后端): 27/27 passed(分配器换引擎对内核透明)"
     # SMP 双核执行门禁:应用显式 smp::enable() 后 hart1 真正参与调度
-    SMP_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/qemu_smp"
+    SMP_ELF="$TARGET_DIR/riscv32imac-unknown-none-elf/release/examples/qemu_smp"
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_smp \
         --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
     SMP2_OUT="$( "$QEMU_BIN" -M virt -smp 2 -nographic -bios none -kernel "$SMP_ELF" </dev/null 2>&1 | grep -v "GLib-GIO" || true )"

@@ -51,6 +51,22 @@ pub mod semaphore;
 
 pub use critical::{free, in_critical_section};
 
+/// 当前上下文是否在 ISR 内（由端口提供；默认 `false`）。
+#[inline]
+pub fn in_isr() -> bool {
+    <crate::port::Porting as crate::port::Portable>::in_isr()
+}
+
+/// C2 入口断言：不得在 `sync::free` 或 ISR 内调用（R8 机器判据）。
+#[inline(always)]
+pub fn assert_c2(what: &'static str) {
+    debug_assert!(
+        !in_critical_section() && !in_isr(),
+        "C2 方法在 C1/C0 上下文调用: {}",
+        what
+    );
+}
+
 #[derive(Debug)]
 pub enum Error {
     /// 信号量满了
