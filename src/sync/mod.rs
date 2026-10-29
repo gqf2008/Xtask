@@ -49,7 +49,7 @@ pub mod queue;
 pub mod reentrant_mutex;
 pub mod semaphore;
 
-pub use critical::free;
+pub use critical::{free, in_critical_section};
 
 #[derive(Debug)]
 pub enum Error {
