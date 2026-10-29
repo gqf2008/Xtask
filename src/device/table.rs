@@ -30,7 +30,7 @@
 
 use core::cell::UnsafeCell;
 
-use crate::device::{BlockDevice, BusDevice, Control, Device, EventDevice, StreamDevice};
+use crate::device::{BlockDevice, BusDevice, Device, EventDevice, StreamDevice, Switchable};
 use crate::sync;
 
 /// 设备实例槽：编译期清单里的"位置"，运行期由 init 填**一次**实例。
@@ -158,9 +158,9 @@ impl DeviceTable {
         self.find(name).and_then(|d| d.as_block())
     }
 
-    /// 按名取控制面能力
-    pub fn find_control(&self, name: &str) -> Option<&'static dyn Control> {
-        self.find(name).and_then(|d| d.as_control())
+    /// 按名取开关量能力
+    pub fn find_switchable(&self, name: &str) -> Option<&'static (dyn Switchable + Sync)> {
+        self.find(name).and_then(|d| d.as_switchable())
     }
 
     /// 按名取总线能力
@@ -197,9 +197,9 @@ pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
     TABLE.find_block(name)
 }
 
-/// 从全局清单表按名取控制面能力
-pub fn find_control(name: &str) -> Option<&'static dyn Control> {
-    TABLE.find_control(name)
+/// 从全局清单表按名取开关量能力
+pub fn find_switchable(name: &str) -> Option<&'static (dyn Switchable + Sync)> {
+    TABLE.find_switchable(name)
 }
 
 /// 从全局清单表按名取总线能力
@@ -215,36 +215,37 @@ pub fn find_event(name: &str) -> Option<&'static dyn EventDevice> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceError, DeviceKind, SECTOR_SIZE};
+    use crate::device::{DeviceBase, DeviceError, DeviceKind, SECTOR_SIZE};
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    /// mock LED：op1 计数 +1、op3 计数 +10（与 device.rs 的 mock 同款）
+    /// mock 开关量设备：on +1、off +1、toggle +10（与 device.rs 的 mock 同款）
     struct MockLed {
         count: Arc<AtomicUsize>,
     }
-    impl Device for MockLed {
+    impl DeviceBase for MockLed {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Control
         }
-        fn as_control(&self) -> Option<&dyn Control> {
+    }
+    impl Device for MockLed {
+        fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
             Some(self)
         }
     }
-    impl Control for MockLed {
-        fn control(&self, op: u32, _arg: usize) -> Result<usize, DeviceError> {
-            match op {
-                1 => {
-                    self.count.fetch_add(1, Ordering::SeqCst);
-                    Ok(0)
-                }
-                3 => {
-                    self.count.fetch_add(10, Ordering::SeqCst);
-                    Ok(0)
-                }
-                _ => Err(DeviceError::InvalidInput),
-            }
+    impl Switchable for MockLed {
+        fn on(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn off(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn toggle(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(10, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -253,10 +254,12 @@ mod tests {
         written: Arc<AtomicUsize>,
         registered: Arc<AtomicUsize>,
     }
-    impl Device for MockStream {
+    impl DeviceBase for MockStream {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Stream
         }
+    }
+    impl Device for MockStream {
         fn as_stream(&self) -> Option<&dyn StreamDevice> {
             Some(self)
         }
@@ -288,10 +291,12 @@ mod tests {
     struct MockBlock {
         reads: Arc<AtomicUsize>,
     }
-    impl Device for MockBlock {
+    impl DeviceBase for MockBlock {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Block
         }
+    }
+    impl Device for MockBlock {
         fn as_block(&self) -> Option<&dyn BlockDevice> {
             Some(self)
         }
@@ -316,10 +321,12 @@ mod tests {
     struct MockBus {
         xfer: Arc<AtomicUsize>,
     }
-    impl Device for MockBus {
+    impl DeviceBase for MockBus {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Bus
         }
+    }
+    impl Device for MockBus {
         fn as_bus(&self) -> Option<&dyn BusDevice> {
             Some(self)
         }
@@ -354,7 +361,7 @@ mod tests {
     fn find_before_attach_is_none() {
         let table = DeviceTable::new();
         assert!(table.find("led0").is_none());
-        assert!(table.find_control("led0").is_none());
+        assert!(table.find_switchable("led0").is_none());
         assert!(table.find("ghost").is_none());
     }
 
@@ -390,13 +397,14 @@ mod tests {
 
         let (led, count) = mock_led();
         LED_SLOT.fill(led);
-        let c = table.find_control("led0").expect("填槽后应能找到控制面");
-        c.control(1, 0).unwrap();
-        c.control(3, 0).unwrap();
+        let c = table.find_switchable("led0").expect("填槽后应能找到开关量能力");
+        c.on().unwrap();
+        c.off().unwrap();
+        c.toggle().unwrap();
         assert_eq!(
             count.load(Ordering::SeqCst),
-            11,
-            "op1(+1) 与 op3(+10) 都应生效"
+            12,
+            "on(+1)、off(+1)、toggle(+10) 都应生效"
         );
 
         let (uart, written, registered) = mock_stream();
@@ -453,7 +461,7 @@ mod tests {
         assert!(table.find_block("spi1").is_none(), "总线设备按块找应 None");
     }
 
-    /// 回归：名字不在清单 → None；能力不符 → find_control/find_stream 各得 None。
+    /// 回归：名字不在清单 → None；能力不符 → find_switchable/find_stream 各得 None。
     #[test]
     fn unknown_name_and_wrong_class_are_none() {
         static UART_SLOT: DeviceSlot = DeviceSlot::new();
@@ -465,8 +473,8 @@ mod tests {
 
         assert!(table.find("ghost").is_none(), "名字不在清单");
         assert!(
-            table.find_control("uart0").is_none(),
-            "流设备未 override as_control，按控制面找应 None"
+            table.find_switchable("uart0").is_none(),
+            "流设备未 override as_switchable，按开关量找应 None"
         );
         assert_eq!(
             table.find("uart0").unwrap().kind(),
@@ -502,9 +510,9 @@ mod tests {
         let table = DeviceTable::new();
         table.attach(TEST_BOARD);
         table
-            .find_control("red")
+            .find_switchable("red")
             .expect("宏清单应可查")
-            .control(1, 0)
+            .on()
             .unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 1);
         assert!(table.find_stream("uart0").is_none(), "S2 未填，应未就绪");

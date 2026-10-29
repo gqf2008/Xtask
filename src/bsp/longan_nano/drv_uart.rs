@@ -10,7 +10,7 @@
 //! **ISR 是唯一生产者**（写 head），**读任务是唯一消费者**（写 tail）。
 //!
 //! 能力组合（`device` 层）：`StreamDevice`（非阻塞读/轮询写）+ `EventDevice`
-//! （waiter 槽 + ISR 唤醒）+ `Control`（占位，一切 op 报 Unsupported）。
+//! （waiter 槽 + ISR 唤醒）；控制面已删除（v3：能力要么真能，要么不存在）。
 //! 阻塞读不在设备里——由内核通用适配器 `device::read_blocking` 组合这两件
 //! 能力实现（"等待即 Blocked"；复查+登记+挂起在同一临界区，丢失唤醒从根上
 //! 消除——反面教材：`sync::notify` 的 CAS 曾在临界区外，遗留问题 #6 已于
@@ -30,7 +30,7 @@ use gd32vf103xx_hal::rcu::Rcu;
 use gd32vf103xx_hal::serial::{Config, Parity, Rx, Serial, StopBits, Tx};
 use gd32vf103xx_hal::time::Bps;
 
-use crate::device::{Control, Device, DeviceError, DeviceKind, EventDevice, StreamDevice};
+use crate::device::{Device, DeviceBase, DeviceError, DeviceKind, EventDevice, StreamDevice};
 use crate::port::{Portable, Porting};
 use crate::sync;
 use crate::task::Task;
@@ -193,16 +193,14 @@ pub fn uart0_isr() {
     dev.isr();
 }
 
-impl Device for Uart0 {
+impl DeviceBase for Uart0 {
     fn kind(&self) -> DeviceKind {
         DeviceKind::Stream
     }
+}
 
+impl Device for Uart0 {
     fn as_stream(&self) -> Option<&dyn StreamDevice> {
-        Some(self)
-    }
-
-    fn as_control(&self) -> Option<&dyn Control> {
         Some(self)
     }
 
@@ -250,15 +248,6 @@ impl StreamDevice for Uart0 {
             });
         }
         Ok(buf.len())
-    }
-}
-
-impl Control for Uart0 {
-    /// 占位：波特率/流控等配置 op 暂未定义，一律报 Unsupported
-    /// （控制面能力已暴露——`as_control` 返回 Some——便于示例演示
-    /// "有能力 ≠ 实现了所有命令"）。
-    fn control(&self, _op: u32, _arg: usize) -> Result<usize, DeviceError> {
-        Err(DeviceError::Unsupported)
     }
 }
 

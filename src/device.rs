@@ -2,13 +2,14 @@
 //!
 //! 模型（依据 `docs/设备驱动抽象层设计.md` 定稿，对照 Unix char/block/ioctl
 //! 三分法与 RT-Thread 的 control 基座；查找机制沿用 Zephyr binding）：
-//! - **`Device` 顶层 trait**：`kind()` 分类标签 + 五个 `as_*` 能力查询（默认
-//!   返回 None）。注册表/编译期清单只持有 `&'static dyn Device`，不感知具体
-//!   设备类——新增能力 = 新 trait + 新 `as_*` 默认方法，表本体一行不改；
-//! - **五个能力 trait**：`StreamDevice`（字节流：UART/USB-CDC/SLIP…）、
-//!   `BlockDevice`（块：SD/Flash/内存盘…）、`Control`（ioctl 控制面：LED/参数
-//!   配置/厂商命令…）、`BusDevice`（同步字节事务：SPI/I2C…）、`EventDevice`
-//!   （事件/唤醒：阻塞 I/O 的 ISR 唤醒通道）；
+//! - **`Device` / `DeviceBase`**：`DeviceBase` 只有 `kind()` 分类标签（无 `Sync` 上界）；
+//!   `Device: DeviceBase + Sync` 是**数据面**入口，供 `&'static dyn Device` 跨任务共享。
+//!   专用设备（独占句柄）只实现 `DeviceBase` + 能力 trait，经 typed accessor 取用；
+//! - **数据面能力 trait**：`StreamDevice`（字节流）、`BlockDevice`（块）、
+//!   `BusDevice`（同步字节事务）、`EventDevice`（唤醒边沿）、`Switchable`（开关量；
+//!   supertrait 为 `DeviceBase`，`!Sync` 设备也可实现）；
+//! - **专用能力与逃生舱**（`device::caps`）：`IoCtl` 是每设备的厂商原始通道，
+//!   不经 `as_*` 分发——逃生舱存在，但不会被统一发现；
 //! - **阻塞读由内核适配器承接**：`read_blocking` 把 `StreamDevice + EventDevice`
 //!   组合出"等待即 Blocked"（复查+登记+挂起在同一临界区），trait 本体保持
 //!   非阻塞形态（对齐 embedded-io / Zephyr `uart_poll_in` 的真机实践）；
@@ -35,7 +36,12 @@ use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::{yield_now, Task};
 
+pub mod caps;
+pub mod event;
 pub mod table;
+
+pub use caps::{EventSource, IoCtl, PollingAsyncOp, Switchable, SyncOp, TransactionOp};
+pub use event::EventChannel;
 
 // ---------------------------------------------------------------------------
 // 分类标签与统一错误
@@ -70,29 +76,38 @@ pub enum DeviceError {
     Unsupported,
     /// 底层 IO 错误（坏扇区等硬件级失败）
     Io,
-    /// 操作超时
+    /// 操作超时（传输层；业务「无结果」走 Outcome / `Ok(None)`）
     Timeout,
+    /// 设备被占用 / 重复 open / 单订阅设备第二次 events()
+    Busy,
+    /// 被取消 / 通道已关闭
+    Cancelled,
     /// 读到卷尾（`fatfs::io::IoError::new_unexpected_eof_error` 的对应物）
     UnexpectedEof,
     /// `write_all` 进度停滞（`fatfs::io::IoError::new_write_zero_error` 的对应物）
     WriteZero,
+    /// 厂商原始错误码（按模块分段；上层可诊断，不参与业务分支）
+    Vendor { module: u16, code: i32 },
 }
 
 // ---------------------------------------------------------------------------
 // 顶层抽象与五个能力 trait
 // ---------------------------------------------------------------------------
 
-/// 所有设备的公共入口。
+/// 设备元数据基座：**无 `Sync` 上界**。独占句柄 / 专用设备只需实现本 trait。
+pub trait DeviceBase {
+    /// 设备类别（主类标签；消费方是诊断/清单，不参与能力分发）
+    fn kind(&self) -> DeviceKind;
+}
+
+/// 数据面设备的公共入口：`DeviceBase + Sync`。
 ///
 /// `Sync` 是硬约束（沿用旧 `BdDevice: Sync` 的论证）：设备句柄以
 /// `&'static dyn Device` 在任务间共享（文件系统链把它塞进静态
 /// `Mutex<Option<...>>`），`&dyn Device` 要 `Send` 必须先 `Device: Sync`。
 /// 实现方用 `RefCell`/原子自持可变状态；`RefCell` 设备需 `unsafe impl Sync`
 /// 并给出 SAFETY 论证（所有访问在 `sync::free` 临界区内，见 BSP 各驱动）。
-pub trait Device: Sync {
-    /// 设备类别（主类标签；消费方是诊断/清单，不参与能力分发）
-    fn kind(&self) -> DeviceKind;
-
+pub trait Device: DeviceBase + Sync {
     /// 取字节流能力，不支持返回 None
     fn as_stream(&self) -> Option<&dyn StreamDevice> {
         None
@@ -100,11 +115,6 @@ pub trait Device: Sync {
 
     /// 取块设备能力，不支持返回 None
     fn as_block(&self) -> Option<&dyn BlockDevice> {
-        None
-    }
-
-    /// 取控制面能力，不支持返回 None
-    fn as_control(&self) -> Option<&dyn Control> {
         None
     }
 
@@ -117,9 +127,15 @@ pub trait Device: Sync {
     fn as_event(&self) -> Option<&dyn EventDevice> {
         None
     }
+
+    /// 取开关量能力，不支持返回 None。
+    /// 返回 `&(dyn Switchable + Sync)`：经注册表取到的句柄必须能跨任务使用。
+    fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
+        None
+    }
 }
 
-/// 字节流设备（数据面 = 连续字节流，边界由上层协议管理）。
+
 ///
 /// 对齐 `embedded_io::Read/Write` 的形状；因注册表返回的是共享 `&'static dyn`，
 /// 本内核用 `&self` + 内部可变性而不是 `&mut self`。
@@ -175,30 +191,6 @@ pub trait BlockDevice: Device {
 
     /// 写一个扇区；`buf.len()` 必须等于扇区大小
     fn write_sector(&self, no: u64, buf: &[u8]) -> Result<(), DeviceError>;
-}
-
-/// 控制面（ioctl 风格）：一切非数据路径的操作——参数配置、状态查询、开关、
-/// 厂商私有命令——都走这一个出口。
-///
-/// **`arg` 的指针/标量双义约定**（Linux `ioctl` 第三参 `unsigned long` 的
-/// Rust 直译，双义由每个 op 的 ABI 契约定义）：
-/// - 标量一律 ≤u32 直接传值（本内核全是 32 位目标，`usize` 装不下 u64——
-///   SD 扇区号 / Flash 擦除地址等 64 位参数必须走指针路径）；
-/// - 指针路径：调用侧 `&mut buf as *mut _ as usize` 是 safe 的；设备侧
-///   `unsafe` 重建引用，**unsafe 全关在设备实现内**，每个 `unsafe` 块必须带
-///   `// SAFETY:` 注释写明该 op 的契约（类型/长度/方向），误用即 UB；
-/// - `arg` 指针仅在 `control` 调用期间有效，**不得留存**（不支持把缓冲
-///   交给 DMA 事后使用）；
-/// - op 编码建议：简化版 Linux `_IOC`——高 16 位族 magic + 低 16 位命令
-///   （可加方向/尺寸位），让"指针还是标量"在命令码上可判读。
-///
-/// 返回值：查询型 op 返回设备写回的字节数/数值；设置型返回 `Ok(0)`；
-/// 未知 op 返回 `Err(InvalidInput)`；**占位实现**（能力已暴露、命令面
-/// 尚未定义，如 Uart0）可对一切 op 报 `Err(Unsupported)`；设备不支持
-/// 控制面则不实现本 trait（`as_control` 默认 None）。
-pub trait Control: Device {
-    /// 执行控制指令；`op`/`arg` 语义由设备族自定（见 trait 级约定）
-    fn control(&self, op: u32, arg: usize) -> Result<usize, DeviceError>;
 }
 
 /// 总线传输能力（同步字节事务：SPI / I2C / I3C）。
@@ -285,24 +277,27 @@ pub fn read_blocking(dev: &dyn Device, buf: &mut [u8]) -> Result<usize, DeviceEr
 
 /// `&T` 也是 `Device`（逐方法转发）——泛型适配器可以统一处理具体设备与
 /// 表取出的 trait 对象两种形态（`FatAdapter<&'static dyn BlockDevice>` 依赖）。
-impl<T: Device + ?Sized> Device for &T {
+impl<T: Device + ?Sized> DeviceBase for &T {
     fn kind(&self) -> DeviceKind {
         (**self).kind()
     }
+}
+
+impl<T: Device + ?Sized> Device for &T {
     fn as_stream(&self) -> Option<&dyn StreamDevice> {
         (**self).as_stream()
     }
     fn as_block(&self) -> Option<&dyn BlockDevice> {
         (**self).as_block()
     }
-    fn as_control(&self) -> Option<&dyn Control> {
-        (**self).as_control()
-    }
     fn as_bus(&self) -> Option<&dyn BusDevice> {
         (**self).as_bus()
     }
     fn as_event(&self) -> Option<&dyn EventDevice> {
         (**self).as_event()
+    }
+    fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
+        (**self).as_switchable()
     }
 }
 
@@ -426,8 +421,8 @@ impl DriverRegistry {
         self.find_capability(name)
     }
 
-    /// 按名取控制面能力
-    pub fn find_control(&self, name: &str) -> Option<&'static dyn Control> {
+    /// 按名取开关量能力
+    pub fn find_switchable(&self, name: &str) -> Option<&'static (dyn Switchable + Sync)> {
         self.find_capability(name)
     }
 
@@ -470,9 +465,9 @@ pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
     REGISTRY.find_block(name)
 }
 
-/// 从全局注册表按名取控制面能力
-pub fn find_control(name: &str) -> Option<&'static dyn Control> {
-    REGISTRY.find_control(name)
+/// 从全局注册表按名取开关量能力
+pub fn find_switchable(name: &str) -> Option<&'static (dyn Switchable + Sync)> {
+    REGISTRY.find_switchable(name)
 }
 
 /// 从全局注册表按名取总线能力
@@ -499,7 +494,7 @@ pub fn find_capability<C: Capability + ?Sized>(name: &str) -> Option<&'static C>
 
 impl Capability for dyn StreamDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_stream() } }
 impl Capability for dyn BlockDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_block() } }
-impl Capability for dyn Control { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_control() } }
+impl Capability for dyn Switchable + Sync { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_switchable() } }
 impl Capability for dyn BusDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_bus() } }
 impl Capability for dyn EventDevice { fn downcast(dev: &'static dyn Device) -> Option<&'static Self> { dev.as_event() } }
 
@@ -542,10 +537,13 @@ mod tests {
         }
     }
 
-    impl Device for MockStream {
+    impl DeviceBase for MockStream {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Stream
         }
+    }
+
+    impl Device for MockStream {
         fn as_stream(&self) -> Option<&dyn StreamDevice> {
             Some(self)
         }
@@ -588,33 +586,35 @@ mod tests {
         }
     }
 
-    /// mock 纯控制设备（LED 类）：op1 计数 +1、op3 计数 +10，未知 op 报错
+    /// mock 开关量设备（LED 类）：on +1、off +1、toggle +10（逐方法计数）
     struct MockLed {
         count: Arc<AtomicUsize>,
     }
 
-    impl Device for MockLed {
+    impl DeviceBase for MockLed {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Control
         }
-        fn as_control(&self) -> Option<&dyn Control> {
+    }
+
+    impl Device for MockLed {
+        fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
             Some(self)
         }
     }
 
-    impl Control for MockLed {
-        fn control(&self, op: u32, _arg: usize) -> Result<usize, DeviceError> {
-            match op {
-                1 => {
-                    self.count.fetch_add(1, Ordering::SeqCst);
-                    Ok(0)
-                }
-                3 => {
-                    self.count.fetch_add(10, Ordering::SeqCst);
-                    Ok(0)
-                }
-                _ => Err(DeviceError::InvalidInput),
-            }
+    impl Switchable for MockLed {
+        fn on(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn off(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn toggle(&self) -> Result<(), DeviceError> {
+            self.count.fetch_add(10, Ordering::SeqCst);
+            Ok(())
         }
     }
 
@@ -623,10 +623,13 @@ mod tests {
         ops: Arc<AtomicUsize>,
     }
 
-    impl Device for MockBlock {
+    impl DeviceBase for MockBlock {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Block
         }
+    }
+
+    impl Device for MockBlock {
         fn as_block(&self) -> Option<&dyn BlockDevice> {
             Some(self)
         }
@@ -654,10 +657,13 @@ mod tests {
         xfer: Arc<AtomicUsize>,
     }
 
-    impl Device for MockBus {
+    impl DeviceBase for MockBus {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Bus
         }
+    }
+
+    impl Device for MockBus {
         fn as_bus(&self) -> Option<&dyn BusDevice> {
             Some(self)
         }
@@ -704,27 +710,27 @@ mod tests {
         e.register_waiter(0x1234).unwrap();
         assert_eq!(registered.load(Ordering::SeqCst), 0x1234);
 
-        // 能力不符：未 override as_control 的设备按控制面找应得 None
-        assert!(reg.find_control("uart0").is_none());
+        // 能力不符：未 override as_switchable 的设备按开关量找应得 None
+        assert!(reg.find_switchable("uart0").is_none());
         // kind 标签（诊断用途）
         assert_eq!(reg.find("uart0").unwrap().kind(), DeviceKind::Stream);
     }
 
-    /// 回归：纯控制设备（LED 类）注册→查找→命令分派；未知 op 报 InvalidInput。
+    /// 回归：开关量设备（LED 类）注册→查找→方法分派；三方法各自到达正确分支。
     #[test]
-    fn control_register_find_use_roundtrip() {
+    fn switchable_register_find_use_roundtrip() {
         let reg = DriverRegistry::new();
         let count = mock_led("red", &reg);
-        let c = reg.find_control("red").expect("注册后应能找到控制面");
-        c.control(1, 0).unwrap();
-        c.control(3, 0).unwrap();
+        let c = reg.find_switchable("red").expect("注册后应能找到开关量能力");
+        c.on().unwrap();
+        c.off().unwrap();
+        c.toggle().unwrap();
         assert_eq!(
             count.load(Ordering::SeqCst),
-            11,
-            "op1(+1) 与 op3(+10) 都应生效"
+            12,
+            "on(+1)、off(+1)、toggle(+10) 都应生效"
         );
-        assert_eq!(c.control(0xFF, 0), Err(DeviceError::InvalidInput));
-        // 能力不符：纯控制设备按流找应得 None；通用 find 能区分
+        // 能力不符：开关量设备按流找应得 None；通用 find 能区分
         assert!(reg.find_stream("red").is_none());
         assert_eq!(reg.find("red").unwrap().kind(), DeviceKind::Control);
     }
@@ -787,8 +793,8 @@ mod tests {
             .unwrap();
         assert_eq!(registered.load(Ordering::SeqCst), 0x99);
 
-        // 能力不符（未 override as_control）→ None；名字不存在 → None
-        assert!(reg.find_capability::<dyn Control>("uart0").is_none());
+        // 能力不符（未 override as_switchable）→ None；名字不存在 → None
+        assert!(reg.find_switchable("uart0").is_none());
         assert!(reg.find_capability::<dyn StreamDevice>("ghost").is_none());
     }
 
@@ -801,7 +807,7 @@ mod tests {
         let count2 = Arc::new(AtomicUsize::new(0));
         let dev2: &'static dyn Device = Box::leak(Box::new(MockLed { count: count2 }));
         assert_eq!(reg.register("red", dev2), Err(DeviceError::Duplicate));
-        reg.find_control("red").unwrap().control(1, 0).unwrap();
+        reg.find_switchable("red").unwrap().on().unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
@@ -848,7 +854,7 @@ mod tests {
         assert!(reg.find("ghost").is_none());
         assert!(reg.find_stream("ghost").is_none());
         assert!(reg.find_block("ghost").is_none());
-        assert!(reg.find_control("ghost").is_none());
+        assert!(reg.find_switchable("ghost").is_none());
         assert!(reg.find_bus("ghost").is_none());
         assert!(reg.find_event("ghost").is_none());
     }
@@ -877,10 +883,12 @@ mod tests {
 
         /// 零进度设备：write 恒返回 Ok(0)
         struct Stuck;
-        impl Device for Stuck {
+        impl DeviceBase for Stuck {
             fn kind(&self) -> DeviceKind {
                 DeviceKind::Stream
             }
+        }
+        impl Device for Stuck {
             fn as_stream(&self) -> Option<&dyn StreamDevice> {
                 Some(self)
             }

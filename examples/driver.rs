@@ -8,7 +8,7 @@ use gd32vf103xx_hal as hal;
 use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt};
 
 use xtask::arch::riscv::rt;
-use xtask::bsp::longan_nano::drv_led::{DrvLed, LED_ON, LED_TOGGLE};
+use xtask::bsp::longan_nano::drv_led::DrvLed;
 use xtask::bsp::longan_nano::drv_uart::uart0_isr;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::device::table::{self, DeviceSlot};
@@ -16,7 +16,7 @@ use xtask::prelude::*;
 
 // 驱动抽象层示例：注册→查找→使用 全流程
 // - 表只认识 `&'static dyn Device`；能力分发走 `as_*` 查询——LED 是纯控制设备
-//   （Control），UART 是流设备（StreamDevice）+ 事件能力（EventDevice）
+//   （Switchable），UART 是流设备（StreamDevice）+ 事件能力（EventDevice）
 // - LED：编译期设备清单（device::table）——"red"/"green"/"blue" 的名字集合在编译期
 //   定死（const 数组），实例在 init 里构造后填进静态槽（RAM）；清单里有名而槽未填 =
 //   未就绪（find 返回 None，对应 Zephyr device_is_ready 语义）
@@ -98,9 +98,9 @@ fn init() {
 
     log::info!("driver: leds via device list + uart0 via registry");
     // 开机先亮一下红灯：调度器启动前的 find→use 也走通
-    table::find_control("red")
+    table::find_switchable("red")
         .unwrap()
-        .control(LED_ON, 0)
+        .on()
         .unwrap();
 }
 
@@ -110,9 +110,9 @@ fn main() -> ! {
 
     // 绿灯 500ms 翻转：应用不认识具体 LED，只按名字拿控制面发命令
     TaskBuilder::new().name("blink").priority(3).spawn(|| loop {
-        table::find_control("green")
+        table::find_switchable("green")
             .unwrap()
-            .control(LED_TOGGLE, 0)
+            .toggle()
             .unwrap();
         xtask::sleep_ms(500);
     });
@@ -123,9 +123,9 @@ fn main() -> ! {
         let mut b = [0u8; 1];
         read_blocking(dev, &mut b).unwrap();
         find_stream("uart0").unwrap().write(&b).unwrap();
-        table::find_control("blue")
+        table::find_switchable("blue")
             .unwrap()
-            .control(LED_TOGGLE, 0)
+            .toggle()
             .unwrap();
     });
 

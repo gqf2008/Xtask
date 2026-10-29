@@ -218,10 +218,13 @@ mod tests {
         }
     }
 
-    impl Device for RamDisk {
+    impl crate::device::DeviceBase for RamDisk {
         fn kind(&self) -> DeviceKind {
             DeviceKind::Block
         }
+    }
+
+    impl Device for RamDisk {
         fn as_block(&self) -> Option<&dyn BlockDevice> {
             Some(self)
         }
