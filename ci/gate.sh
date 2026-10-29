@@ -20,12 +20,12 @@ if command -v rustup >/dev/null 2>&1; then
     done
 fi
 
-echo "== [1/3] 内核 host 回归测试(阳性对照守卫)=="
+echo "== [1/4] 内核 host 回归测试(阳性对照守卫)=="
 HOST_TRIPLE="$(rustc -vV | sed -n "s/^host: //p")"
 cargo test --manifest-path "$ROOT_DIR/Cargo.toml" --lib --target "$HOST_TRIPLE" \
     --no-default-features --features xtask_executor,xtask_scheduler,timer,fs,net,usb,ble
 
-echo "== [2/3] 示例链接(弱符号 ISR 绑定守卫 + fatfs 全链链接)=="
+echo "== [2/4] 示例链接(弱符号 ISR 绑定守卫 + fatfs 全链链接)=="
 # 用 build 不用 check:ch20 的 USART0 中断向量是 port.S 里的 .weak 符号,
 # 应用层 #[no_mangle] 定义后由链接器绑定——只有链接才能验证机制生效
 DRIVER_ELF="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples/driver"
@@ -90,7 +90,29 @@ cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example board_check_ch57x \
 cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example board_check_ch57x \
     --features ch572 --target riscv32imc-unknown-none-elf --release
 
-echo "== [3/3] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
+echo "== [3/4] 体积门禁(flash/RAM 回归守卫)=="
+# 定位:设备的存储有限,抽象层/依赖只要默默胖起来,板子就烧不下。
+# 口径:ci/check_size.py 直接解 ELF 段表(不依赖 size/objdump 的具体实现,
+#       arm-none-eabi-size 读不了 riscv 产物);flash = 所有 SHF_ALLOC 的非写段,
+#       RAM = .data+.bss(链接脚本预留的 .stack 单独报出,不算门禁——否则调栈会误报)。
+# 阈值:flash +5%/+256B、RAM +4%/+128B;真正的功能增量才更新基线:
+#       python3 ci/check_size.py <名字> <elf> --update
+SIZE_PY="${PY:-$(command -v python3 || command -v python || true)}"
+if [ -z "$SIZE_PY" ]; then
+    echo "python 未安装,跳过体积门禁"
+else
+    RIMAC="$ROOT_DIR/target/riscv32imac-unknown-none-elf/release/examples"
+    RIMC="$ROOT_DIR/target/riscv32imc-unknown-none-elf/release/examples"
+    # 覆盖四种典型剖面:驱动能力面 / FS 全链 / 协议栈 / 小 flash 板 / 无 A 扩展
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" driver           "$DRIVER_ELF"
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" fatfs            "$RIMAC/fatfs"
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" net_echo         "$RIMAC/net_echo"
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" qemu_pingpong    "$RIMAC/qemu_pingpong"
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" multitask_ch583  "$RIMAC/multitask_ch583"
+    "$SIZE_PY" "$ROOT_DIR/ci/check_size.py" multitask_ch572  "$RIMC/multitask_ch572"
+fi
+
+echo "== [4/4] QEMU 执行门禁(virt 机跑真内核——调度/切换/节拍执行级验证)=="
 QEMU_BIN="$(command -v qemu-system-riscv32 || true)"
 if [ -z "$QEMU_BIN" ] && [ -x "/c/Program Files/QEMU/qemu-system-riscv32.exe" ]; then
     QEMU_BIN="/c/Program Files/QEMU/qemu-system-riscv32.exe"

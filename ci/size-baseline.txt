@@ -1,0 +1,10 @@
+# xtask 体积基线:flash / RAM 字节数(ci/check_size.py --update 生成)
+# rustc: 1.91.0-nightly
+# 2026-10-30 首次记录;同日刷新一次:src/device/{caps,event,table}.rs 迁入(driver +2202B/fatfs +7134B/net_echo +2090B)
+# 只有升级工具链或有意增加功能时才更新;无意的增长应视为回归。
+driver 42584 5700
+fatfs 103972 6004
+multitask_ch572 25320 428
+multitask_ch583 37208 428
+net_echo 119702 6004
+qemu_pingpong 35504 5536

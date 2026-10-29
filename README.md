@@ -61,7 +61,7 @@
 
 - **通道 A · 本机一条命令**(首次自动下载静态 QEMU 到 `.tools/`,约 90MB):
   ```bash
-  bash ci/gate.sh        # host 回归 + 示例链接 + ch583 启动头校验 + QEMU 执行级(24/24 等)
+  bash ci/gate.sh        # host 回归 + 示例链接 + 体积门禁 + ch583 启动头校验 + QEMU 执行级(24/24 等)
   ```
 - **通道 B · GitHub Codespaces**:仓库根有 `.devcontainer.json`,云端打开即跑,本机什么都不装
 - **通道 C · 只看结果**:每次 push 的 CI 门禁(含 QEMU 执行级)全绿记录:
