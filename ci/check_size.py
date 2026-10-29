@@ -7,9 +7,11 @@
   - host 的 `size` 在 macOS / CI 上实现不一(LLVM vs GNU),输出列含义也有差异。
 段表是 ELF 规范的一部分,解析它只依赖 python 标准库,跨工具链/跨平台一致。
 
-计量口径(与烧写占用一致):
-  flash = 所有 SHF_ALLOC 且 SHT_PROGBITS 的段(.text/.rodata/.data 载入镜像/.isr_vector)
+计量口径:
+  flash = 所有 SHF_ALLOC 且非 SHT_NOBITS、非 SHF_WRITE 的段(.text/.rodata/.isr_vector)
   ram   = 所有 SHF_ALLOC 且(SHT_NOBITS 或 SHF_WRITE)的段(.data + .bss)
+  (.data 的载入镜像同时占 flash,但脚本把它整段计作 RAM;初始化数据的增长
+   由 RAM 阈值兜住,不需要两条阈值重复计账)
 
 用法:
   python3 ci/check_size.py --baseline ci/size-baseline.txt driver target/.../driver

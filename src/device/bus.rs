@@ -18,10 +18,10 @@
 //! `OwnerGuard::drop` 使用可重入 `sync::free`，任何上下文安全。
 
 use core::cell::UnsafeCell;
-// 原子走 atomic-polyfill（与 device/event.rs:19、sync/arc.rs 同源）：`in_txn` 用的是
-// **swap**（CAS 式），riscv32imc（ch572/esp32c3）无 A 扩展时 core 的 `AtomicBool::swap`
-// 根本不存在——用 core 会在这两个目标上编译失败（门禁 [2/4] 抓到的就是这个）。
-use atomic_polyfill::{AtomicBool, Ordering};
+// 原子一律走 atomic-polyfill（与 device/event.rs、sync/arc.rs 同源）：无 A 扩展的
+// riscv32imc（ch572/esp32c3）上 core 没有 CAS 式 RMW；`in_txn` 的 compare_exchange
+// 必须经 polyfill 的 critical-section 兜底。
+use atomic_polyfill::{AtomicUsize, Ordering};
 
 use crate::device::{BusDevice, DeviceError};
 use crate::port::{Portable, Porting};
@@ -46,6 +46,16 @@ thread_local! {
 #[cfg(not(test))]
 static mut IN_TABLE: [bool; crate::port::MAX_HARTS] = [false; crate::port::MAX_HARTS];
 
+/// 本核在 `IN_TABLE` 里的槽下标（与 critical.rs / xworker.rs 同款闸：端口报出
+/// 超界 hart id 时开发期断言可见，release 下夹到末槽，绝不越界读写 `static mut`）。
+#[cfg(not(test))]
+#[inline]
+fn table_slot() -> usize {
+    let h = Porting::hart_id() as usize;
+    debug_assert!(h < crate::port::MAX_HARTS);
+    h.min(crate::port::MAX_HARTS - 1)
+}
+
 /// 本上下文是否已在 `OwnerTable::with` 内（重入检测）。
 #[inline]
 fn table_busy() -> bool {
@@ -57,7 +67,7 @@ fn table_busy() -> bool {
     {
         // SAFETY: 每核只读写自己的槽；`with` 的访问都在 sync::free 内或紧邻其前后，
         // 同核不会并发改写本槽。
-        unsafe { IN_TABLE[Porting::hart_id() as usize] }
+        unsafe { IN_TABLE[table_slot()] }
     }
 }
 
@@ -70,7 +80,7 @@ fn set_table_busy(v: bool) {
     #[cfg(not(test))]
     {
         // SAFETY: 同上。
-        unsafe { IN_TABLE[Porting::hart_id() as usize] = v }
+        unsafe { IN_TABLE[table_slot()] = v }
     }
 }
 
@@ -99,13 +109,17 @@ impl OwnerTable {
                 set_table_busy(false);
             }
         }
-        debug_assert!(
-            !table_busy(),
-            "OwnerTable::with 重入：闭包内不得再次调用 claim/owner_of/release"
-        );
-        set_table_busy(true);
-        let _g = BusyGuard;
         sync::free(|_| {
+            // 置位/清除必须与表访问同在本核临界区内：放在 free 之外时，
+            // 「置 true → 关中断」窗口可被 systick 抢占，另一个任务随后调
+            // claim/release 会误命中 debug_assert（把正常并发报成重入）；
+            // 「重开中断 → 清标志」窗口里的 ISR 调用（C1 声明为 ISR 安全）同理。
+            debug_assert!(
+                !table_busy(),
+                "OwnerTable::with 重入：闭包内不得再次调用 claim/owner_of/release"
+            );
+            set_table_busy(true);
+            let _g = BusyGuard;
             // SAFETY: 已持本核临界区，且这是表的唯一访问路径；`f` 无法把表内
             // 引用带出闭包（R 与闭包入参的生命周期无关）。重入由 busy 守卫拦截。
             f(unsafe { &mut *self.slots.get() })
@@ -286,8 +300,10 @@ pub struct BusArbiter<'a> {
     /// 该**物理总线**的共享锁（release 生效的真实串行化）。
     /// 同一总线的所有从机必须传入同一把 `&'static Mutex<()>`。
     lock: &'static sync::mutex::Mutex<()>,
-    /// 嵌套事务检测（RAII 复位，panic 安全）
-    in_txn: AtomicBool,
+    /// 事务持有者令牌（0 = 空闲；否则为任务身份令牌；`usize::MAX` = 无任务上下文）。
+    /// 只用于区分「同一任务重入」（自锁 → panic）与「别的任务并发」（走共享
+    /// 总线锁排队）——per-arbiter 布尔标志会把后者误报成嵌套。
+    in_txn: AtomicUsize,
 }
 
 impl<'a> BusArbiter<'a> {
@@ -311,7 +327,7 @@ impl<'a> BusArbiter<'a> {
             bus,
             owner,
             lock,
-            in_txn: AtomicBool::new(false),
+            in_txn: AtomicUsize::new(0),
         }
     }
 
@@ -319,29 +335,42 @@ impl<'a> BusArbiter<'a> {
     ///
     /// - **release 真实串行化**：持「同一总线名」共享的零分配任务阻塞锁；
     ///   同名 arbiter（同总线的多颗从机）互斥；
-    /// - **不可嵌套**：同一 arbiter 的闭包内再调 `with_transaction` → panic（避免
-    ///   自锁）；跨 arbiter 但同总线名的嵌套会阻塞（同总线重入本就是设计错误）；
+    /// - **不可嵌套**：同一任务在闭包内再调 `with_transaction` → panic（避免自锁）；
+    ///   其它任务同时调同一个 arbiter 会阻塞在共享总线锁上（合法并发，不是嵌套）；
+    ///   跨 arbiter 但同总线名的嵌套会阻塞（同总线重入本就是设计错误）；
     /// - **C2 约束**：不得在 `sync::free` / ISR 内调用（`assert_c2`）。
     pub fn with_transaction<R>(&self, f: impl FnOnce(&dyn BusDevice) -> R) -> R {
         sync::assert_c2("BusArbiter::with_transaction");
-        struct Txn<'a>(&'a AtomicBool);
+        /// 无任务上下文（调度器未启动 / 非 `xtask_executor` 构建）的哨兵令牌。
+        const NO_TASK: usize = usize::MAX;
+        let me = current_task_token().unwrap_or(NO_TASK);
+
+        // 同一任务/上下文重入 = 自己等自己（普通 Mutex 不可重入）→ 立即 panic。
+        // 别的任务持有同一个 arbiter 时走 `lock.lock()` 正常排队——共享总线锁
+        // 的存在就是为了跨任务互斥，不能把这种合法并发误报成「嵌套」。
+        // （旧实现是 per-arbiter 的 AtomicBool：T1 在事务内、或 T1 正等锁时 T2
+        // 调用同一 arbiter 会被误判为嵌套而 panic——release 构建直接整机 panic。）
+        assert!(
+            self.in_txn.load(Ordering::SeqCst) != me,
+            "BusArbiter::with_transaction 不可嵌套（同一任务重入）"
+        );
+        // 越权断言（dev/host）：owner 已 claim 且绑定任务时，调用者必须是该任务。
+        assert_owner(self.owner);
+
+        struct Txn<'a>(&'a AtomicUsize, usize);
         impl Drop for Txn<'_> {
             fn drop(&mut self) {
-                self.0.store(false, Ordering::SeqCst);
+                // 持锁期间不会有别人登记；CAS 只清本任务令牌（幂等/防御）。
+                let _ =
+                    self.0
+                        .compare_exchange(self.1, 0, Ordering::SeqCst, Ordering::SeqCst);
             }
         }
-        assert!(
-            !self.in_txn.swap(true, Ordering::SeqCst),
-            "BusArbiter::with_transaction 不可嵌套"
-        );
-        let _txn = Txn(&self.in_txn);
-        // 越权断言（dev/host）：owner 已 claim 且绑定任务时，调用者必须是该任务。
-        debug_assert!(
-            OWNERS.owner_matches_current(self.owner),
-            "总线事务越权：{} 的 owner 不是当前任务",
-            self.owner
-        );
+
         let _g = self.lock.lock();
+        // 拿到共享总线锁 = 独占事务：登记持有者令牌（在等锁的任务尚未登记）。
+        self.in_txn.store(me, Ordering::SeqCst);
+        let _txn = Txn(&self.in_txn, me);
         f(self.bus)
     }
 

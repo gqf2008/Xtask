@@ -63,6 +63,9 @@
   ```bash
   bash ci/gate.sh        # host 回归 + 示例链接 + 体积门禁 + ch583 启动头校验 + QEMU 执行级(24/24 等)
   ```
+  门禁会建 14 个目标三元组的产物(几个 GB)。不想让它们落在仓库盘上,用
+  `CARGO_TARGET_DIR=/some/other/disk/xtask bash ci/gate.sh` 覆盖即可(第 3 步的
+  体积基线会从同一目录取 ELF)。
 - **通道 B · GitHub Codespaces**:仓库根有 `.devcontainer.json`,云端打开即跑,本机什么都不装
 - **通道 C · 只看结果**:每次 push 的 CI 门禁(含 QEMU 执行级)全绿记录:
   [![main-gate](https://github.com/gqf2008/Xtask/actions/workflows/main-gate.yml/badge.svg)](https://github.com/gqf2008/Xtask/actions/workflows/main-gate.yml)

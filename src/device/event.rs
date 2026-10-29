@@ -125,7 +125,11 @@ impl<T, const N: usize> EventChannel<T, N> {
             // SAFETY: 槽位空闲（head - tail < N），且全程在临界区内。
             unsafe { (*self.ring[head % N].get()).write(v) };
             self.head.store(head.wrapping_add(1), Ordering::SeqCst);
-            Ok(self.waiter.swap(0, Ordering::SeqCst))
+            // 只读不 swap：waiter 槽同时是「谁有消费权」。若在投递时就 swap 清零，
+            // `recv_timeout` 的 WaiterGuard 会在调用期间失去登记（事件一到槽就被
+            // 抹掉），并发 recv 于是能登记进来、两个消费者瓜分事件——破坏 §5.8
+            // 单订阅契约。清槽由被唤醒方负责（recv 自愈 CAS / WaiterGuard::drop）。
+            Ok(self.waiter.load(Ordering::SeqCst))
         });
         match outcome {
             Ok(w) => {

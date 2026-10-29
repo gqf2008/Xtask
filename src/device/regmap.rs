@@ -72,7 +72,7 @@ impl<'a> RegMap<'a> {
     /// 一次 `transfer`：tx = 地址前缀，rx = 4 字节数据。参数非法 →
     /// `InvalidInput`；总线错误原样透传。
     pub fn read(&self, reg: u32) -> Result<u32, DeviceError> {
-        assert_c2("RegMap::read");
+        crate::sync::assert_c2("RegMap::read");
         let n = self.addr_len(reg)?;
         let big_endian = self.big_endian;
         let mut tx = [0u8; ADDR_MAX];
@@ -86,7 +86,7 @@ impl<'a> RegMap<'a> {
 
     /// 写一个 32 位寄存器（C2）。tx = 地址前缀 ++ 4 字节数据，rx 为空。
     pub fn write(&self, reg: u32, val: u32) -> Result<(), DeviceError> {
-        assert_c2("RegMap::write");
+        crate::sync::assert_c2("RegMap::write");
         let n = self.addr_len(reg)?;
         let big_endian = self.big_endian;
         let mut tx = [0u8; ADDR_MAX + DATA_LEN];
@@ -105,7 +105,7 @@ impl<'a> RegMap<'a> {
     ///
     /// 新值 `new = (old & !mask) | (val & mask)`；无条件写回（不因无变化跳过）。
     pub fn update_bits(&self, reg: u32, mask: u32, val: u32) -> Result<(), DeviceError> {
-        assert_c2("RegMap::update_bits");
+        crate::sync::assert_c2("RegMap::update_bits");
         let n = self.addr_len(reg)?;
         let big_endian = self.big_endian;
         let mut tx = [0u8; ADDR_MAX + DATA_LEN];
@@ -139,7 +139,7 @@ impl<'a> RegMap<'a> {
         expect: u32,
         timeout: Duration,
     ) -> Result<(), DeviceError> {
-        assert_c2("RegMap::poll_bits");
+        crate::sync::assert_c2("RegMap::poll_bits");
         let ms = timeout.as_millis().min(u64::MAX as u128) as u64;
         let start = crate::time::tick_ms();
         loop {
@@ -203,15 +203,6 @@ fn decode_u32(buf: &[u8; DATA_LEN], big_endian: bool) -> u32 {
     } else {
         u32::from_le_bytes(*buf)
     }
-}
-
-/// R8：C2 方法入口断言不在 `sync::free` 内（R1/R4 的机器判据）。
-#[inline(always)]
-fn assert_c2(ctx: &'static str) {
-    debug_assert!(
-        !crate::sync::in_critical_section(),
-        "C2 in sync::free: {ctx}"
-    );
 }
 
 #[cfg(test)]

@@ -110,8 +110,9 @@ pub trait DeviceBase {
 /// 能力清单的**单一事实源**。
 ///
 /// 一行 = 一个能力（`as_*` 方法名、`find_*` 查找名、trait 对象类型）。由它自动
-/// 生成四处机械代码：`Device::as_*` 默认方法、`impl Capability for …`（按能力
-/// 下转型）、`DriverRegistry::find_*`、自由函数 `find_*`。
+/// 生成五处机械代码：`Device::as_*` 默认方法、`impl Capability for …`（按能力
+/// 下转型）、`DriverRegistry::find_*`、自由函数 `find_*`，以及 `impl Device for &T`
+/// 的逐方法转发（漏生成会让 `&dyn X` 包装句柄的新能力静默退化为 `None`）。
 ///
 /// **加能力只改这里一行**：旧写法要手工同步 3 处（`Device::as_*` / `impl
 /// Capability` / `find_*` 封皮），5 个能力就是 15 处手工点，漏一处要么编译错、
@@ -133,6 +134,17 @@ macro_rules! define_capabilities {
                 $(#[$doc])*
                 fn $as_fn(&self) -> Option<&$cap> {
                     None
+                }
+            )*
+        }
+
+        /// `&T` 也是 `Device`（逐方法转发）——泛型适配器统一处理具体设备与
+        /// 表取出的 trait 对象两种形态（`FatAdapter<&'static dyn BlockDevice>` 依赖）。
+        /// 由清单生成：新增能力不会在 `&T` 包装路径上静默退化为 `None`。
+        impl<T: Device + ?Sized> Device for &T {
+            $(
+                fn $as_fn(&self) -> Option<&$cap> {
+                    (**self).$as_fn()
                 }
             )*
         }
@@ -319,24 +331,6 @@ pub fn read_blocking(dev: &dyn Device, buf: &mut [u8]) -> Result<usize, DeviceEr
 impl<T: Device + ?Sized> DeviceBase for &T {
     fn kind(&self) -> DeviceKind {
         (**self).kind()
-    }
-}
-
-impl<T: Device + ?Sized> Device for &T {
-    fn as_stream(&self) -> Option<&dyn StreamDevice> {
-        (**self).as_stream()
-    }
-    fn as_block(&self) -> Option<&dyn BlockDevice> {
-        (**self).as_block()
-    }
-    fn as_bus(&self) -> Option<&dyn BusDevice> {
-        (**self).as_bus()
-    }
-    fn as_event(&self) -> Option<&dyn EventDevice> {
-        (**self).as_event()
-    }
-    fn as_switchable(&self) -> Option<&(dyn Switchable + Sync)> {
-        (**self).as_switchable()
     }
 }
 
