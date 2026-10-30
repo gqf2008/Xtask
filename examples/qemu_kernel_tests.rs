@@ -1336,11 +1336,8 @@ impl EventDevice for RbMock {
         Ok(())
     }
     fn wake(&self) {
-        let w = self.waiter.swap(0, Ordering::SeqCst);
-        if w != 0 {
-            // SAFETY: w 来自 register_waiter 登记的本套件任务地址
-            unsafe { xtask::task::wake_waiter(w) };
-        }
+        // SAFETY: waiter 只由 register_waiter 写；取槽与唤醒由内核在同一临界区代办。
+        unsafe { xtask::task::wake_waiter(&self.waiter) };
     }
 }
 
@@ -1411,11 +1408,94 @@ fn test_read_blocking_block() {
     dev2.wake();
     done2.wait();
     let seq2: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
-    check(
+    if !check(
         seq2 == ["RB-CANCELLED"],
         "read_blocking",
         format!("close 后 {seq2:?}(应 RB-CANCELLED)"),
+    ) {
+        return;
+    }
+
+    // N2：复查分支——read 返回 0 后、挂起前数据到达，复查见 available>0 → 不登记
+    clear_events();
+    let race: &'static RbRace = Box::leak(Box::new(RbRace {
+        waiter: AtomicUsize::new(0),
+        phase: AtomicUsize::new(0),
+    }));
+    let done3 = XArc::new(Semaphore::new());
+    let d3 = done3.clone();
+    TaskBuilder::new().name("t28.race").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(race, &mut b) {
+            Ok(1) if b[0] == 0xA5 => "RB-RACE-OK",
+            _ => "RB-RACE-BAD",
+        };
+        ev(tag);
+        d3.post();
+    });
+    done3.wait();
+    let seq3: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    if !check(
+        seq3 == ["RB-RACE-OK"],
+        "read_blocking",
+        format!("复查分支 {seq3:?}(应 RB-RACE-OK)"),
+    ) {
+        return;
+    }
+    check(
+        race.waiter.load(Ordering::SeqCst) == 0,
+        "read_blocking",
+        "复查命中时不应登记等待者".into(),
     );
+}
+
+/// N2：模拟「read() 返回 0 之后、挂起之前数据到达」——第一次 available() 报 1，
+/// 随后 read() 真给字节；用来覆盖 read_blocking 的复查分支（Ok(true) 快返回）。
+struct RbRace {
+    waiter: AtomicUsize,
+    phase: AtomicUsize,
+}
+
+impl DeviceBase for RbRace {
+    fn kind(&self) -> DeviceKind {
+        DeviceKind::Stream
+    }
+}
+impl Device for RbRace {
+    fn as_stream(&self) -> Option<&dyn StreamDevice> {
+        Some(self)
+    }
+    fn as_event(&self) -> Option<&dyn EventDevice> {
+        Some(self)
+    }
+}
+impl StreamDevice for RbRace {
+    fn available(&self) -> usize {
+        if self.phase.swap(1, Ordering::SeqCst) == 0 {
+            1
+        } else {
+            0
+        }
+    }
+    fn read(&self, buf: &mut [u8]) -> Result<usize, DeviceError> {
+        if self.phase.load(Ordering::SeqCst) == 1 && !buf.is_empty() {
+            self.phase.store(2, Ordering::SeqCst);
+            buf[0] = 0xA5;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+    fn write(&self, _buf: &[u8]) -> Result<usize, DeviceError> {
+        Ok(0)
+    }
+}
+impl EventDevice for RbRace {
+    fn register_waiter(&self, w: usize) -> Result<(), DeviceError> {
+        self.waiter.store(w, Ordering::SeqCst);
+        Ok(())
+    }
+    fn wake(&self) {}
 }
 
 // ============ 考官 ============

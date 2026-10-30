@@ -19,7 +19,7 @@ use core::time::Duration;
 // 实现演进方向）就必须走 polyfill——统一取法，与 src/sync/arc.rs:2、src/sync/notify.rs:11 一致。
 use atomic_polyfill::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::device::DeviceError;
+use crate::device::{Device, DeviceBase, DeviceError, DeviceKind, EventDevice};
 use crate::port::{Portable, Porting};
 use crate::sync;
 use crate::task::executor::{xworker, Executor};
@@ -345,6 +345,42 @@ impl<T, const N: usize> EventChannel<T, N> {
     }
 }
 
+/// 把 [`EventChannel`] 适配成 [`EventDevice`]：crate 外驱动不必手搓「原子槽 + wakeup」。
+///
+/// 单等待者与 `EventChannel` 内部同一套契约（登记 + 唤醒都在通道的临界区内），
+/// 因此与 `recv` 的消费者互斥仍由通道保证；`try_recv` 不受影响。
+pub struct EventSource<'a, T, const N: usize> {
+    ch: &'a EventChannel<T, N>,
+}
+
+impl<'a, T, const N: usize> EventSource<'a, T, N> {
+    /// 包装一个事件通道
+    pub const fn new(ch: &'a EventChannel<T, N>) -> Self {
+        Self { ch }
+    }
+}
+
+impl<T: Send, const N: usize> DeviceBase for EventSource<'_, T, N> {
+    fn kind(&self) -> DeviceKind {
+        DeviceKind::Stream
+    }
+}
+
+impl<T: Send, const N: usize> Device for EventSource<'_, T, N> {
+    fn as_event(&self) -> Option<&dyn EventDevice> {
+        Some(self)
+    }
+}
+
+impl<T: Send, const N: usize> EventDevice for EventSource<'_, T, N> {
+    fn register_waiter(&self, waiter: usize) -> Result<(), DeviceError> {
+        self.ch.register_raw_waiter(waiter)
+    }
+    fn wake(&self) {
+        self.ch.wake_raw_waiter()
+    }
+}
+
 impl<T, const N: usize> Default for EventChannel<T, N> {
     fn default() -> Self {
         Self::new()
@@ -466,6 +502,16 @@ mod tests {
             ch2.register_raw_waiter(0x3000),
             Err(DeviceError::Cancelled)
         );
+    }
+
+    /// `EventSource` 适配器：单等待者语义与通道一致（不唤醒，避免假地址解引用）。
+    #[test]
+    fn event_source_adapter_single_waiter() {
+        let ch: EventChannel<u8, 2> = EventChannel::new();
+        let src = EventSource::new(&ch);
+        assert!(src.as_event().is_some());
+        src.register_waiter(0x1000).unwrap();
+        assert_eq!(src.register_waiter(0x2000), Err(DeviceError::Busy));
     }
 
     /// 验收项 `event_channel_isr_post`：ISR 侧投递与任务侧同语义（FIFO / 满即 Full / 不覆盖）。

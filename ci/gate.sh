@@ -176,10 +176,10 @@ if [ -n "$QEMU_BIN" ]; then
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_kernel_tests \
         --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
     KOUT="$( "$PYF" "$ROOT_DIR/ci/feed_qemu.py" 180 "$QEMU_BIN" "$KTESTS_ELF" | grep -v "GLib-GIO" || true )"
-    # 已知 tickless 时序 flake(本机/CI 负载下 ~8%,master 同样复现):失败重试一次,
-    # 两次都失败才算真回归——避免下一个 PR 作者被假红误导。
+    # 预防性重试:该套件含时序敏感项,偶发假红;不是已确认的固定复现率
+    # (第二轮复审 15 次全绿)。两次都失败才算真回归。
     if ! echo "$KOUT" | grep -q "28/28 passed"; then
-        echo "qemu_kernel_tests 首次未全过(已知 tickless 时序 flake),重试一次"
+        echo "qemu_kernel_tests 首次未全过(时序敏感项,预防性重试一次)"
         KOUT="$( "$PYF" "$ROOT_DIR/ci/feed_qemu.py" 180 "$QEMU_BIN" "$KTESTS_ELF" | grep -v "GLib-GIO" || true )"
     fi
     echo "$KOUT" | grep -q "28/28 passed" \
@@ -192,7 +192,7 @@ if [ -n "$QEMU_BIN" ]; then
     # -smp 2 起跑:hart1 由 riscv-rt 默认停泊,hart0-only 语义应逐字不变
     SMP_OUT="$( "$PYF" "$ROOT_DIR/ci/feed_qemu.py" 180 "$QEMU_BIN" "$KTESTS_ELF" -smp 2 | grep -v "GLib-GIO" || true )"
     if ! echo "$SMP_OUT" | grep -q "28/28 passed"; then
-        echo "qemu_kernel_tests -smp 2 首次未全过(已知 tickless 时序 flake),重试一次"
+        echo "qemu_kernel_tests -smp 2 首次未全过(时序敏感项,预防性重试一次)"
         SMP_OUT="$( "$PYF" "$ROOT_DIR/ci/feed_qemu.py" 180 "$QEMU_BIN" "$KTESTS_ELF" -smp 2 | grep -v "GLib-GIO" || true )"
     fi
     echo "$SMP_OUT" | grep -q "28/28 passed" \
@@ -212,7 +212,7 @@ if [ -n "$QEMU_BIN" ]; then
     cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --example qemu_smp \
         --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release
     SMP2_OUT="$( "$QEMU_BIN" -M virt -smp 2 -nographic -bios none -kernel "$SMP_ELF" </dev/null 2>&1 | grep -v "GLib-GIO" || true )"
-    # 既有 SMP 抢分配 flake(见 issue):失败重试一次。
+    # 既有 SMP 抢分配 flake(见 #24,约 1/12,master 已存在):重试一次。
     if ! echo "$SMP2_OUT" | grep -q "smp PASS: 9/9"; then
         echo "qemu_smp 首次未全过(既有 SMP 时序/分配 flake),重试一次"
         SMP2_OUT="$( "$QEMU_BIN" -M virt -smp 2 -nographic -bios none -kernel "$SMP_ELF" </dev/null 2>&1 | grep -v "GLib-GIO" || true )"

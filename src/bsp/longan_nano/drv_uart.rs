@@ -123,6 +123,8 @@ impl Uart0 {
     /// **单订阅**（§5.8）：首次调用返回通道，之后一律 `Err(Busy)`——通道是单消费者
     /// （SPSC），与 `read_blocking` / `StreamDevice::read` 二选一。订阅在设备生命周期
     /// 内不释放；要结束消费请 `close()` 通道，而不是重复 `events()`。
+    /// 注意：该标志只约束 `events()` 的调用者——`read_blocking` / `StreamDevice::read`
+    /// 不经过它，「通道消费与 read_blocking 二选一」仍是调用方纪律（不作运行时检查）。
     pub fn events(&self) -> Result<&EventChannel<u8, BUF_LEN>, DeviceError> {
         if self
             .events_taken
@@ -145,6 +147,8 @@ impl Uart0 {
     /// （`post_isr` → 唤醒单等待者 + `Porting::irq()`），驱动不再自己 `wakeup`。
     /// ISR 纪律：不允许阻塞/格式化/分配；`post_isr` 内部只取一段**可重入**临界区
     /// （MIE=0），在 ISR 里调用安全。
+    /// 成本记账：57600bps 满速 ≈ 576 B/s，每字节一次 `post_isr`（一段临界区进出）
+    /// → 约 576 次/秒；108MHz 下占比可忽略，将来上 1 Mbaud 时需回看这条。
     #[inline]
     pub fn isr(&self) {
         // SAFETY: `rx` 是"ISR 独占"：读任务从不碰硬件句柄，只消费事件通道
