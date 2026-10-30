@@ -30,7 +30,7 @@
 
 use core::cell::UnsafeCell;
 
-use crate::device::{BlockDevice, BusDevice, Device, EventDevice, StreamDevice, Switchable};
+use crate::device::{BlockDevice, Device, EventDevice, StreamDevice, Switchable};
 use crate::sync;
 
 /// 设备实例槽：编译期清单里的"位置"，运行期由 init 填**一次**实例。
@@ -163,11 +163,6 @@ impl DeviceTable {
         self.find(name).and_then(|d| d.as_switchable())
     }
 
-    /// 按名取总线能力
-    pub fn find_bus(&self, name: &str) -> Option<&'static dyn BusDevice> {
-        self.find(name).and_then(|d| d.as_bus())
-    }
-
     /// 按名取事件/唤醒能力
     pub fn find_event(&self, name: &str) -> Option<&'static dyn EventDevice> {
         self.find(name).and_then(|d| d.as_event())
@@ -200,11 +195,6 @@ pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
 /// 从全局清单表按名取开关量能力
 pub fn find_switchable(name: &str) -> Option<&'static (dyn Switchable + Sync)> {
     TABLE.find_switchable(name)
-}
-
-/// 从全局清单表按名取总线能力
-pub fn find_bus(name: &str) -> Option<&'static dyn BusDevice> {
-    TABLE.find_bus(name)
 }
 
 /// 从全局清单表按名取事件/唤醒能力
@@ -317,27 +307,6 @@ mod tests {
         }
     }
 
-    /// mock 总线设备：transfer 累计 tx 字节数
-    struct MockBus {
-        xfer: Arc<AtomicUsize>,
-    }
-    impl DeviceBase for MockBus {
-        fn kind(&self) -> DeviceKind {
-            DeviceKind::Bus
-        }
-    }
-    impl Device for MockBus {
-        fn as_bus(&self) -> Option<&dyn BusDevice> {
-            Some(self)
-        }
-    }
-    impl BusDevice for MockBus {
-        fn transfer(&self, tx: &[u8], _rx: &mut [u8]) -> Result<(), DeviceError> {
-            self.xfer.fetch_add(tx.len(), Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
     fn mock_led() -> (&'static dyn Device, Arc<AtomicUsize>) {
         let count = Arc::new(AtomicUsize::new(0));
         let dev: &'static dyn Device = Box::leak(Box::new(MockLed {
@@ -424,18 +393,11 @@ mod tests {
         assert_eq!(registered.load(Ordering::SeqCst), 0x55);
     }
 
-    /// 回归：清单侧 `find_block` / `find_bus` 全路径。五条便捷查找同为
-    /// find+as_* 薄包装，但按设计稿 §10 纪律——每能力的 host 单测必须覆盖
-    /// register/fill→find_xxx→透传 全路径，防 `as_*` 漏 override 静默 None——
-    /// 清单侧也要 5/5（本测试补块与总线两条）。
+    /// 回归：清单侧 `find_block` 全路径（find+as_* 薄包装，防漏 override 静默 None）。
     #[test]
-    fn find_block_and_bus_roundtrip() {
+    fn find_block_roundtrip() {
         static SD_SLOT: DeviceSlot = DeviceSlot::new();
-        static SPI_SLOT: DeviceSlot = DeviceSlot::new();
-        const LIST: &[DeviceDef] = &[
-            DeviceDef::new("sd0", &SD_SLOT),
-            DeviceDef::new("spi1", &SPI_SLOT),
-        ];
+        const LIST: &[DeviceDef] = &[DeviceDef::new("sd0", &SD_SLOT)];
         let table = DeviceTable::new();
         table.attach(LIST);
 
@@ -450,15 +412,6 @@ mod tests {
         let mut buf = [0u8; SECTOR_SIZE as usize];
         b.read_sector(0, &mut buf).unwrap();
         assert_eq!(reads.load(Ordering::SeqCst), 1, "读计数应透传到同一实例");
-        assert!(table.find_bus("sd0").is_none(), "块设备按总线找应 None");
-
-        let xfer = Arc::new(AtomicUsize::new(0));
-        let spi: &'static dyn Device = Box::leak(Box::new(MockBus { xfer: xfer.clone() }));
-        SPI_SLOT.fill(spi);
-        let bus = table.find_bus("spi1").expect("填槽后应能找到总线能力");
-        bus.transfer(&[1, 2], &mut []).unwrap();
-        assert_eq!(xfer.load(Ordering::SeqCst), 2, "tx 字节数应透传到同一实例");
-        assert!(table.find_block("spi1").is_none(), "总线设备按块找应 None");
     }
 
     /// 回归：名字不在清单 → None；能力不符 → find_switchable/find_stream 各得 None。

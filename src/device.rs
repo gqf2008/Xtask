@@ -6,12 +6,11 @@
 //!   `Device: DeviceBase + Sync` 是**数据面**入口，供 `&'static dyn Device` 跨任务共享。
 //!   专用设备（独占句柄）只实现 `DeviceBase` + 能力 trait，经 typed accessor 取用；
 //! - **数据面能力 trait**：`StreamDevice`（字节流）、`BlockDevice`（块）、
-//!   `BusDevice`（同步字节事务）、`EventDevice`（唤醒边沿）、`Switchable`（开关量；
-//!   supertrait 为 `DeviceBase`，`!Sync` 设备也可实现）；
-//! - **专用能力与逃生舱**（`device::caps`）：`IoCtl` 是每设备的厂商原始通道，
-//!   不经 `as_*` 分发——逃生舱存在，但不会被统一发现。**尚未接通**的（`IoCtl` +
-//!   §5.3 三型执行模型骨架）一律收在 `device::reserved` 子模块里，顶层路径取不到，
-//!   避免“文档里写了、`find_capability` 永远返回 None”的假能力面；
+//!   `EventDevice`（唤醒边沿）、`Switchable`（开关量；supertrait 为 `DeviceBase`，
+//!   `!Sync` 设备也可实现）。**SPI/I2C/PWM/ADC 等片内外设词汇交给 `embedded-hal`**，
+//!   本层不重复定义（L2 范围收口，2026-10-30）；
+//! - **逃生舱**（`device::caps`）：`IoCtl` 是每设备的厂商原始通道，不经 `as_*` 分发
+//!   ——逃生舱存在，但不会被统一发现；
 //! - **阻塞读由内核适配器承接**：`read_blocking` 把 `StreamDevice + EventDevice`
 //!   组合出"等待即 Blocked"（复查+登记+挂起在同一临界区），trait 本体保持
 //!   非阻塞形态（对齐 embedded-io / Zephyr `uart_poll_in` 的真机实践）；
@@ -38,16 +37,12 @@ use crate::sync;
 use crate::task::executor::{xworker, Executor};
 use crate::task::{yield_now, Task};
 
-pub mod bus;
 pub mod caps;
 pub mod event;
-pub mod regmap;
 pub mod table;
 
-pub use bus::{claim_owner, BusArbiter, OwnerGuard};
-pub use caps::{reserved, Switchable};
+pub use caps::{IoCtl, Switchable};
 pub use event::EventChannel;
-pub use regmap::RegMap;
 
 // ---------------------------------------------------------------------------
 // 分类标签与统一错误
@@ -177,8 +172,6 @@ define_capabilities! {
     as_stream, find_stream => dyn StreamDevice,
     /// 取块设备能力，不支持返回 None
     as_block, find_block => dyn BlockDevice,
-    /// 取总线能力，不支持返回 None
-    as_bus, find_bus => dyn BusDevice,
     /// 取事件/唤醒能力，不支持返回 None
     as_event, find_event => dyn EventDevice,
     /// 取开关量能力，不支持返回 None。
@@ -242,19 +235,6 @@ pub trait BlockDevice: Device {
 
     /// 写一个扇区；`buf.len()` 必须等于扇区大小
     fn write_sector(&self, no: u64, buf: &[u8]) -> Result<(), DeviceError>;
-}
-
-/// 总线传输能力（同步字节事务：SPI / I2C / I3C）。
-///
-/// - SPI：片选 / 时钟相位 / 极性由具体驱动内部持有；
-/// - I2C/I3C：**每个 (总线, 从机地址) 建模为一个 `BusDevice` 实例**，地址在
-///   构造期绑定（不可变状态），消除"先设地址再传输"的跨任务竞态；寄存器
-///   地址走 tx 首字节负载（读寄存器 R = `transfer(&[R], &mut data)`，两段
-///   时序由总线驱动内部拼接）。
-pub trait BusDevice: Device {
-    /// 一次传输：发送 `tx`，同时把读入字节写入 `rx`。
-    /// `rx` 为空表示只写；`tx` 为空表示只读（具体时序由总线驱动决定）。
-    fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> Result<(), DeviceError>;
 }
 
 /// 事件/唤醒设备：为阻塞 I/O 提供 ISR 唤醒通道。
@@ -635,31 +615,6 @@ mod tests {
         }
     }
 
-    /// mock 总线设备：transfer 把 tx 字节数累计、rx 填 0xA5
-    struct MockBus {
-        xfer: Arc<AtomicUsize>,
-    }
-
-    impl DeviceBase for MockBus {
-        fn kind(&self) -> DeviceKind {
-            DeviceKind::Bus
-        }
-    }
-
-    impl Device for MockBus {
-        fn as_bus(&self) -> Option<&dyn BusDevice> {
-            Some(self)
-        }
-    }
-
-    impl BusDevice for MockBus {
-        fn transfer(&self, tx: &[u8], rx: &mut [u8]) -> Result<(), DeviceError> {
-            self.xfer.fetch_add(tx.len(), Ordering::SeqCst);
-            rx.fill(0xA5);
-            Ok(())
-        }
-    }
-
     fn mock_led(name: &'static str, reg: &DriverRegistry) -> Arc<AtomicUsize> {
         let count = Arc::new(AtomicUsize::new(0));
         let dev: &'static dyn Device = Box::leak(Box::new(MockLed {
@@ -735,21 +690,6 @@ mod tests {
         assert!(reg.find_stream("sd0").is_none());
     }
 
-    /// 回归：总线设备注册→查找→transfer 透传。
-    #[test]
-    fn bus_register_find_use_roundtrip() {
-        let reg = DriverRegistry::new();
-        let xfer = Arc::new(AtomicUsize::new(0));
-        let dev: &'static dyn Device = Box::leak(Box::new(MockBus { xfer: xfer.clone() }));
-        reg.register("spi1", dev).unwrap();
-        let b = reg.find_bus("spi1").expect("注册后应能找到总线能力");
-        let mut rx = [0u8; 4];
-        b.transfer(&[1, 2, 3], &mut rx).unwrap();
-        assert_eq!(xfer.load(Ordering::SeqCst), 3);
-        assert_eq!(rx, [0xA5; 4]);
-        assert_eq!(reg.find("spi1").unwrap().kind(), DeviceKind::Bus);
-    }
-
     /// 回归：泛型能力入口 `find_capability`——所有 `find_*` 的公共底。
     /// 现有 `find_*` 用例经薄封装已传导覆盖它，此测试再直接点名验证
     /// （阳性对照：防 `Capability::downcast` 实现笔误导致静默返回 None）。
@@ -806,7 +746,6 @@ mod tests {
 
         // 清单里没有实现的能力：两条路径一致地返回 None（不静默命中错能力）
         assert!(reg.find_block("uart0").is_none());
-        assert!(reg.find_bus("uart0").is_none());
         assert!(reg.find_event("led0").is_none());
     }
 
@@ -867,7 +806,6 @@ mod tests {
         assert!(reg.find_stream("ghost").is_none());
         assert!(reg.find_block("ghost").is_none());
         assert!(reg.find_switchable("ghost").is_none());
-        assert!(reg.find_bus("ghost").is_none());
         assert!(reg.find_event("ghost").is_none());
     }
 
