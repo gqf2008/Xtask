@@ -17,12 +17,15 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc as XArc;
+use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use xtask::arch::riscv::rt;
 use xtask::chip::qemu_riscv::stdout::{qemu_exit_fail, qemu_exit_pass, write_str};
 use xtask::prelude::*;
+use xtask::device::event::EventChannel;
+use xtask::device::{read_blocking, Device, DeviceBase, DeviceError, DeviceKind, EventDevice, StreamDevice};
 use xtask::sync::mutex::Mutex;
 use xtask::sprintln;
 use core::alloc::Layout;
@@ -1174,6 +1177,327 @@ fn test_tickless_early_wake_drift() {
     );
 }
 
+// ============ 测试 25-27:设备事件通道 EventChannel(v3 §5.8) ============
+// 执行级验证：post 唤醒在 recv 阻塞的任务 / close 唤醒并转 Cancelled /
+// recv_timeout 的超时与亚毫秒行为 / 满即 Full 且不覆盖旧事件。
+fn test_device_event_wake() {
+    use xtask::device::event::EventChannel;
+    static CH: EventChannel<u32, 4> = EventChannel::new();
+    clear_events();
+    TaskBuilder::new().name("t25.waiter").priority(5).spawn(|| {
+        ev("R1");
+        let v = CH.recv(); // 空通道 → 必须挂起，等 post 唤醒
+        ev("R2");
+        match v {
+            Ok(0xAB) => ev("OK"),
+            _ => ev("BAD"),
+        }
+    });
+    xtask::sleep_ms(20); // 让 waiter 先跑到 recv 里挂起
+    if !check(
+        events().len() == 1,
+        "device_event_wake",
+        format!("post 前应只到 R1:{:?}", events()),
+    ) {
+        return;
+    }
+    CH.post(0xAB).unwrap();
+    xtask::sleep_ms(20);
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    check(
+        seq == ["R1", "R2", "OK"],
+        "device_event_wake",
+        format!("post 唤醒后 {seq:?}(应 R1→R2→OK)"),
+    );
+}
+
+fn test_device_event_close() {
+    use xtask::device::event::EventChannel;
+    use xtask::device::DeviceError;
+    static CH: EventChannel<u8, 2> = EventChannel::new();
+    clear_events();
+    TaskBuilder::new().name("t26.waiter").priority(5).spawn(|| {
+        ev("R1");
+        let r = CH.recv();
+        ev("R2");
+        match r {
+            Err(DeviceError::Cancelled) => ev("CANCELLED"),
+            _ => ev("BAD"),
+        }
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        events().len() == 1,
+        "device_event_close",
+        format!("close 前应只到 R1:{:?}", events()),
+    ) {
+        return;
+    }
+    CH.close(); // 必须唤醒等待者（SMP 丢唤醒的直接回归点）
+    xtask::sleep_ms(20);
+    // close 后 post/post_isr 一律拒绝，且不得计入 overflow（关闭不是"满"）
+    let rejected = CH.post(1) == Err(DeviceError::Cancelled)
+        && CH.post_isr(2) == Err(DeviceError::Cancelled);
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    check(
+        seq == ["R1", "R2", "CANCELLED"] && rejected && CH.overflow_count() == 0 && CH.is_empty(),
+        "device_event_close",
+        format!(
+            "close 后 {seq:?} / rejected={rejected} / ovf={} / empty={}",
+            CH.overflow_count(),
+            CH.is_empty()
+        ),
+    );
+}
+
+fn test_device_event_timeout_full() {
+    use core::time::Duration;
+    use xtask::device::event::EventChannel;
+    use xtask::device::DeviceError;
+    static CH: EventChannel<u8, 2> = EventChannel::new();
+
+    // 亚毫秒超时不得退化成"不等待"（截断为 0 会一次 try_recv 失败就 Timeout）
+    let t0 = xtask::tick();
+    let r1 = CH.recv_timeout(Duration::from_micros(500));
+    let d1 = xtask::tick() - t0;
+    // 正常超时：10ms ≈ 10 tick（分片轮询，tick 精度）
+    let t1 = xtask::tick();
+    let r2 = CH.recv_timeout(Duration::from_millis(10));
+    let d2 = xtask::tick() - t1;
+
+    // 满即 Full，不覆盖旧事件，overflow 计数
+    CH.post(1).unwrap();
+    CH.post(2).unwrap();
+    let full = CH.post(3) == Err(DeviceError::Full);
+    let ovf = CH.overflow_count();
+    let fifo = CH.try_recv() == Some(1) && CH.try_recv() == Some(2) && CH.try_recv().is_none();
+
+    check(
+        r1 == Err(DeviceError::Timeout)
+            && r2 == Err(DeviceError::Timeout)
+            && d1 >= 1
+            && d2 >= 10
+            && d2 < 40
+            && full
+            && ovf == 1
+            && fifo,
+        "device_event_timeout_full",
+        format!("500us→{r1:?}/{d1}t 10ms→{r2:?}/{d2}t full={full} ovf={ovf} fifo={fifo}"),
+    );
+}
+
+// ============ 测试 28:read_blocking 的阻塞路径 ★ ============
+// host 只覆盖快路径;这里用 StreamDevice+EventDevice 的 mock 走完整链路:
+// 复查→登记→block→post→wake→yield→读回;并覆盖 close 后 register_waiter 返回 Cancelled。
+struct RbMock {
+    ch: EventChannel<u8, 4>,
+    waiter: AtomicUsize,
+}
+
+impl DeviceBase for RbMock {
+    fn kind(&self) -> DeviceKind {
+        DeviceKind::Stream
+    }
+}
+impl Device for RbMock {
+    fn as_stream(&self) -> Option<&dyn StreamDevice> {
+        Some(self)
+    }
+    fn as_event(&self) -> Option<&dyn EventDevice> {
+        Some(self)
+    }
+}
+impl StreamDevice for RbMock {
+    fn available(&self) -> usize {
+        self.ch.len()
+    }
+    fn read(&self, buf: &mut [u8]) -> Result<usize, DeviceError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        match self.ch.try_recv() {
+            Some(b) => {
+                buf[0] = b;
+                Ok(1)
+            }
+            None => Ok(0),
+        }
+    }
+    fn write(&self, _buf: &[u8]) -> Result<usize, DeviceError> {
+        Ok(0)
+    }
+}
+impl EventDevice for RbMock {
+    fn register_waiter(&self, w: usize) -> Result<(), DeviceError> {
+        if self.ch.is_closed() {
+            return Err(DeviceError::Cancelled);
+        }
+        self.waiter.store(w, Ordering::SeqCst);
+        Ok(())
+    }
+    fn wake(&self) {
+        // SAFETY: waiter 只由 register_waiter 写；取槽与唤醒由内核在同一临界区代办。
+        unsafe { xtask::task::wake_waiter(&self.waiter) };
+    }
+}
+
+fn test_read_blocking_block() {
+    let dev: &'static RbMock = Box::leak(Box::new(RbMock {
+        ch: EventChannel::new(),
+        waiter: AtomicUsize::new(0),
+    }));
+    let done = XArc::new(Semaphore::new());
+    let d = done.clone();
+    TaskBuilder::new().name("t28.reader").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(dev, &mut b) {
+            Ok(1) if b[0] == 0x5A => "RB-OK",
+            Ok(n) => {
+                sprintln!("read_blocking: n={n} b={:?}", b);
+                "RB-ODD"
+            }
+            Err(DeviceError::Cancelled) => "RB-CANCELLED",
+            Err(_) => "RB-ERR",
+        };
+        ev(tag);
+        d.post();
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        dev.waiter.load(Ordering::SeqCst) != 0,
+        "read_blocking",
+        "reader 未登记等待者(阻塞路径未走到)".into(),
+    ) {
+        return;
+    }
+    dev.ch.post(0x5A).unwrap();
+    dev.wake();
+    done.wait();
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    if !check(seq == ["RB-OK"], "read_blocking", format!("读回 {seq:?}(应 RB-OK)")) {
+        return;
+    }
+
+    // close 变体:醒来后 register_waiter 走 closed 分支 → Cancelled
+    // （考官只在每个 test 前 clear_events，同一测试内的第二变体要自己清）
+    clear_events();
+    let dev2: &'static RbMock = Box::leak(Box::new(RbMock {
+        ch: EventChannel::new(),
+        waiter: AtomicUsize::new(0),
+    }));
+    let done2 = XArc::new(Semaphore::new());
+    let d2 = done2.clone();
+    TaskBuilder::new().name("t28.reader2").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(dev2, &mut b) {
+            Err(DeviceError::Cancelled) => "RB-CANCELLED",
+            _ => "RB-ERR",
+        };
+        ev(tag);
+        d2.post();
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        dev2.waiter.load(Ordering::SeqCst) != 0,
+        "read_blocking",
+        "close 变体:reader 未登记等待者".into(),
+    ) {
+        return;
+    }
+    dev2.ch.close();
+    dev2.wake();
+    done2.wait();
+    let seq2: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    if !check(
+        seq2 == ["RB-CANCELLED"],
+        "read_blocking",
+        format!("close 后 {seq2:?}(应 RB-CANCELLED)"),
+    ) {
+        return;
+    }
+
+    // N2：复查分支——read 返回 0 后、挂起前数据到达，复查见 available>0 → 不登记
+    clear_events();
+    let race: &'static RbRace = Box::leak(Box::new(RbRace {
+        waiter: AtomicUsize::new(0),
+        phase: AtomicUsize::new(0),
+    }));
+    let done3 = XArc::new(Semaphore::new());
+    let d3 = done3.clone();
+    TaskBuilder::new().name("t28.race").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(race, &mut b) {
+            Ok(1) if b[0] == 0xA5 => "RB-RACE-OK",
+            _ => "RB-RACE-BAD",
+        };
+        ev(tag);
+        d3.post();
+    });
+    done3.wait();
+    let seq3: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    if !check(
+        seq3 == ["RB-RACE-OK"],
+        "read_blocking",
+        format!("复查分支 {seq3:?}(应 RB-RACE-OK)"),
+    ) {
+        return;
+    }
+    check(
+        race.waiter.load(Ordering::SeqCst) == 0,
+        "read_blocking",
+        "复查命中时不应登记等待者".into(),
+    );
+}
+
+/// N2：模拟「read() 返回 0 之后、挂起之前数据到达」——第一次 available() 报 1，
+/// 随后 read() 真给字节；用来覆盖 read_blocking 的复查分支（Ok(true) 快返回）。
+struct RbRace {
+    waiter: AtomicUsize,
+    phase: AtomicUsize,
+}
+
+impl DeviceBase for RbRace {
+    fn kind(&self) -> DeviceKind {
+        DeviceKind::Stream
+    }
+}
+impl Device for RbRace {
+    fn as_stream(&self) -> Option<&dyn StreamDevice> {
+        Some(self)
+    }
+    fn as_event(&self) -> Option<&dyn EventDevice> {
+        Some(self)
+    }
+}
+impl StreamDevice for RbRace {
+    fn available(&self) -> usize {
+        if self.phase.swap(1, Ordering::SeqCst) == 0 {
+            1
+        } else {
+            0
+        }
+    }
+    fn read(&self, buf: &mut [u8]) -> Result<usize, DeviceError> {
+        if self.phase.load(Ordering::SeqCst) == 1 && !buf.is_empty() {
+            self.phase.store(2, Ordering::SeqCst);
+            buf[0] = 0xA5;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+    fn write(&self, _buf: &[u8]) -> Result<usize, DeviceError> {
+        Ok(0)
+    }
+}
+impl EventDevice for RbRace {
+    fn register_waiter(&self, w: usize) -> Result<(), DeviceError> {
+        self.waiter.store(w, Ordering::SeqCst);
+        Ok(())
+    }
+    fn wake(&self) {}
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -1227,6 +1551,10 @@ fn main() -> ! {
                 ("tickless_frozen_wake", test_tickless_frozen_wake),
                 ("tickless_early_wake_drift", test_tickless_early_wake_drift),
                 ("tickless_noise_stay_idle", test_tickless_noise_stay_idle),
+                ("device_event_wake", test_device_event_wake),
+                ("device_event_close", test_device_event_close),
+                ("device_event_timeout_full", test_device_event_timeout_full),
+                ("read_blocking_block", test_read_blocking_block),
             ];
             let total = tests.len();
             let mut passed = 0usize;

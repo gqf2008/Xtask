@@ -25,8 +25,8 @@
 
 ### 验证体系
 
-- [x] 宿主回归：`cargo test --lib` 默认 features 实测 **89 passed**(2026-09-19 实测;82 + chip::delay 的 5 项纯算术 + chip::wch_pfic 的 2 项 PFIC 偏移/使能掩码守卫;此前的 88 里有一条用例因重复 `#[test]` 被注册两次,已去重);门禁全特征组合(见 `ci/gate.sh`,含 fs/net/usb/ble)实测 **166 passed**(2026-09-19 实测,rustc nightly-2025-08-08;旧计数 148→159 均按实测修正,历史见 issue #11;计数随新增测试浮动,以 `ci/gate.sh` 实测为准)
-- [x] QEMU 执行级：`ci/gate.sh` 在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 24 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(24/24 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
+- [x] 宿主回归：`cargo test --lib` 默认 features 实测 **89 passed**(2026-09-19 实测;82 + chip::delay 的 5 项纯算术 + chip::wch_pfic 的 2 项 PFIC 偏移/使能掩码守卫;此前的 88 里有一条用例因重复 `#[test]` 被注册两次,已去重);门禁全特征组合(见 `ci/gate.sh`,含 fs/net/usb/ble)实测 **180 passed**(2026-10-30 实测,rustc nightly-2025-08-08;旧计数 148→159 均按实测修正,历史见 issue #11;计数随新增测试浮动,以 `ci/gate.sh` 实测为准)
+- [x] QEMU 执行级：`ci/gate.sh` 在 virt 机真跑内核——`qemu_pingpong` 200 轮乒乓 + `qemu_kernel_tests` 28 项全内核机制自测(抢占/时间片/阻塞类 IPC/定时器/时基/堆/总线/任务回收/可重入锁/优先级继承/完整 PI 多锁/PCP 天花板阻塞/PI 交叉持锁死锁确认/TLSF 碎片共限/TLSF 分配确定性/tickless 错峰唤醒/远期期限单次到点/UART RX 外部中断冻眠唤醒/早醒弹墙钟拍账/噪声风暴停留 idle 不漂移),全绿自退出;另有 tlsf 全局后端门禁(28/28 不变 = 分配器换引擎对内核透明)与 `qemu_smp` 9 项多核调度门禁
 - [x] 产物级：`ci/gate.sh` 另校验 `ch583`(QingKe V4A,无 QEMU 机器可跑)的 ROM 启动头——flash `0x00..0x17` 的入口跳转 + 向量表第 5 字 boot option `0xF3F9BDA9` @`0x14`(官方 `startup_CH583.S`/`Link.ld` 的位置);链接期 `ASSERT` 钉地址、`ci/check_wch_boot.py` 钉产物字节,缺了它板上停在 ISP 而构建/门禁全绿
 - [x] 无 A 扩展目标：`riscv32imc-unknown-none-elf`(CH572/青稞无 A 档位、esp32c3 真身)也能编译+链接同一示例——内核的原子读改写本就包在 `atomic-polyfill` 里(arc/semaphore/notify),缺的 `critical-section` RISC-V 实现已收归 `src/arch/riscv/critical.rs`(`mstatus.MIE` 存取恢复,单核语义);实测 **imc 产物 0 条 AMO/LR/SC**,有 A 的 imac 产物 12 条作阳性对照(即无 A 机器上不会踩非法指令),门禁含该构建步骤
 - [x] 上板自检例程：`examples/board_check_ch57x.rs`(ch583/ch572 共用;BSP 在 `src/bsp/ch57x/`,轮询 UART + PA 口,寄存器照官方 EVT 源码)——**阶段一**按 8/16/24/32/48/60/100MHz 逐个假设各打一行标记,哪行可读即**复位默认主频**；**阶段二**打印启动头魔数回读、`STK_CTLR`/`SR`/`PFIC_IENR` 回读、INTSYSCR(`0x804`)回读、`mcycle` 是否推进、`SWI_IRQn=14` 的 pending 是否被硬件取走,并起两个同优先级任务打印计数器与 `tick()`(两者都涨 = 时基/切换/时间片在真机成立)
@@ -61,8 +61,11 @@
 
 - **通道 A · 本机一条命令**(首次自动下载静态 QEMU 到 `.tools/`,约 90MB):
   ```bash
-  bash ci/gate.sh        # host 回归 + 示例链接 + ch583 启动头校验 + QEMU 执行级(24/24 等)
+  bash ci/gate.sh        # host 回归 + 示例链接 + 体积门禁 + ch583 启动头校验 + QEMU 执行级(28/28 等)
   ```
+  门禁会建 14 个目标三元组的产物(几个 GB)。不想让它们落在仓库盘上,用
+  `CARGO_TARGET_DIR=/some/other/disk/xtask bash ci/gate.sh` 覆盖即可(第 3 步的
+  体积基线会从同一目录取 ELF)。
 - **通道 B · GitHub Codespaces**:仓库根有 `.devcontainer.json`,云端打开即跑,本机什么都不装
 - **通道 C · 只看结果**:每次 push 的 CI 门禁(含 QEMU 执行级)全绿记录:
   [![main-gate](https://github.com/gqf2008/Xtask/actions/workflows/main-gate.yml/badge.svg)](https://github.com/gqf2008/Xtask/actions/workflows/main-gate.yml)
@@ -82,11 +85,11 @@ cargo build --example qemu_kernel_tests --features qemu_riscv,timer --target ris
 # 握手标记、主机读到才写(ci/feed_qemu.py,时序零假设):
 python ci/feed_qemu.py 180 qemu-system-riscv32 \
   target/riscv32imac-unknown-none-elf/release/examples/qemu_kernel_tests
-# 期望输出 24/24 passed,进程以退出码 0 自行结束
+# 期望输出 28/28 passed,进程以退出码 0 自行结束
 
 # 全局分配器换引擎(tlsf feature:整个内核的堆分配走手写迷你 TLSF):
 cargo build --example qemu_kernel_tests --features qemu_riscv,timer,tlsf --target riscv32imac-unknown-none-elf --release
-# 同上用 feed_qemu.py 跑,期望仍是 24/24 passed——分配器后端对内核透明(第 28 章)
+# 同上用 feed_qemu.py 跑,期望仍是 28/28 passed——分配器后端对内核透明(第 28 章)
 
 # SMP 多核执行验证(应用 smp::enable() 后从核参与调度):
 cargo build --example qemu_smp --features qemu_riscv,timer --target riscv32imac-unknown-none-elf --release

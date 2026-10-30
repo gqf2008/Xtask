@@ -37,7 +37,7 @@ use gd32vf103xx_hal::rcu::Rcu;
 use gd32vf103xx_hal::spi::{Spi, MODE_0};
 use gd32vf103xx_hal::time::U32Ext;
 
-use crate::device::{BlockDevice, Device, DeviceError, DeviceKind, SECTOR_SIZE};
+use crate::device::{BlockDevice, Device, DeviceBase, DeviceError, DeviceKind, SECTOR_SIZE};
 use crate::sd_proto::{
     block_addr, cmd_frame, csd_capacity, CMD0, CMD16, CMD17, CMD24, CMD41, CMD55, CMD58, CMD8,
     CMD9, CRC7_CMD0, CRC7_CMD8,
@@ -312,11 +312,13 @@ fn init_sd(spi: &mut SdSpi, cs: &mut SdCs) -> Result<(u64, bool), DeviceError> {
     Ok((csd_capacity(&csd), ccs))
 }
 
-impl Device for SdCard {
+impl DeviceBase for SdCard {
     fn kind(&self) -> DeviceKind {
         DeviceKind::Block
     }
+}
 
+impl Device for SdCard {
     fn as_block(&self) -> Option<&dyn BlockDevice> {
         Some(self)
     }

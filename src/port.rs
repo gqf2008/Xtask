@@ -80,6 +80,14 @@ pub trait Portable {
     fn free<F, R>(f: F) -> R
     where
         F: FnOnce(&CriticalSection) -> R;
+
+    /// 当前上下文是否在中断服务例程内（R8 的 ISR 半边）。
+    ///
+    /// 默认 `false`：端口不提供判据时，C0 约束只能靠代码审查。能判定的端口
+    /// （Cortex-M 读 IPSR、RISC-V 在 trap 入口置位标志）应覆盖实现。
+    fn in_isr() -> bool {
+        false
+    }
     /// 开全局中断
     fn enable_interrupt();
     /// 关全局中断

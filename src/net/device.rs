@@ -213,10 +213,13 @@ mod tests {
         }
     }
 
-    impl crate::device::Device for MockLink {
+    impl crate::device::DeviceBase for MockLink {
         fn kind(&self) -> crate::device::DeviceKind {
             crate::device::DeviceKind::Stream
         }
+    }
+
+    impl crate::device::Device for MockLink {
         fn as_stream(&self) -> Option<&dyn StreamDevice> {
             Some(self)
         }

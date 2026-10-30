@@ -53,6 +53,21 @@ fn depth() -> usize {
     }
 }
 
+/// R8 机器判据：当前执行上下文是否处于 `sync::free` 临界区内（深度 > 0）。
+///
+/// 目标端读本核深度槽（与 `free` 的嵌套判定同源），host 测试读线程本地深度。
+/// 只反映**本核/本线程当前上下文**的深度，不是全局标志：另一线程/另一核持区时
+/// 本上下文仍报告 false —— 这正是 R8 期望的语义。
+/// 复用 `depth()` 既有读取路径，不改变临界区语义，也不新增 unsafe。
+///
+/// 用途：所有 C2 方法入口 `debug_assert!(!in_critical_section(), "C2 in sync::free")`，
+/// 把「关中断区内做长操作」从纪律变成开发构建里的断言（§4.7 R8）。
+/// 诚实边界：只在 debug/test 构建被求值（release 下 debug_assert 整体剔除，零开销）。
+#[inline]
+pub fn in_critical_section() -> bool {
+    depth() > 0
+}
+
 #[inline]
 fn enter() {
     #[cfg(test)]
@@ -169,7 +184,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::free;
+    use super::{free, in_critical_section};
 
     /// 阳性对照:嵌套 free 必须不死锁(host 端 std Mutex 不可重入,
     /// 没有深度计数这条测试直接挂死)。这是 F1(wakeup 内包临界区)
@@ -209,5 +224,30 @@ mod tests {
         // 后续外层 free 必须还能走完整的「互斥锁+深度」路径(深度归零前提)
         free(|_| ());
         assert_eq!(super::depth(), 0);
+    }
+
+    /// R8 阴性：普通任务上下文（未进 free）必须报告 false。
+    #[test]
+    fn in_critical_section_false_outside() {
+        assert!(!in_critical_section());
+    }
+
+    /// R8 阳性：free 闭包内必须报告 true（深度 >= 1）。
+    #[test]
+    fn in_critical_section_true_inside() {
+        free(|_| assert!(in_critical_section(), "区内深度 > 0"));
+    }
+
+    /// R8 嵌套：内层退出后外层仍为 true；最外层退出后必须回到 false
+    ///（与 depth_balances_across_nesting 互补：这里断言的是 R8 的对外判据）。
+    #[test]
+    fn in_critical_section_nested_returns_false_after_exit() {
+        assert!(!in_critical_section());
+        free(|_| {
+            assert!(in_critical_section());
+            free(|_| assert!(in_critical_section(), "嵌套层仍在区内"));
+            assert!(in_critical_section(), "内层退出后外层仍应在区内");
+        });
+        assert!(!in_critical_section(), "最外层退出后深度必须归零");
     }
 }

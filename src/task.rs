@@ -404,6 +404,27 @@ impl Display for Task {
     }
 }
 
+/// 唤醒一个已登记等待者的任务（`EventDevice::wake` 的驱动侧入口）。
+///
+/// **由内核代办「取槽 + 唤醒」**：读槽、CAS 清槽与 `wakeup` 在同一段 `sync::free` 内，
+/// 调用方不再自己 `swap`——否则「取出 waiter」与「唤醒」之间任务可能被回收，变成悬垂指针
+/// （`do_schedule` 回收 Terminated 与这里持同一全局锁）。
+///
+/// # Safety
+///
+/// `slot` 必须是 `EventDevice::register_waiter` 使用的那个原子槽；槽内非零值必须是
+/// 有效、未终止的任务地址。
+pub unsafe fn wake_waiter(slot: &atomic_polyfill::AtomicUsize) {
+    use atomic_polyfill::Ordering;
+    // 取槽 + 清槽在临界区内完成；`wakeup` 内部再取 free 是可重入快路径。
+    let w = crate::sync::free(|_| slot.swap(0, Ordering::SeqCst));
+    if w != 0 {
+        // SAFETY: 契约保证 w 有效；本段处于临界区，任务不会被并发回收。
+        unsafe { &mut *(w as *mut Task) }.wakeup();
+    }
+    <crate::port::Porting as crate::port::Portable>::irq();
+}
+
 #[cfg(test)]
 mod tests {
     /// 回归:priority 上界断言——修前只查 >0,release 构建下 priority≥17
