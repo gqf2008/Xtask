@@ -18,7 +18,7 @@
 
 use alloc::boxed::Box;
 use core::cell::{RefCell, UnsafeCell};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use gd32vf103xx_hal::afio::Afio;
 use gd32vf103xx_hal::eclic::*;
@@ -34,7 +34,11 @@ use crate::device::event::EventChannel;
 use crate::device::{Device, DeviceBase, DeviceError, DeviceKind, EventDevice, StreamDevice};
 use crate::sync;
 
-/// 环形缓冲长度（2 的幂，下标用 `& (BUF_LEN - 1)`）
+/// 接收事件通道容量。
+///
+/// 定为 64 而不是 §8.3 的默认 8：USART0 是 16 字节 RX FIFO + 本板 57600 波特率，
+/// 一个调度节拍（1ms）内最坏到达 ≈ 6 字节；64 ≈ 16B FIFO × 4 轮突发，给
+/// `read_blocking` 的任务唤醒延迟留余量。满时丢弃并计 `overflow_count`（不覆盖）。
 const BUF_LEN: usize = 64;
 
 /// ISR 转发锚点：`new()` 里设备 `Box::leak` 成 'static 后存入，供 `uart0_isr()` 定位
@@ -49,6 +53,8 @@ pub struct Uart0 {
     /// 接收事件通道（定长、零分配）：ISR `post_isr` 投递，读任务 `try_recv` 排空；
     /// 满/关闭/溢出计数/唤醒都是它的既有语义
     events: EventChannel<u8, BUF_LEN>,
+    /// 单订阅：`events()` 只在首次返回通道，第二次 `Busy`（§5.8）
+    events_taken: AtomicBool,
 }
 
 // SAFETY:
@@ -92,6 +98,7 @@ impl Uart0 {
             tx: RefCell::new(tx),
             rx: UnsafeCell::new(rx),
             events: EventChannel::new(),
+            events_taken: AtomicBool::new(false),
         }));
         UART0_DEV.store(dev, Ordering::SeqCst);
 
@@ -112,10 +119,19 @@ impl Uart0 {
 
     /// 直接拿接收通道（typed 快速路径）：`recv` / `recv_timeout` / `len` / `close`
     /// 都在通道上，不经 `&dyn`、不碰能力面。
-    /// **与 `read_blocking` / `StreamDevice::read` 二选一**：通道是单消费者
-    /// （SPSC）——同一时刻只允许一个任务消费它（§5.8 单订阅契约）。
-    pub fn events(&self) -> &EventChannel<u8, BUF_LEN> {
-        &self.events
+    ///
+    /// **单订阅**（§5.8）：首次调用返回通道，之后一律 `Err(Busy)`——通道是单消费者
+    /// （SPSC），与 `read_blocking` / `StreamDevice::read` 二选一。订阅在设备生命周期
+    /// 内不释放；要结束消费请 `close()` 通道，而不是重复 `events()`。
+    pub fn events(&self) -> Result<&EventChannel<u8, BUF_LEN>, DeviceError> {
+        if self
+            .events_taken
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(DeviceError::Busy);
+        }
+        Ok(&self.events)
     }
 
     /// 因通道满（已存 `BUF_LEN` 字节）而丢弃的字节数。诊断用，语义等同旧实现的

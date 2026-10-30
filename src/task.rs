@@ -404,6 +404,19 @@ impl Display for Task {
     }
 }
 
+/// 唤醒一个已登记等待者的任务（`EventDevice::wake` 的驱动侧入口）。
+///
+/// # Safety
+///
+/// `addr` 必须来自 `EventDevice::register_waiter` 登记的有效任务地址，且任务未终止。
+/// 本函数只把任务状态改回就绪并入队，随后触发软中断让调度器接管；ISR 与任务上下文
+/// 都可调用（`wakeup` 内部自带临界区）。
+pub unsafe fn wake_waiter(addr: usize) {
+    // SAFETY: 调用方保证 addr 指向有效且未终止的 Task。
+    unsafe { &mut *(addr as *mut Task) }.wakeup();
+    <crate::port::Porting as crate::port::Portable>::irq();
+}
+
 #[cfg(test)]
 mod tests {
     /// 回归:priority 上界断言——修前只查 >0,release 构建下 priority≥17

@@ -468,6 +468,20 @@ mod tests {
         );
     }
 
+    /// 验收项 `event_channel_isr_post`：ISR 侧投递与任务侧同语义（FIFO / 满即 Full / 不覆盖）。
+    #[test]
+    fn event_channel_isr_post() {
+        let ch: EventChannel<u8, 2> = EventChannel::new();
+        ch.post_isr(7).unwrap();
+        assert_eq!(ch.try_recv(), Some(7));
+        ch.post_isr(1).unwrap();
+        ch.post_isr(2).unwrap();
+        assert_eq!(ch.post_isr(3), Err(DeviceError::Full));
+        assert_eq!(ch.overflow_count(), 1);
+        assert_eq!(ch.try_recv(), Some(1));
+        assert_eq!(ch.try_recv(), Some(2));
+    }
+
     #[test]
     fn const_construct() {
         static CH: EventChannel<u32, 8> = EventChannel::new();

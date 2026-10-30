@@ -1,5 +1,6 @@
 # xtask 体积基线:flash / RAM 字节数(ci/check_size.py --update 生成)
-# rustc: 1.91.0-nightly
+# rustc: 1.91.0-nightly (2fd855fbf 2025-08-07)
+# 噪声：flash 有 ±50B 的跨机/工具链抖动，5% 容差内属噪声，不是回归。
 # 2026-10-30 计量口径修正:.data 的载入镜像计入 flash(旧基线未计,flash 数值上调);
 #            同日按最终代码重录(device 能力/事件/总线改动后的实测值)。
 # 只有升级工具链或有意增加功能时才更新;无意的增长应视为回归。

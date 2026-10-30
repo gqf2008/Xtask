@@ -17,12 +17,15 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use alloc::sync::Arc as XArc;
+use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use xtask::arch::riscv::rt;
 use xtask::chip::qemu_riscv::stdout::{qemu_exit_fail, qemu_exit_pass, write_str};
 use xtask::prelude::*;
+use xtask::device::event::EventChannel;
+use xtask::device::{read_blocking, Device, DeviceBase, DeviceError, DeviceKind, EventDevice, StreamDevice};
 use xtask::sync::mutex::Mutex;
 use xtask::sprintln;
 use core::alloc::Layout;
@@ -1283,6 +1286,138 @@ fn test_device_event_timeout_full() {
     );
 }
 
+// ============ 测试 28:read_blocking 的阻塞路径 ★ ============
+// host 只覆盖快路径;这里用 StreamDevice+EventDevice 的 mock 走完整链路:
+// 复查→登记→block→post→wake→yield→读回;并覆盖 close 后 register_waiter 返回 Cancelled。
+struct RbMock {
+    ch: EventChannel<u8, 4>,
+    waiter: AtomicUsize,
+}
+
+impl DeviceBase for RbMock {
+    fn kind(&self) -> DeviceKind {
+        DeviceKind::Stream
+    }
+}
+impl Device for RbMock {
+    fn as_stream(&self) -> Option<&dyn StreamDevice> {
+        Some(self)
+    }
+    fn as_event(&self) -> Option<&dyn EventDevice> {
+        Some(self)
+    }
+}
+impl StreamDevice for RbMock {
+    fn available(&self) -> usize {
+        self.ch.len()
+    }
+    fn read(&self, buf: &mut [u8]) -> Result<usize, DeviceError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        match self.ch.try_recv() {
+            Some(b) => {
+                buf[0] = b;
+                Ok(1)
+            }
+            None => Ok(0),
+        }
+    }
+    fn write(&self, _buf: &[u8]) -> Result<usize, DeviceError> {
+        Ok(0)
+    }
+}
+impl EventDevice for RbMock {
+    fn register_waiter(&self, w: usize) -> Result<(), DeviceError> {
+        if self.ch.is_closed() {
+            return Err(DeviceError::Cancelled);
+        }
+        self.waiter.store(w, Ordering::SeqCst);
+        Ok(())
+    }
+    fn wake(&self) {
+        let w = self.waiter.swap(0, Ordering::SeqCst);
+        if w != 0 {
+            // SAFETY: w 来自 register_waiter 登记的本套件任务地址
+            unsafe { xtask::task::wake_waiter(w) };
+        }
+    }
+}
+
+fn test_read_blocking_block() {
+    let dev: &'static RbMock = Box::leak(Box::new(RbMock {
+        ch: EventChannel::new(),
+        waiter: AtomicUsize::new(0),
+    }));
+    let done = XArc::new(Semaphore::new());
+    let d = done.clone();
+    TaskBuilder::new().name("t28.reader").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(dev, &mut b) {
+            Ok(1) if b[0] == 0x5A => "RB-OK",
+            Ok(n) => {
+                sprintln!("read_blocking: n={n} b={:?}", b);
+                "RB-ODD"
+            }
+            Err(DeviceError::Cancelled) => "RB-CANCELLED",
+            Err(_) => "RB-ERR",
+        };
+        ev(tag);
+        d.post();
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        dev.waiter.load(Ordering::SeqCst) != 0,
+        "read_blocking",
+        "reader 未登记等待者(阻塞路径未走到)".into(),
+    ) {
+        return;
+    }
+    dev.ch.post(0x5A).unwrap();
+    dev.wake();
+    done.wait();
+    let seq: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    if !check(seq == ["RB-OK"], "read_blocking", format!("读回 {seq:?}(应 RB-OK)")) {
+        return;
+    }
+
+    // close 变体:醒来后 register_waiter 走 closed 分支 → Cancelled
+    // （考官只在每个 test 前 clear_events，同一测试内的第二变体要自己清）
+    clear_events();
+    let dev2: &'static RbMock = Box::leak(Box::new(RbMock {
+        ch: EventChannel::new(),
+        waiter: AtomicUsize::new(0),
+    }));
+    let done2 = XArc::new(Semaphore::new());
+    let d2 = done2.clone();
+    TaskBuilder::new().name("t28.reader2").priority(5).spawn(move || {
+        let mut b = [0u8; 1];
+        let tag = match read_blocking(dev2, &mut b) {
+            Err(DeviceError::Cancelled) => "RB-CANCELLED",
+            _ => "RB-ERR",
+        };
+        ev(tag);
+        d2.post();
+    });
+    xtask::sleep_ms(20);
+    if !check(
+        dev2.waiter.load(Ordering::SeqCst) != 0,
+        "read_blocking",
+        "close 变体:reader 未登记等待者".into(),
+    ) {
+        return;
+    }
+    dev2.ch.close();
+    dev2.wake();
+    done2.wait();
+    let seq2: Vec<&str> = events().iter().map(|(n, _)| *n).collect();
+    check(
+        seq2 == ["RB-CANCELLED"],
+        "read_blocking",
+        format!("close 后 {seq2:?}(应 RB-CANCELLED)"),
+    );
+}
+
 // ============ 考官 ============
 #[rt::entry]
 fn main() -> ! {
@@ -1339,6 +1474,7 @@ fn main() -> ! {
                 ("device_event_wake", test_device_event_wake),
                 ("device_event_close", test_device_event_close),
                 ("device_event_timeout_full", test_device_event_timeout_full),
+                ("read_blocking_block", test_read_blocking_block),
             ];
             let total = tests.len();
             let mut passed = 0usize;

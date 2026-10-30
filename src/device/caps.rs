@@ -34,3 +34,43 @@ pub trait IoCtl: DeviceBase {
     /// 期间有效，**不得留存**。`op` 取 `u32`（厂商 `ulong cmd`）。错用即厂商驱动侧 UB。
     unsafe fn ioctl_raw(&self, op: u32, arg: *mut c_void) -> Result<isize, DeviceError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::Cell;
+
+    use crate::device::DeviceKind;
+
+    struct MockIoCtl {
+        seen: Cell<(u32, usize)>,
+    }
+
+    impl DeviceBase for MockIoCtl {
+        fn kind(&self) -> DeviceKind {
+            DeviceKind::Control
+        }
+    }
+
+    impl IoCtl for MockIoCtl {
+        unsafe fn ioctl_raw(&self, op: u32, arg: *mut c_void) -> Result<isize, DeviceError> {
+            self.seen.set((op, arg as usize));
+            Ok(42)
+        }
+    }
+
+    /// 验收项 `ioctl_raw_forwarding`：op 与指针原样到达，返回值透传；不做任何解引用。
+    #[test]
+    fn ioctl_raw_forwarding() {
+        let dev = MockIoCtl {
+            seen: Cell::new((0, 0)),
+        };
+        let mut scratch = [0u8; 4];
+        let p = scratch.as_mut_ptr() as *mut c_void;
+        // SAFETY: mock 只把指针当值记录，不解引用；op 由本测试定义。
+        let r = unsafe { dev.ioctl_raw(0x01_03, p) }.unwrap();
+        assert_eq!(r, 42);
+        assert_eq!(dev.seen.get(), (0x01_03, p as usize));
+    }
+}
+
