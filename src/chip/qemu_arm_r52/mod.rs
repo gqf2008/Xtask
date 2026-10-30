@@ -108,6 +108,24 @@ impl Portable for QemuArmR52Porting {
         }
     }
 
+    /// 当前上下文是否在中断服务例程内（R8 的 ISR 半边）。
+    ///
+    /// Cortex-R5：任务与调度循环跑在 SVC(0x13)，硬件 IRQ 入口全程
+    /// IRQ(0x12)（irq_entry/irq_dispatch/switch_and_schedule 期间；仅
+    /// 抢占补帧的短暂窗口切 SVC，窗口内无 Rust 调用）。SVC 入口是任务
+    /// 主动让出（yield/sleep），按任务上下文计——与 Cortex-M 把 SVCall
+    /// 计为 Handler 不同。刻意不读 port.S 的 IRQ_NESTING：其
+    /// irq_in_kernel 路径置 1 后返回前不清零（既有不一致），作判据会
+    /// 永久报 ISR。FIQ(0x11) 本口未使用，不纳入判据。
+    #[inline]
+    fn in_isr() -> bool {
+        let cpsr: u32;
+        // SAFETY: 只读本核 CPSR（纯读系统寄存器），无内存副作用、
+        // 不改条件标志。
+        unsafe { asm!("mrs {0}, cpsr", out(reg) cpsr, options(nomem, nostack)) };
+        cpsr & 0x1f == 0x12
+    }
+
     #[inline]
     fn enable_interrupt() {
         unsafe {

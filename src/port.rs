@@ -83,8 +83,44 @@ pub trait Portable {
 
     /// 当前上下文是否在中断服务例程内（R8 的 ISR 半边）。
     ///
-    /// 默认 `false`：端口不提供判据时，C0 约束只能靠代码审查。能判定的端口
-    /// （Cortex-M 读 IPSR、RISC-V 在 trap 入口置位标志）应覆盖实现。
+    /// 语义：只反映**本核/本线程当前上下文**（不是全局标志），与
+    /// `in_critical_section()` 正交——关中断的临界区内、带 PRIMASK 的
+    /// 线程上下文都返回 false。默认 `false` 表示端口未提供判据，此时
+    /// C2 约束只能靠代码审查。
+    ///
+    /// 本轮端口覆盖（14 个芯片口）：
+    /// - Cortex-M（stm32f1/f4/h7/rp2040）：ICSR.VECTACTIVE（=IPSR[8:0]）
+    ///   非 0 即 Handler 模式；只读。`SCB::vect_active()` 内部按
+    ///   `icsr as u8` 取号：IRQn≥256 且低 8 位为 0 会误判 Thread；低 8 位
+    ///   <16 的非 0 保留号会下溢（debug panic）。本仓四口最大 IRQ 号 <256。
+    /// - Cortex-R5（qemu_arm_r52）：CPSR.M==IRQ(0x12)；任务与调度循环跑
+    ///   SVC(0x13)，SVC 入口（任务主动 yield）按任务上下文计；FIQ 未使用。
+    /// - RISC-V Direct 单入口（qemu_riscv/ch32v103/ch32v203/ch32v307/
+    ///   ch583/ch572/esp32c3）：由 port.S 在 `_start_trap` 入口/出口维护
+    ///   本核嵌套深度 `IN_ISR_DEPTH`；>0 即 ISR。异常与中断共用入口，
+    ///   异常也计入（本仓异常即致命）。
+    /// - RISC-V Nuclei ECLIC（gd32vf103/cm32m4）：同一计数器，挂在
+    ///   `_irq_handler`（mtvt2 公共入口）；`_start_trap` 异常路径不计。
+    ///   前提：被中断的 trap 帧不会在任务运行期间挂起（唯一切换点在
+    ///   `_irq_handler` 出口；INT_SFT 与 INT_TMR 同 Level，SWI 不能抢占
+    ///   处理中的 handler）。
+    /// - HostPorting(cfg(test)) / DefaultPorting：保持 false。
+    ///
+    /// 维护约束：计数器只允许在既有 trap 入口/出口增减，ENTER/LEAVE 必须
+    /// 配平（不配平会回绕/下溢，使 in_isr 永久为真）；不得改动上下文
+    /// 保存/恢复与嵌套语义。
+    ///
+    /// 残留边界：
+    /// 1. host mock 不模拟中断上下文，默认 false 是诚实边界；目标端判据只能
+    ///    靠构建覆盖 + QEMU/真机执行验证。
+    /// 2. `sync::assert_c2` 仅 debug/test 求值，release 门禁不验证。
+    /// 3. Cortex-M 见上述 `icsr as u8` 截断与 `irqn - 16` 下溢；新增 M 核口
+    ///    须复核最大 IRQ 号 <256。
+    /// 4. gd32/cm32m4 的 `_start_trap` 异常路径不计数；0x7ED 真机行为未核实；
+    ///    "挂起帧不变量"是维护红线。
+    /// 5. Cortex-R5 的 FIQ 未纳入判据；SVC yield 按任务上下文计。
+    /// 6. RISC-V 计数器宏按 riscv32 槽宽（4 字节），riscv64 口须改槽宽；
+    ///    计数器失衡会回绕/下溢成永久 ISR（响亮失败）。
     fn in_isr() -> bool {
         false
     }
@@ -183,8 +219,9 @@ pub struct HostPorting;
 
 /// host 测试临界区锁。`cargo test` 默认多线程并行跑测试，仅靠"测试不并发访问全局状态"
 /// 的口头约定太脆：一旦将来某个测试驱动了全局队列/TICKS，就会在测试线程间静默数据竞争。
-/// 用进程内互斥锁给临界区提供真实互斥。注意 std Mutex 不可重入——
-/// 测试代码不要嵌套调用 sync::free（free 里再 free 会死锁）。
+/// 用进程内互斥锁给临界区提供真实互斥。**不可重入的是这个原语本身**
+/// （`Porting::free`），不是 `sync::free`：后者按线程/每核深度计数、可嵌套
+/// （见 `sync/critical.rs` 的 `nested_free_does_not_deadlock`）。
 #[cfg(test)]
 static HOST_TEST_CS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -262,5 +299,22 @@ impl Portable for DefaultPorting {
     /// 保存任务环境到任务栈
     fn save_context(_task: &mut Task) {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod in_isr_tests {
+    use super::{DefaultPorting, HostPorting, Portable};
+
+    /// host mock 不模拟中断上下文：默认 false 是 R8 的诚实边界。
+    #[test]
+    fn host_porting_reports_thread_context() {
+        assert!(!<HostPorting as Portable>::in_isr());
+    }
+
+    /// 兜底桩同样保持默认 false——不得为"看起来覆盖"给一个猜的值。
+    #[test]
+    fn default_porting_reports_thread_context() {
+        assert!(!<DefaultPorting as Portable>::in_isr());
     }
 }

@@ -95,6 +95,15 @@ impl<T> Mutex<T> {
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         lock_core::try_acquire(&self.core, false).then(|| MutexGuard::new(self))
     }
+
+    /// 诊断（C1）：当前执行上下文是否正持有该锁；非阻塞、只读账本。
+    /// 仅用于拦截"同一任务重入普通 Mutex 会自锁"的设计错误，**不得**当作
+    /// 互斥判据（先查后锁有 TOCTOU）。host 无调度器时身份恒为 null——任意
+    /// std 线程都会被看成同一上下文，跨线程 host 用例必误判；真并发只在
+    /// 目标/QEMU 验证。目标端每任务指针不同，不受影响。
+    pub(crate) fn held_by_current(&self) -> bool {
+        lock_core::held_by_current(&self.core)
+    }
 }
 
 /// 互斥锁守卫：析构即解锁。
@@ -212,5 +221,17 @@ mod tests {
         }
         let g = m.try_lock().unwrap();
         assert_eq!(&*g, &[7, 8]);
+    }
+
+    /// 诊断探针跟随 guard 生命周期（host null 身份 = 单上下文，恒判"本上下文"）。
+    #[test]
+    fn held_by_current_tracks_guard() {
+        let m = Mutex::new(());
+        assert!(!m.held_by_current(), "空闲锁不得判为持有");
+        {
+            let _g = m.lock();
+            assert!(m.held_by_current(), "持锁期间必须判为本上下文持有");
+        }
+        assert!(!m.held_by_current(), "guard 析构后必须释放");
     }
 }

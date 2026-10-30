@@ -100,6 +100,42 @@
   addi sp, sp, 4 * 36
 .endm
 
+/*
+  ---- R8：本核 trap 嵌套深度（Portable::in_isr 的判据）----
+  基础 RISC-V 没有"当前在 trap 内"的只读位；在既有 trap 入口/出口做最小
+  记账，不改上下文保存/恢复、不改嵌套语义。用深度而非布尔：向量 ISR 期间
+  可能被更高 level 的 trap 嵌套，布尔会被内层出口误清。
+
+  本口单核：固定槽 0，与 Rust 侧 hart_id() 默认 0 一致。**不读 mhartid**
+  ——QingKe/esp32c3 的实现未在本仓核实，且 Rust 侧从不依赖它。
+  只动 t0/t1——两个调用点它们都已入帧（在 SAVE/RESTORE 之间）。
+
+  计数范围：中断与异常共用 _start_trap，异常也计入（本仓异常即致命）。
+  初启任务走 restore_ctx.S 直接 mret，不经过 _switch_and_restore，
+  不会出现无 ENTER 而 LEAVE。所有从 _start_trap 进入的分支（含软中断的
+  beq ... _switch_and_restore）都经 _switch_and_restore 的同一 mret
+  返回，ENTER/LEAVE 配平。
+
+  ENTER/LEAVE 必须配平：在 0 上减会回绕成 0xFFFF_FFFF，in_isr 将永久为真
+  （debug 下所有 C2 断言触发——响亮失败，非静默错误）。任何新增 trap 出口
+  不得绕过 LEAVE。计数器宏按 riscv32 槽宽（4 字节），riscv64 口须改槽宽。
+*/
+.extern IN_ISR_DEPTH
+
+.macro IN_ISR_ENTER
+  la t0, IN_ISR_DEPTH
+  lw t1, 0(t0)
+  addi t1, t1, 1
+  sw t1, 0(t0)
+.endm
+
+.macro IN_ISR_LEAVE
+  la t0, IN_ISR_DEPTH
+  lw t1, 0(t0)
+  addi t1, t1, -1
+  sw t1, 0(t0)
+.endm
+
 // 当前任务全局指针(RUST 代码维护)
 .extern CURRENT_TASK_PTR
 // RUST 侧 SysTick 处理(真 tick 与 SWIE 软中断二合一)
@@ -122,6 +158,7 @@
 _start_trap:
   // 保存上文到当前任务栈
   SAVE_CONTEXT
+  IN_ISR_ENTER              // R8：本核 trap 深度 +1（x5/x6 已入帧）
   // 任务块首字段存 sp
   lw t0, CURRENT_TASK_PTR
   sw sp, 0x0(t0)
@@ -167,6 +204,7 @@ _switch_and_restore:
   // 装载新任务 sp(调度器已更新 CURRENT_TASK)
   lw t0, CURRENT_TASK_PTR
   lw sp, 0x0(t0)
+  IN_ISR_LEAVE              // R8：深度 -1（此处 MIE=0，到 mret 无插入窗口）
   RESTORE_CONTEXT
   mret
 

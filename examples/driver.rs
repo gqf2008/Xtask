@@ -9,6 +9,7 @@ use hal::{gpio::GpioExt, pac, prelude::*, rcu::RcuExt};
 
 use xtask::arch::riscv::rt;
 use xtask::bsp::longan_nano::drv_led::DrvLed;
+use xtask::device::caps::Openable;
 use xtask::bsp::longan_nano::drv_uart::uart0_isr;
 use xtask::bsp::longan_nano::led::{rgb, Led};
 use xtask::device::table::{self, DeviceSlot};
@@ -75,9 +76,16 @@ fn init() {
     // 清单三件套：构造实例 → 填槽（每槽一次，重复填会 panic）→ attach 清单。
     // 清单本体（const 数组）在 ROM，槽（一个 Option<&'static dyn Device>）在 RAM——
     // 对应 Zephyr 的 const struct device 数组 + RAM 里的 device_state。
-    RED_SLOT.fill(Box::leak(Box::new(DrvLed::new(red))) as &'static dyn Device);
-    GREEN_SLOT.fill(Box::leak(Box::new(DrvLed::new(green))) as &'static dyn Device);
-    BLUE_SLOT.fill(Box::leak(Box::new(DrvLed::new(blue))) as &'static dyn Device);
+    // DrvLed 默认 closed（§5.6：open 失败/未 open 必须拒绝业务调用），填槽前先 open。
+    let red = Box::leak(Box::new(DrvLed::new(red)));
+    red.open().unwrap();
+    RED_SLOT.fill(&*red);
+    let green = Box::leak(Box::new(DrvLed::new(green)));
+    green.open().unwrap();
+    GREEN_SLOT.fill(&*green);
+    let blue = Box::leak(Box::new(DrvLed::new(blue)));
+    blue.open().unwrap();
+    BLUE_SLOT.fill(&*blue);
     table::attach(BOARD_LEDS);
 
     let mut afio = dp.AFIO.constrain(&mut rcu);

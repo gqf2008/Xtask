@@ -195,6 +195,11 @@ pub fn debug_tick_isr_count() -> u32 {
 /// QEMU virt 机移植层实现
 pub struct QemuRiscvPorting;
 
+/// 本核 trap 嵌套深度（port.S 的 IN_ISR_ENTER/LEAVE 维护；按 mhartid 分槽）。
+/// `Portable::in_isr()` 的唯一数据源：0 = 任务/线程上下文，>0 = 至少一层 trap。
+#[no_mangle]
+static mut IN_ISR_DEPTH: [u32; crate::port::MAX_HARTS] = [0; crate::port::MAX_HARTS];
+
 // port.S 依赖的 Task 布局偏移(蹦床 `lw t1, 8(t0)` 取 entry、trap 入口
 // `sw sp, 0(t0)` 存 sp)——失配在编译期炸,而非静默错跳
 const _: () = assert!(core::mem::offset_of!(Task, sp) == 0);
@@ -214,6 +219,20 @@ impl Portable for QemuRiscvPorting {
         F: FnOnce(&CriticalSection) -> R,
     {
         riscv::interrupt::free(f)
+    }
+
+    /// 当前上下文是否在 trap（ISR）内——R8 的 ISR 半边（只反映本核）。
+    #[inline]
+    fn in_isr() -> bool {
+        // 与 critical.rs/bus.rs 的同类访问一致：release 也夹取，防越界。
+        let hart = (Self::hart_id() as usize).min(crate::port::MAX_HARTS - 1);
+        debug_assert!((Self::hart_id() as usize) < crate::port::MAX_HARTS);
+        // SAFETY: 只读本核独占槽——写只发生在同核 trap 入口/出口（同核无
+        // 并发），跨核各写各槽；u32 自然对齐无撕裂。addr_of! 不生成
+        // static mut 引用；volatile 保证每次重新取（值由汇编异步改写）。
+        unsafe {
+            core::ptr::read_volatile(core::ptr::addr_of!(IN_ISR_DEPTH[hart])) != 0
+        }
     }
 
     #[inline]

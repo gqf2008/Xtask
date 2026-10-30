@@ -207,6 +207,13 @@ impl LockCore {
     pub(crate) fn test_depth(&self) -> usize {
         self.depth
     }
+
+    /// 本锁当前是否由 `me` 持有(C1:调用方须已持 sync::free;只读账本)。
+    /// host 单上下文身份是 null:`Some(null)` 认作本上下文持有。
+    #[inline]
+    pub(crate) fn owned_by(&self, me: *mut Task) -> bool {
+        self.owner == Some(me)
+    }
 }
 
 /// 加锁循环的内核一步:同一临界区内"认领或(PI + 入队 + 挂起)"。
@@ -265,6 +272,15 @@ pub(crate) fn try_acquire(core: &UnsafeCell<LockCore>, reentrant: bool) -> bool 
         } else {
             false
         }
+    })
+}
+
+/// 当前执行上下文是否持有 core(C1;内部一段 sync::free,不阻塞、不改状态)。
+pub(crate) fn held_by_current(core: &UnsafeCell<LockCore>) -> bool {
+    sync::free(|_| {
+        let me = LockCore::me();
+        // SAFETY: 账本只在 sync::free 临界区内读写;owner 按值读,引用不逃逸。
+        unsafe { (&*core.get()).owned_by(me) }
     })
 }
 
@@ -745,5 +761,40 @@ mod tests {
             (*w).blocked_lock = ptr::null_mut();
         }
         unsafe { reclaim(&[t, w]) };
+    }
+
+    /// 账本探针只认显式传入的上下文（host 身份是 null）。
+    #[test]
+    fn owned_by_distinguishes_tasks() {
+        let ta = make_task(8);
+        let tb = make_task(8);
+        let mut c = LockCore::new();
+        assert!(!c.owned_by(ptr::null_mut()), "空闲锁不属于任何上下文");
+        c.owner = Some(ta);
+        assert!(c.owned_by(ta));
+        assert!(!c.owned_by(tb));
+        assert!(!c.owned_by(ptr::null_mut()));
+        unsafe { reclaim(&[ta, tb]) };
+    }
+
+    /// host 单上下文身份是 null：`Some(null)` 记作"本上下文持有"（钉住 host 语义）。
+    #[test]
+    fn held_by_current_null_identity() {
+        let cell = UnsafeCell::new(LockCore::new());
+        assert!(!held_by_current(&cell), "空闲锁不得判为持有");
+        // SAFETY: 局部 cell 独占,测试单线程写账本。
+        unsafe { (*cell.get()).owner = Some(ptr::null_mut()) };
+        assert!(held_by_current(&cell), "host null 身份 = 本上下文");
+    }
+
+    /// 别的任务持锁时本上下文（host null）不得误判为持有。
+    #[test]
+    fn held_by_current_false_for_other_task() {
+        let t = make_task(8);
+        let cell = UnsafeCell::new(LockCore::new());
+        // SAFETY: 局部 cell 独占,测试单线程写账本。
+        unsafe { (*cell.get()).owner = Some(t) };
+        assert!(!held_by_current(&cell), "owner 是别的任务");
+        unsafe { reclaim(&[t]) };
     }
 }

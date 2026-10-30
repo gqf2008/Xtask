@@ -15,8 +15,8 @@
 //! 与运行期注册表的分工：二者共用同一种句柄 `&'static dyn Device` 与同一套
 //! 能力 trait，只换"表"的实现——注册表是可增删的运行期表（教学：模型透明、
 //! host 可测、可演示热注册），本模块是编译期定形的清单（真实内核心态：零运行期
-//! 注册决策）。能力分发同样走 `as_*`：表对设备类透明，新增能力 trait 本模块
-//! 只加一个 `find_xxx` 便捷查找，槽/描述符/宏一行不改。
+//! 注册决策）。能力分发同样走 `as_*`：表对设备类透明，`find_*` 方法与自由函数
+//! 由 `define_capabilities!` 生成，本模块不再维护能力名清单——槽/描述符/宏一行不改。
 //!
 //! 设计取舍：清单存**实例槽指针**而非实例本身——Rust 嵌入生态的外设（GPIO 引脚、
 //! Serial）没有 const 构造器，实例只能在 init 里运行期构造；槽把"编译期定形的名字/集合"
@@ -30,7 +30,7 @@
 
 use core::cell::UnsafeCell;
 
-use crate::device::{BlockDevice, BusDevice, Device, EventDevice, StreamDevice, Switchable};
+use crate::device::Device;
 use crate::sync;
 
 /// 设备实例槽：编译期清单里的"位置"，运行期由 init 填**一次**实例。
@@ -64,7 +64,8 @@ impl DeviceSlot {
 
     /// 读槽——**调用方必须已处于 `sync::free` 临界区内**（仅 `DeviceTable::find`
     /// 等查找路径使用，与外层同一次临界区）：再包一层 `sync::free` 就是嵌套取锁，
-    /// 而宿主端口 `free` 是进程互斥锁、不可重入（port.rs:78 明令"free 里再 free 会死锁"）；
+    /// 而直接嵌套 `Porting::free`（宿主是进程互斥锁）不可重入——`sync::free` 本身
+    /// 按线程/每核深度计数、可嵌套；不可重入的是这个原语与区内取的其他锁；
     /// 芯片端口的 `interrupt::free` 虽可重入（深度计数），一次操作一次取锁才能让
     /// 宿主与真机行为一致。找不到这个纪律的地方 = bus.rs/REGISTRY 同款：整个
     /// 操作一块临界区，内部不许再 `free`。
@@ -133,7 +134,7 @@ impl DeviceTable {
     }
 
     /// 按名查找设备（Zephyr `device_get_binding` 同款线性扫描；通用入口，
-    /// 拿到后用 `as_*` 取能力，或用下面的 `find_stream`/`find_block`/… 直接取）。
+    /// 拿到后用 `as_*` 取能力，或用宏生成的 `find_*` 直接取）。
     /// 返回 `None` 的三种情形：清单未挂载 / 名字不在清单 / **在清单但槽未填**（未就绪）——
     /// 后两种与 Zephyr 的"找不到"与"未 ready 返回 NULL"一一对应。
     pub fn find(&self, name: &str) -> Option<&'static dyn Device> {
@@ -143,34 +144,6 @@ impl DeviceTable {
                 .find(|d| d.name == name)
                 .and_then(|d| d.slot.get_in_critical())
         })
-    }
-
-    // ---- 能力级便捷查找（薄包装：find + as_*）----
-
-    /// 按名取字节流能力；名字不存在/槽未填/设备无此能力时返回 None
-    /// （用 `find` 可区分"没有"与"能力不符"）
-    pub fn find_stream(&self, name: &str) -> Option<&'static dyn StreamDevice> {
-        self.find(name).and_then(|d| d.as_stream())
-    }
-
-    /// 按名取块设备能力
-    pub fn find_block(&self, name: &str) -> Option<&'static dyn BlockDevice> {
-        self.find(name).and_then(|d| d.as_block())
-    }
-
-    /// 按名取开关量能力
-    pub fn find_switchable(&self, name: &str) -> Option<&'static (dyn Switchable + Sync)> {
-        self.find(name).and_then(|d| d.as_switchable())
-    }
-
-    /// 按名取总线能力
-    pub fn find_bus(&self, name: &str) -> Option<&'static dyn BusDevice> {
-        self.find(name).and_then(|d| d.as_bus())
-    }
-
-    /// 按名取事件/唤醒能力
-    pub fn find_event(&self, name: &str) -> Option<&'static dyn EventDevice> {
-        self.find(name).and_then(|d| d.as_event())
     }
 }
 
@@ -187,35 +160,17 @@ pub fn find(name: &str) -> Option<&'static dyn Device> {
     TABLE.find(name)
 }
 
-/// 从全局清单表按名取字节流能力
-pub fn find_stream(name: &str) -> Option<&'static dyn StreamDevice> {
-    TABLE.find_stream(name)
-}
-
-/// 从全局清单表按名取块设备能力
-pub fn find_block(name: &str) -> Option<&'static dyn BlockDevice> {
-    TABLE.find_block(name)
-}
-
-/// 从全局清单表按名取开关量能力
-pub fn find_switchable(name: &str) -> Option<&'static (dyn Switchable + Sync)> {
-    TABLE.find_switchable(name)
-}
-
-/// 从全局清单表按名取总线能力
-pub fn find_bus(name: &str) -> Option<&'static dyn BusDevice> {
-    TABLE.find_bus(name)
-}
-
-/// 从全局清单表按名取事件/唤醒能力
-pub fn find_event(name: &str) -> Option<&'static dyn EventDevice> {
-    TABLE.find_event(name)
-}
+/// 能力级自由函数由 `define_capabilities!` 生成，经 `device::__table_fns`
+/// 再导出——新增能力不需要改本文件。
+pub use crate::device::__table_fns::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceBase, DeviceError, DeviceKind, SECTOR_SIZE};
+    use crate::device::{
+        BlockDevice, BusDevice, DeviceBase, DeviceError, DeviceKind, EventDevice, SECTOR_SIZE,
+        StreamDevice, Switchable,
+    };
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};

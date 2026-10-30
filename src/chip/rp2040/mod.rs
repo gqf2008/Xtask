@@ -5,7 +5,7 @@ use crate::port::Portable;
 use crate::task::Task;
 use crate::CriticalSection;
 use core::arch::asm;
-use cortex_m::peripheral::scb::SystemHandler;
+use cortex_m::peripheral::scb::{SystemHandler, VectActive};
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m::peripheral::{SCB, SYST};
 
@@ -112,6 +112,21 @@ impl Portable for RP2040Porting {
         F: FnOnce(&CriticalSection) -> R,
     {
         unsafe { cortex_m::interrupt::free(|_| f(&CriticalSection::new())) }
+    }
+
+    /// 当前上下文是否在中断服务例程内（R8 的 ISR 半边）。
+    ///
+    /// Cortex-M：ICSR.VECTACTIVE（=IPSR[8:0]）非 0 即 Handler 模式
+    /// （SysTick/PendSV/外部 IRQ/故障都算），Thread 模式为 0；纯只读，
+    /// 与 PRIMASK/临界区状态无关。
+    /// 边界：cortex-m 0.7.7 的 `SCB::vect_active()` 内部按 `icsr as u8`
+    /// 取号——IRQn≥256 且低 8 位为 0 会误判 Thread；低 8 位 <16 的非 0
+    /// 保留号会走 `irqn - 16`（debug 下下溢 panic）。本仓四口最大 IRQ 号
+    /// 均 <256（f1 67 / f4 85 / h7 ~150 / rp2040 31）；新增 M 核口须复核。
+    /// `SCB::vect_active()` 是 safe API，本实现无 unsafe。
+    #[inline]
+    fn in_isr() -> bool {
+        !matches!(SCB::vect_active(), VectActive::ThreadMode)
     }
 
     /// 开全局中断

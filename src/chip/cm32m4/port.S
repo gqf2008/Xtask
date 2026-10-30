@@ -98,6 +98,52 @@
   addi sp, sp, 4 * 36 
 .endm
 
+/*
+  ---- R8：本核 trap 嵌套深度（Portable::in_isr 的判据）----
+  基础 RISC-V 没有"当前在 trap 内"的只读位；在既有 trap 入口/出口做最小
+  记账，不改上下文保存/恢复、不改嵌套语义。用深度而非布尔：向量 ISR 期间
+  可能被更高 level 的 trap 嵌套，布尔会被内层出口误清。
+
+  本口单核：固定槽 0，与 Rust 侧 hart_id() 默认 0 一致。**不读 mhartid**
+  ——QingKe 的实现未在本仓核实，且 Rust 侧从不依赖它。
+  只动 t0/t1——两个调用点它们都已入帧（在 SAVE/RESTORE 之间）。
+
+  计数范围：所有机器中断经 mtvt2 = _irq_handler 进入（HAL 的
+  ECLIC::setup 对每个中断 shv().clear_bit()），走本宏的 ENTER/LEAVE；
+  _start_trap 是 riscv-rt 的异常模板，异常路径不计数（本仓异常即致命）。
+  若应用把某中断原始配置成 SHV=1 直接向量，本口原本就缺少内核存帧
+  （本就不成立），不应据此扩展判据。
+
+  ★ 维护红线（挂起帧不变量）：计数器语义是"当前 CPU 正在执行的上下文
+  栈深"，只在每次 trap 于本次上下文内配平时成立。本口唯一切换点是
+  _irq_handler 出口（switch 后随即 RESTORE + mret）；INT_SFT 与 INT_TMR
+  同为 Level L0（setup_intrrupt），SWI 不能抢占正在执行的 handler，
+  因此被中断的 trap 帧不会在任务运行期间挂起。若将来提高 INT_SFT 的
+  level，或允许某个 ISR 直接调用 scheduler::schedule()，外层帧会挂起、
+  LEAVE 延后，深度会在任务上下文残留非零（in_isr 永久为真）——那时
+  必须改为随帧保存/恢复深度（例如利用帧内未用的 [0] 槽）。
+  0x7ED（JALMNXTI）的真机行为未在本仓核实。
+
+  ENTER/LEAVE 必须配平：在 0 上减会回绕成 0xFFFF_FFFF，in_isr 将永久为真
+  （debug 下所有 C2 断言触发——响亮失败，非静默错误）。任何新增 trap 出口
+  不得绕过 LEAVE。计数器宏按 riscv32 槽宽（4 字节），riscv64 口须改槽宽。
+*/
+.extern IN_ISR_DEPTH
+
+.macro IN_ISR_ENTER
+  la t0, IN_ISR_DEPTH
+  lw t1, 0(t0)
+  addi t1, t1, 1
+  sw t1, 0(t0)
+.endm
+
+.macro IN_ISR_LEAVE
+  la t0, IN_ISR_DEPTH
+  lw t1, 0(t0)
+  addi t1, t1, -1
+  sw t1, 0(t0)
+.endm
+
 // 当前任务全局指针，在RUST代码中定义
 .extern CURRENT_TASK_PTR 
 
@@ -111,6 +157,7 @@
 _irq_handler:
   // 保存上文到任务堆栈
   SAVE_CONTEXT_SOFT_IRQ
+  IN_ISR_ENTER              // R8：本核 trap 深度 +1（x5/x6 已入帧）
   // 把当前任务的SP保存到任务栈
   // CURRENT_TASK_PTR是当前任务的指针，指向了当前运行任务的地址，在RUST代码里维护
   lw t0, CURRENT_TASK_PTR 
@@ -134,6 +181,7 @@ _irq_handler:
   lw t0, CURRENT_TASK_PTR
   // 这个任务栈地址要么是第一次创建的时候写入任务块的，要么是被切换走的时候写入任务块的
   lw sp, 0x0(t0)
+  IN_ISR_LEAVE              // R8：深度 -1（MIE=0，到 mret 无插入窗口）
   // 恢复下文到CPU寄存器
   RESTORE_CONTEXT_SOFT_IRQ
   // mepc值已经在上面恢复，执行这条伪指令将PC指向新任务断点处

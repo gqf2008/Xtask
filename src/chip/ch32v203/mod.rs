@@ -76,6 +76,13 @@ pub(crate) fn reset_systick() {
 /// CH32V203 芯片移植层实现
 pub struct Ch32v203Porting;
 
+/// 本核 trap 嵌套深度（port.S 的 IN_ISR_ENTER/LEAVE 维护）。
+/// 本口单核：只有槽 0，与 Rust 侧 `hart_id()` 默认 0 一致；
+/// 汇编侧同样不读 mhartid（QingKe/esp32c3 的实现未在本仓核实）。
+/// 0 = 任务/线程上下文，>0 = 至少一层 trap。
+#[no_mangle]
+static mut IN_ISR_DEPTH: u32 = 0;
+
 // port.S 蹦床 `_task_entry_trampoline` 依赖的 Task 布局偏移(失配编译期炸)
 const _: () = assert!(core::mem::offset_of!(Task, sp) == 0);
 const _: () = assert!(core::mem::offset_of!(Task, entry) == 8);
@@ -97,6 +104,15 @@ impl Portable for Ch32v203Porting {
         F: FnOnce(&CriticalSection) -> R,
     {
         riscv::interrupt::free(f)
+    }
+
+    /// 当前上下文是否在 trap（ISR）内——R8 的 ISR 半边（只反映本核）。
+    #[inline]
+    fn in_isr() -> bool {
+        // SAFETY: 只读本核独占槽——写只发生在同核 trap 入口/出口（同核无
+        // 并发）；u32 自然对齐无撕裂。addr_of! 不生成 static mut 引用；
+        // volatile 保证每次重新取（值由汇编异步改写）。
+        unsafe { core::ptr::read_volatile(core::ptr::addr_of!(IN_ISR_DEPTH)) != 0 }
     }
 
     /// 开全局中断

@@ -110,13 +110,32 @@ pub trait DeviceBase {
 /// 能力清单的**单一事实源**。
 ///
 /// 一行 = 一个能力（`as_*` 方法名、`find_*` 查找名、trait 对象类型）。由它自动
-/// 生成五处机械代码：`Device::as_*` 默认方法、`impl Capability for …`（按能力
-/// 下转型）、`DriverRegistry::find_*`、自由函数 `find_*`，以及 `impl Device for &T`
-/// 的逐方法转发（漏生成会让 `&dyn X` 包装句柄的新能力静默退化为 `None`）。
+/// 生成**七处**机械代码（清单每行的属性会套到每一段生成物上，因此 `#[cfg(test)]`
+/// 行会让七段同时出现/同时消失）：
+/// 1. `Device::as_*` 默认方法；
+/// 2. `impl Device for &T` 的逐方法转发（漏生成会让包装句柄的新能力静默退化为
+///    `None`）；
+/// 3. `impl Capability for …`（按能力下转型）；
+/// 4. `DriverRegistry::find_*`（运行期注册表）；
+/// 5. `DeviceTable::find_*`（编译期清单表，与注册表同一份清单）；
+/// 6. 顶层自由函数 `device::find_*`（走 `REGISTRY`）；
+/// 7. `device::table::find_*`（生成在 `__table_fns` 里，由 table.rs glob 再导出，
+///    走 `TABLE`）。
 ///
 /// **加能力只改这里一行**：旧写法要手工同步 3 处（`Device::as_*` / `impl
 /// Capability` / `find_*` 封皮），5 个能力就是 15 处手工点，漏一处要么编译错、
-/// 要么静默失效（能力查不到）。生成的四段见文件末尾同名块。
+/// 要么静默失效（能力查不到）。
+///
+/// **命名约束**：`$find_fn` 会同时生成 `DriverRegistry::*` 与 `DeviceTable::*`
+/// 的固有方法，名字必须与 `find`/`find_capability`/`register`/`attach`/
+/// `unregister` 等核心方法不相交，否则重复定义（E0592）。清单行只允许放 doc
+/// 与 cfg 类属性。
+///
+/// **表侧单源与代价**：第 7 段生成在 `#[doc(hidden)] pub mod __table_fns` 里，
+/// table.rs 用 glob 再导出——这是让"表侧自由函数也单源"的唯一不重复清单写法。
+/// 代价是该隐藏模块成为公开路径（`prelude` 的 `pub use crate::device::*` 会
+/// 一并再导出）；回退方案是 table.rs 保留 5 行一字转发（表侧自由函数退化为
+/// 重复清单，其余六段不受影响）。
 macro_rules! define_capabilities {
     ($(
         $(#[$doc:meta])*
@@ -143,33 +162,70 @@ macro_rules! define_capabilities {
         /// 由清单生成：新增能力不会在 `&T` 包装路径上静默退化为 `None`。
         impl<T: Device + ?Sized> Device for &T {
             $(
+                $(#[$doc])*
                 fn $as_fn(&self) -> Option<&$cap> {
                     (**self).$as_fn()
                 }
             )*
         }
 
-        $(impl Capability for $cap {
-            fn downcast(dev: &'static dyn Device) -> Option<&'static Self> {
-                dev.$as_fn()
+        $(
+            $(#[$doc])*
+            impl Capability for $cap {
+                fn downcast(dev: &'static dyn Device) -> Option<&'static Self> {
+                    dev.$as_fn()
+                }
             }
-        })*
+        )*
 
         impl DriverRegistry {
             $(
-                /// 按名取能力；名字不存在或设备无此能力时返回 `None`
-                /// （用 `find` 可区分「没有这个设备」与「设备没这个能力」）
+                $(#[$doc])*
                 pub fn $find_fn(&self, name: &str) -> Option<&'static $cap> {
                     self.find_capability(name)
                 }
             )*
         }
 
-        $(/// 从全局注册表按名取能力
-        pub fn $find_fn(name: &str) -> Option<&'static $cap> {
-            REGISTRY.$find_fn(name)
-        })*
+        // 编译期清单表：与注册表同一份清单生成（固有 impl 允许写在同 crate 的
+        // device 模块；DeviceTable 定义在子模块 table，路径用 $crate 全限定）。
+        impl $crate::device::table::DeviceTable {
+            $(
+                $(#[$doc])*
+                pub fn $find_fn(&self, name: &str) -> Option<&'static $cap> {
+                    self.find(name).and_then(|d| d.$as_fn())
+                }
+            )*
+        }
+
+        $(
+            $(#[$doc])*
+            pub fn $find_fn(name: &str) -> Option<&'static $cap> {
+                $crate::device::REGISTRY.$find_fn(name)
+            }
+        )*
+
+        // 表侧自由函数：table.rs 用 glob 再导出，新增能力不需要改 table.rs。
+        // `use super::*;` 让清单里的 dyn 类型名在子模块内可解析。
+        #[doc(hidden)]
+        pub mod __table_fns {
+            use super::*;
+
+            $(
+                $(#[$doc])*
+                pub fn $find_fn(name: &str) -> Option<&'static $cap> {
+                    $crate::device::table::TABLE.$find_fn(name)
+                }
+            )*
+        }
     };
+}
+
+/// 测试专用能力：验证"清单加一行 → 七段全部生成"。
+/// 只在 `cfg(test)` 构建存在，发布固件的能力面/体积/vtable 不变。
+#[cfg(test)]
+pub trait TestProbe: DeviceBase {
+    fn probe_tag(&self) -> usize;
 }
 
 define_capabilities! {
@@ -184,6 +240,9 @@ define_capabilities! {
     /// 取开关量能力，不支持返回 None。
     /// 返回 `&(dyn Switchable + Sync)`：经注册表取到的句柄必须能跨任务使用。
     as_switchable, find_switchable => (dyn Switchable + Sync),
+    /// 测试专用：验证"清单加一行 → 七段生成"（发布构建不存在）
+    #[cfg(test)]
+    as_test_probe, find_test_probe => dyn TestProbe,
 }
 
 /// 字节流设备（数据面 = 连续字节流，边界由上层协议管理）。
@@ -478,7 +537,7 @@ pub fn find_capability<C: Capability + ?Sized>(name: &str) -> Option<&'static C>
     REGISTRY.find_capability(name)
 }
 
-// `impl Capability for …` 的 5 个实现由 `define_capabilities!` 自动生成。
+// `impl Capability for …` 由 `define_capabilities!` 按清单每行生成。
 
 
 #[cfg(test)]
@@ -489,6 +548,8 @@ mod tests {
     use alloc::sync::Arc;
     use core::cell::RefCell;
     use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::device::table::{DeviceDef, DeviceSlot, DeviceTable};
 
     /// mock 字节流 + 事件设备：rx 队列 + write 计数 + waiter 登记/唤醒计数
     struct MockStream {
@@ -962,5 +1023,111 @@ mod tests {
             ops: Arc::new(AtomicUsize::new(0)),
         }));
         assert_eq!(via_generic(dev), 2);
+    }
+
+    struct MockProbe {
+        tag: usize,
+    }
+
+    impl DeviceBase for MockProbe {
+        fn kind(&self) -> DeviceKind {
+            DeviceKind::Control
+        }
+    }
+
+    impl Device for MockProbe {
+        fn as_test_probe(&self) -> Option<&dyn TestProbe> {
+            Some(self)
+        }
+    }
+
+    impl TestProbe for MockProbe {
+        fn probe_tag(&self) -> usize {
+            self.tag
+        }
+    }
+
+    /// 一条清单同时命中注册表与编译期清单表，并覆盖 `&T` 转发与负例。
+    #[test]
+    fn capability_line_reaches_both_tables_and_ref_wrapper() {
+        let dev: &'static dyn Device = Box::leak(Box::new(MockProbe { tag: 7 }));
+
+        // 注册表路径
+        let reg = DriverRegistry::new();
+        reg.register("probe0", dev).unwrap();
+        let a = reg
+            .find_test_probe("probe0")
+            .expect("DriverRegistry::find_* 应由宏生成");
+        assert_eq!(a.probe_tag(), 7);
+
+        // 编译期清单路径（局部表，避免碰全局）
+        static SLOT: DeviceSlot = DeviceSlot::new();
+        const LIST: &[DeviceDef] = &[DeviceDef::new("probe0", &SLOT)];
+        SLOT.fill(dev);
+        let table = DeviceTable::new();
+        table.attach(LIST);
+        let b = table
+            .find_test_probe("probe0")
+            .expect("DeviceTable::find_* 应由宏生成");
+        assert!(
+            core::ptr::addr_eq(a as *const dyn TestProbe, b as *const dyn TestProbe),
+            "两张表必须指向同一实例"
+        );
+
+        // &T 转发：方法调用会命中最外层 blanket impl；漏生成转发方法时这里是 None
+        let outer: &'static &'static dyn Device = Box::leak(Box::new(dev));
+        let c = outer.as_test_probe().expect("&T 必须转发，不能静默 None");
+        assert!(core::ptr::addr_eq(
+            c as *const dyn TestProbe,
+            a as *const dyn TestProbe
+        ));
+
+        // 能力不符：设备存在但未 override as_test_probe
+        let _led = mock_led("probe_led", &reg);
+        assert!(
+            reg.find_test_probe("probe_led").is_none(),
+            "不得静默命中错能力"
+        );
+        // 名字不在清单 / 名字不存在
+        assert!(table.find_test_probe("probe_led").is_none());
+        assert!(reg.find_test_probe("ghost").is_none());
+    }
+
+    /// 表侧/顶层的两个自由函数分别走 TABLE 与 REGISTRY（同源、不串表）。
+    /// 这是全仓唯一触碰全局 TABLE/REGISTRY 的测试：名字必须唯一。
+    #[test]
+    fn capability_line_reaches_free_wrappers() {
+        let reg_dev: &'static dyn Device = Box::leak(Box::new(MockProbe { tag: 1 }));
+        let tbl_dev: &'static dyn Device = Box::leak(Box::new(MockProbe { tag: 2 }));
+
+        // 只进全局注册表
+        crate::device::register("cap_probe_reg", reg_dev).unwrap();
+
+        // 只进全局清单表
+        static TBL_SLOT: DeviceSlot = DeviceSlot::new();
+        const TBL_LIST: &[DeviceDef] = &[DeviceDef::new("cap_probe_tbl", &TBL_SLOT)];
+        TBL_SLOT.fill(tbl_dev);
+        crate::device::table::attach(TBL_LIST);
+
+        // device::find_* 走 REGISTRY
+        assert_eq!(
+            crate::device::find_test_probe("cap_probe_reg")
+                .expect("顶层自由函数应由宏生成")
+                .probe_tag(),
+            1
+        );
+        assert!(crate::device::find_test_probe("cap_probe_tbl").is_none());
+
+        // device::table::find_* 走 TABLE（经 table.rs 的 glob 再导出）
+        assert_eq!(
+            crate::device::table::find_test_probe("cap_probe_tbl")
+                .expect("表侧自由函数应由宏生成并经 glob 再导出")
+                .probe_tag(),
+            2
+        );
+        assert!(crate::device::table::find_test_probe("cap_probe_reg").is_none());
+
+        // 降低与未来测试的顺序耦合（TABLE 无需清理：attach 是覆盖语义）
+        assert!(crate::device::unregister("cap_probe_reg"));
     }
 }
